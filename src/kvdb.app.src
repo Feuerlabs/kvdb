@@ -1,0 +1,11 @@
+{application, kvdb,
+ [
+  {description, "key value database API"},
+  {vsn, "1"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {env, []}
+ ]}.
