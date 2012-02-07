@@ -18,19 +18,9 @@ open(Db, Options) ->
     DbOpts = [{create_if_missing,true}],
     case proplists:get_value(file, Options) of
 	undefined ->
-	    case eleveldb:open(atom_to_list(Db)++".db", DbOpts) of
-		{ok,Ref} ->
-		    {ok,{?MODULE,Ref}};
-		Error ->
-		    Error
-	    end;
+	    eleveldb:open(atom_to_list(Db)++".db", DbOpts);
 	Name ->
-	    case eleveldb:open(Name, DbOpts) of
-		{ok,Ref} ->
-		    {ok,{?MODULE,Ref}};
-		Error ->
-		    Error
-	    end		
+	    eleveldb:open(Name, DbOpts)
     end.
 
 close(_Db) ->
@@ -76,7 +66,7 @@ first(Db, Iter={I,Tk}) ->
 	    done;
 	{ok,_Key,_Value} ->
 	    done;
-	{error, invalid_iterator} ->	
+	{error, invalid_iterator} ->
 	    done
     end.
 
@@ -107,7 +97,7 @@ last(Db, Iter={I,Tk}) ->
 		    done
 	    end
     end.
-	
+
 next(_Db, _Iter={I,Tk}) ->
     TableKey = make_table_key(Tk),
     KeySize = byte_size(TableKey),
@@ -164,4 +154,3 @@ make_table_key(Table, Key) ->
 
 make_key(Table, Sep, Key) ->
     <<(atom_to_binary(Table,latin1))/binary,Sep,Key/binary>>.
-
