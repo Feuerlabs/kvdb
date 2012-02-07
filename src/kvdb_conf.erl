@@ -41,6 +41,17 @@ options(File) ->
      {tables, [data]},
      {encoding, {raw,term,raw}}].
 
+read_tree(Prefix) ->
+    Objs = kvdb:prefix_match(?MODULE, data, Prefix),
+    make_tree([split_key(O) || O <- Objs], []).
+
+split_key({K,_,_}) ->
+    re:split(K,"\\*", [{return,string}]).
+
+make_tree([{K,A,V}|T], Prev) ->
+    Parts = split_key(K),
+    foo.
+
 store_tree(Tree) ->
     store_tree(Tree, <<>>).
 

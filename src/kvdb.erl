@@ -394,17 +394,21 @@ init({Name, Opts}) ->
 	       undefined ->
 		   {ok, CWD} = file:get_cwd(),
 		   filename:join(CWD, F);
-	       F when is_list(F) ->
-		   F
+	       F1 ->
+		   F1
 	   end,
-    N = to_atom(F),
-    case open(N, lists:keystore(backend, 1,
-				lists:keystore(file, 1, Opts, {file, File}),
-				{backend, DbMod})) of
+    ok = filelib:ensure_dir(File),
+    NewOpts = lists:keystore(backend, 1,
+			     lists:keystore(file, 1, Opts, {file, File}),
+			     {backend, DbMod}),
+    case open(Name, NewOpts) of
 	{ok, Db} ->
 	    create_tables_(Db, Opts),
-	    {ok, #st{name = N, db = Db}};
+	    {ok, #st{name = Name, db = Db}};
 	{error,_} = Error ->
+	    io:fwrite("error opening kvdb database ~w:~n"
+		      "Error: ~p~n"
+		      "Opts = ~p~n", [Name, Error, NewOpts]),
 	    Error
     end.
 
@@ -464,10 +468,10 @@ name2file(Name) when is_atom(Name) ->
 name2file(Str) when is_list(Str) ->
     Str.
 
-to_atom(A) when is_atom(A) ->
-    A;
-to_atom(S) when is_list(S) ->
-    list_to_atom(S).
+%% to_atom(A) when is_atom(A) ->
+%%     A;
+%% to_atom(S) when is_list(S) ->
+%%     list_to_atom(S).
 
 
 is_behaviour(_M) ->
