@@ -281,6 +281,17 @@ do_prefix_match(#kvdb_ref{mod = DbMod, db = Db}, Table, Prefix, Limit)
 default_limit() ->
     100.
 
+%% @spec select(Db, Table, MatchSpec) -> {Objects, Cont} | done
+%% @doc Similar to ets:select/3.
+%%
+%% This function builds on prefix_match/3, and applies a match specification on the results.
+%% If keys are using `raw' encoding, a partial key can be given using string syntax,
+%% e.g. <code>"abc" ++ '_'</code>. Note that this will necessitate some data conversion
+%% back and forth on the found objects. If a prefix cannot be determined for the key, a
+%% full traversal of the table will be performed. `sext'-encoded keys can be prefixed in the
+%% same way as normal erlang terms in an ets:select().
+%% @end
+%%
 select(Db, Table, MatchSpec) ->
     ?KVDB_CATCH(do_select(db(Db), Table, MatchSpec, default_limit()), [Db, Table, MatchSpec]).
 
