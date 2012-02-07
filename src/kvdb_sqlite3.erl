@@ -12,7 +12,7 @@
 -export([open/2, close/1]).
 -export([add_table/2, delete_table/2]).
 -export([put/4, get/3, delete/3]).
--export([iterator/2, first/2, last/2, next/2, prev/2]).
+-export([iterator/2, iterator_close/2, first/2, last/2, next/2, prev/2]).
 
 open(Db, Options) ->
     case proplists:get_value(file, Options) of
@@ -110,6 +110,9 @@ delete(Db, Table, Key) ->
 iterator(Db, Table) ->
     sqlite3:prepare(Db, "SELECT * FROM "++atom_to_list(Table) ++
 			" ORDER BY key ASC").
+
+iterator_close(Db, Iter) ->
+    sqlite3:finalize(Db, Iter).
 
 first(Db, Iter) ->
     ok = sqlite3:reset(Db, Iter),

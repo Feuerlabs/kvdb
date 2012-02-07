@@ -10,7 +10,7 @@
 -export([open/2, close/1]).
 -export([add_table/2, delete_table/2]).
 -export([put/4, get/3, delete/3]).
--export([iterator/2, first/2, last/2, next/2, prev/2]).
+-export([iterator/2, iterator_close/2, first/2, last/2, next/2, prev/2]).
 
 -export([behaviour_info/1]).
 
@@ -25,6 +25,7 @@ behaviour_info(callbacks) ->
      {get,3},
      {delete,3},
      {iterator,2},
+     {iterator_close,2},
      {first,2},
      {last,2},
      {next,2},
@@ -87,6 +88,11 @@ delete({DbMod,Db}, Table, Key)
 iterator({DbMod,Db}, Table)
   when is_atom(Table) ->
     DbMod:iterator(Db,Table).
+
+-spec iterator_close(Db::db_ref(),Iter::itr_ref()) -> ok.
+
+iterator_close({DbMod,Db}, Iter) ->
+    DbMod:iterator_close(Db,Iter).
 
 -spec first(Db::db_ref(), Iter::itr_ref()) ->
 		   {ok,Key::binary()} |

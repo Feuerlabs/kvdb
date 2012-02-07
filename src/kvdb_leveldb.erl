@@ -12,7 +12,7 @@
 -export([open/2, close/1]).
 -export([add_table/2, delete_table/2]).
 -export([put/4, get/3, delete/3]).
--export([iterator/2, first/2, last/2, next/2, prev/2]).
+-export([iterator/2, iterator_close/2, first/2, last/2, next/2, prev/2]).
 
 open(Db, Options) ->
     DbOpts = [{create_if_missing,true}],
@@ -64,6 +64,9 @@ iterator(Db, Table) ->
 	    {ok,I} = eleveldb:iterator(Db, []),
 	    {ok,{I,Table}}
     end.
+
+iterator_close(_Db, _Iter={I,_Tk}) ->
+    eleveldb:iterator_close(I).
 
 first(Db, Iter={I,Tk}) ->
     TableKey = make_table_first_key(Tk),

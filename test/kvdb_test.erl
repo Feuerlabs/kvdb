@@ -124,6 +124,7 @@ speed_put(_, 0, _Value) ->
 speed_put(Db, I, Value) ->
     Key = erlang:md5(integer_to_list(I)),
     kvdb:put(Db, speed, Key, Value),
+    %% {ok,Value} = kvdb:get(Db, speed, Key), %% verify!
     speed_put(Db, I-1, Value).
 
 speed_get(_, 0, _Value) ->
