@@ -11,23 +11,33 @@
 
 -export([open/2, close/1]).
 -export([add_table/2, delete_table/2]).
--export([put/4, get/3, delete/3]).
+-export([put/3, get/3, delete/3]).
 -export([iterator/2, first/2, last/2, next/2, prev/2]).
+
+-import(kvdb_lib, [dec/3, enc/3]).
+
+-record(db, {ref, encoding}).
 
 open(Db, Options) ->
     DbOpts = [{create_if_missing,true}],
-    case proplists:get_value(file, Options) of
-	undefined ->
-	    eleveldb:open(atom_to_list(Db)++".db", DbOpts);
-	Name ->
-	    eleveldb:open(Name, DbOpts)
+    Res = case proplists:get_value(file, Options) of
+	      undefined ->
+		  eleveldb:open(atom_to_list(Db)++".db", DbOpts);
+	      Name ->
+		  eleveldb:open(Name, DbOpts)
+	  end,
+    case Res of
+	{ok, Ref} ->
+	    {ok, #db{ref = Ref, encoding = proplists:get_value(encoding, Options, raw)}};
+	Error ->
+	    Error
     end.
 
 close(_Db) ->
     %% leveldb is garbage collected
     ok.
 
-add_table(Db, Table) ->
+add_table(#db{ref = Db}, Table) ->
     T = make_table_key(Table, <<>>),
     eleveldb:put(Db, T, <<>>, []).
 
@@ -36,7 +46,7 @@ delete_table(_Db, _Table)
     %% FIXME delete all elements (iterate!)
     ok.
 
-put(Db, Table, Key, Value) ->
+put(Db, Table, {Key, Value}) ->
     eleveldb:put(Db, make_table_key(Table,Key), Value, []).
 
 get(Db, Table, Key) ->

@@ -11,11 +11,13 @@
 
 -export([test/0]).
 
--export([start/0, open_db/2]).
+-export([start/0, open_db/2, info/2]).
 -export([open/2, close/1, db/1]).
 -export([add_table/2, delete_table/2, list_tables/1]).
 -export([put/3, get/3, delete/3]).
 -export([iterator/2, first/2, last/2, next/3, prev/3]).
+-export([prefix_match/3, prefix_match/4]).
+-export([select/3, select/4]).
 
 %% direct API towards an active kvdb instance
 -export([do_put/3,
@@ -26,7 +28,10 @@
 	 do_first/2,
 	 do_next/3,
 	 do_prev/3,
-	 do_last/2]).
+	 do_last/2,
+	 do_prefix_match/4,
+	 do_select/4,
+	 do_info/2]).
 
 -export([behaviour_info/1]).
 
@@ -109,6 +114,12 @@ open_db(Name, Options) ->
 	_ ->
 	    {error, already_loaded}
     end.
+
+info(Name, Item) ->
+    ?KVDB_CATCH(do_info(db(Name), Item), [Name, Item]).
+
+do_info(#kvdb_ref{mod = DbMod, db = Db}, Item) ->
+    DbMod:info(Db, Item).
 
 -spec open(Nam::atom(), Options::[{atom(),term()}]) ->
 		  {ok,db_ref()} | {error,term()}.
@@ -256,6 +267,66 @@ prev(Name, Table, Key) ->
     ?KVDB_CATCH(do_prev(db(Name), Table, Key), [Name, Table, Key]).
 
 
+prefix_match(Db, Table, Prefix) ->
+    ?KVDB_CATCH(do_prefix_match(db(Db), Table, Prefix, default_limit()), [Db, Table, Prefix]).
+
+prefix_match(Db, Table, Prefix, Limit)
+  when Limit==infinity orelse (is_integer(Limit) andalso Limit >= 0) ->
+    ?KVDB_CATCH(do_prefix_match(db(Db), Table, Prefix, Limit), [Db, Table, Prefix, Limit]).
+
+do_prefix_match(#kvdb_ref{mod = DbMod, db = Db}, Table, Prefix, Limit)
+  when Limit==infinity orelse (is_integer(Limit) andalso Limit >= 0) ->
+    DbMod:prefix_match(Db, Table, Prefix, Limit).
+
+default_limit() ->
+    100.
+
+select(Db, Table, MatchSpec) ->
+    ?KVDB_CATCH(do_select(db(Db), Table, MatchSpec, default_limit()), [Db, Table, MatchSpec]).
+
+select(Db, Table, MatchSpec, Limit) ->
+    ?KVDB_CATCH(do_select(db(Db), Table, MatchSpec, Limit), [Db, Table, MatchSpec, Limit]).
+
+do_select(#kvdb_ref{mod = DbMod, db = Db}, Table, MatchSpec, Limit) ->
+    MSC = ets:match_spec_compile(MatchSpec),
+    Encoding = DbMod:info(Db, encoding),
+    Prefix = ms2pfx(MatchSpec, Encoding),
+    do_select_(DbMod:prefix_match(Db,Table,Prefix,Limit), MSC, [], Limit, Limit).
+
+ms2pfx([{HeadPat,_,_}|_], Enc) when is_tuple(HeadPat) ->
+    Key = element(1, HeadPat),
+    case Enc of
+	sext -> Key;
+	_ when element(1,Enc) == sext ->
+	    Key;
+	_ ->
+	    <<>>
+    end;
+ms2pfx(_, _) ->
+    <<>>.
+
+
+do_select_(done, _, Acc, _, _) ->
+    {lists:concat(lists:reverse(Acc)), fun() -> done end};
+do_select_({Objs, Cont}, MSC, Acc, Limit, Limit0) ->
+    Matches = ets:match_spec_run(Objs, MSC),
+    N = length(Matches),
+    NewAcc = [Matches | Acc],
+    case decr(Limit, N) of
+	NewLimit when NewLimit =< 0 ->
+	    %% This can result in (> Limit) objects being returned to the caller.
+	    {lists:concat(lists:reverse(NewAcc)),
+	     fun() ->
+		     do_select_(Cont(), MSC, NewAcc, Limit0, Limit0)
+	     end};
+	NewLimit when NewLimit > 0 ->
+	    do_select_(Cont(), MSC, NewAcc, NewLimit, Limit0)
+    end.
+
+decr(infinity,_) ->
+    infinity;
+decr(Limit, N) when is_integer(Limit), is_integer(N) ->
+    Limit - N.
 
 %% server-related code
 
