@@ -13,7 +13,7 @@
 -export([open/2, close/1]).
 -export([add_table/2, delete_table/2, list_tables/1]).
 -export([put/3, get/3, delete/3]).
--export([iterator/2, first/2, last/2, next/3, prev/3]).
+-export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
 -export([info/2]).
 
@@ -160,18 +160,13 @@ decr(infinity) ->
 decr(N) when is_integer(N), N > 0 ->
     N - 1.
 
-%%
-%% iterator is currently first, next
-%% but we may create an iterator last,prev by setting ORDER term to DESC
-%% FIXME: add finalize!
-%%
-iterator(#db{ref = Db} = DbRec, Table) ->
-    case sqlite3:prepare(Db, "SELECT * FROM "++atom_to_list(Table) ++
-			     " ORDER BY key ASC") of
-	{ok, Ref} ->
-	    {ok, #sqlite3_iter{table = Table, ref = Ref, db = DbRec}};
-	Other ->
-	    Other
+first(Db, Iter) ->
+    ok = sqlite3:reset(Db, Iter),
+    case sqlite3:next(Db, Iter) of 
+	{{blob,Key},{blob,Value}} ->
+	    {ok,Key,Value};
+	Error ->
+	    Error
     end.
 
 first(#db{ref = Db, encoding = Enc}, Table) ->

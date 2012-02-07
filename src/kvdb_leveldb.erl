@@ -12,7 +12,7 @@
 -export([open/2, close/1]).
 -export([add_table/2, delete_table/2]).
 -export([put/3, get/3, delete/3]).
--export([iterator/2, first/2, last/2, next/2, prev/2]).
+-export([first/2, last/2, next/2, prev/2]).
 
 -import(kvdb_lib, [dec/3, enc/3]).
 
@@ -54,16 +54,6 @@ get(Db, Table, Key) ->
 
 delete(Db, Table, Key) ->
     eleveldb:delete(Db, make_table_key(Table,Key), []).
-
-iterator(Db, Table) ->
-    TableKey = make_table_first_key(Table),
-    case eleveldb:get(Db, TableKey, []) of
-	not_found ->
-	    {error, no_such_table};
-	{ok,<<>>} ->
-	    {ok,I} = eleveldb:iterator(Db, []),
-	    {ok,{I,Table}}
-    end.
 
 first(Db, Iter={I,Tk}) ->
     TableKey = make_table_first_key(Tk),

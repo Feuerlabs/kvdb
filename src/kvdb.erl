@@ -15,7 +15,7 @@
 -export([open/2, close/1, db/1]).
 -export([add_table/2, delete_table/2, list_tables/1]).
 -export([put/3, get/3, delete/3]).
--export([iterator/2, first/2, last/2, next/3, prev/3]).
+-export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
 -export([select/3, select/4]).
 
@@ -32,6 +32,7 @@
 	 do_prefix_match/4,
 	 do_select/4,
 	 do_info/2]).
+>>>>>>> ea729a9a3dd786ecfa47162f5222556fa04e05da
 
 -export([behaviour_info/1]).
 
@@ -75,6 +76,7 @@ behaviour_info(callbacks) ->
      {get,3},
      {delete,3},
      {iterator,2},
+     {iterator_close,2},
      {first,2},
      {last,2},
      {next,3},
@@ -84,7 +86,6 @@ behaviour_info(_Other) ->
     undefined.
 
 -opaque db_ref()  :: #kvdb_ref{}.
--opaque itr_ref() :: #kvdb_iterator{}.
 
 -type key() :: any().
 -type value() :: any().
@@ -205,16 +206,6 @@ do_delete(#kvdb_ref{mod = DbMod, db = Db}, Table, Key)
 
 delete(Name, Table, Key) when is_atom(Table) ->
     ?KVDB_CATCH(call(Name, {delete, Table, Key}), [Name, Table, Key]).
-
--spec iterator(Db::db_ref(), Table::atom()) ->
-		      {ok, itr_ref()}.
-
-
-iterator(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table)
-  when is_atom(Table) ->
-    #kvdb_iterator{iter = DbMod:iterator(Db, Table),  db = DbRef};
-iterator(Name, Table) ->
-    ?KVDB_CATCH(iterator(db(Name), Table), [Name, Table]).
 
 -spec first(Db::db_ref(), Table::atom()) ->
 		   {ok,Key::binary()} |
