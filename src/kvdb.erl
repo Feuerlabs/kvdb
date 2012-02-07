@@ -32,7 +32,6 @@
 	 do_prefix_match/4,
 	 do_select/4,
 	 do_info/2]).
->>>>>>> ea729a9a3dd786ecfa47162f5222556fa04e05da
 
 -export([behaviour_info/1]).
 
@@ -46,7 +45,6 @@
 
 -record(st, {name, db}).
 -record(kvdb_ref, {db, mod}).
--record(kvdb_iterator, {iter, db}).
 
 -define(KVDB_CATCH(Expr, Args),
 	try Expr

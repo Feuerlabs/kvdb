@@ -160,15 +160,6 @@ decr(infinity) ->
 decr(N) when is_integer(N), N > 0 ->
     N - 1.
 
-first(Db, Iter) ->
-    ok = sqlite3:reset(Db, Iter),
-    case sqlite3:next(Db, Iter) of 
-	{{blob,Key},{blob,Value}} ->
-	    {ok,Key,Value};
-	Error ->
-	    Error
-    end.
-
 first(#db{ref = Db, encoding = Enc}, Table) ->
     select_one(Db, Enc, ["SELECT * FROM ", atom_to_list(Table),
 			 " ORDER BY key ASC LIMIT 1"]).
