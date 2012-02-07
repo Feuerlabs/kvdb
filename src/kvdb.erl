@@ -290,26 +290,66 @@ select(Db, Table, MatchSpec, Limit) ->
 do_select(#kvdb_ref{mod = DbMod, db = Db}, Table, MatchSpec, Limit) ->
     MSC = ets:match_spec_compile(MatchSpec),
     Encoding = DbMod:info(Db, encoding),
-    Prefix = ms2pfx(MatchSpec, Encoding),
-    do_select_(DbMod:prefix_match(Db,Table,Prefix,Limit), MSC, [], Limit, Limit).
+    {Prefix, Conv} = ms2pfx(MatchSpec, Encoding),
+    do_select_(DbMod:prefix_match(Db,Table,Prefix,Limit), Conv, MSC, [], Limit, Limit).
 
+%% We must create a prefix for the prefix_match().
+%% This is a problem if we have raw encoding on the key, since you cannot have a wildcard
+%% tail on a binary. You can do this on a list, however, so we allow the caller to provide
+%% a string pattern on the key - enabling the declaration of a prefix like "foo" ++ '_'.
+%%
+%% Unfortunately, this conflicts with match_spec_run(): we must convert the results from
+%% prefix_match(), changing from binaries to lists, then revert back to binaries on the
+%% objects that match. This is wasteful, but presumably faster than setting the prefix to
+%% <<>> (the empty binary), forcing select() to traverse the entire table.
+%%
 ms2pfx([{HeadPat,_,_}|_], Enc) when is_tuple(HeadPat) ->
     Key = element(1, HeadPat),
-    case Enc of
-	sext -> Key;
-	_ when element(1,Enc) == sext ->
-	    Key;
-	_ ->
-	    <<>>
+    case key_encoding(Enc) of
+	sext -> {Key, none};
+	raw ->
+	    raw_prefix(Key, size(HeadPat))
     end;
 ms2pfx(_, _) ->
-    <<>>.
+    {<<>>, none}.
+
+raw_prefix(A, _) when is_atom(A) -> {<<>>, none};
+raw_prefix(B, _) when is_binary(B) -> {<<>>, none};
+raw_prefix(L, Sz) when is_list(L) ->
+    P = list_to_binary(raw_list_prefix(L)),
+    case Sz of
+	2 -> {P, {fun({K,V}) -> {binary_to_list(K), V} end,
+		  fun({K,V}) -> {list_to_binary(K), V} end}};
+	3 -> {P, {fun({K,A,V}) -> {binary_to_list(K), A, V} end,
+		  fun({K,A,V}) -> {list_to_binary(K), A, V} end}}
+    end.
+
+raw_list_prefix([H|T]) when is_atom(T) andalso (0 =< H andalso H =< 255) ->
+    %% e.g. [...|'_']
+    [H];
+raw_list_prefix([H|T]) when 0 =< H, H =< 255 ->
+    [H|raw_list_prefix(T)].
+
+convert(none, Objs) ->
+    Objs;
+convert({F,_}, Objs) ->
+    [F(Obj) || Obj <- Objs].
+
+revert(none, Objs) ->
+    Objs;
+revert({_,F}, Objs) ->
+    [F(Obj) || Obj <- Objs].
+
+key_encoding(E) when is_tuple(E) ->
+    element(1, E);
+key_encoding(E) when is_atom(E) ->
+    E.
 
 
-do_select_(done, _, Acc, _, _) ->
+do_select_(done, _, _, Acc, _, _) ->
     {lists:concat(lists:reverse(Acc)), fun() -> done end};
-do_select_({Objs, Cont}, MSC, Acc, Limit, Limit0) ->
-    Matches = ets:match_spec_run(Objs, MSC),
+do_select_({Objs, Cont}, Conv, MSC, Acc, Limit, Limit0) ->
+    Matches = revert(Conv, ets:match_spec_run(convert(Conv, Objs), MSC)),
     N = length(Matches),
     NewAcc = [Matches | Acc],
     case decr(Limit, N) of
@@ -317,10 +357,10 @@ do_select_({Objs, Cont}, MSC, Acc, Limit, Limit0) ->
 	    %% This can result in (> Limit) objects being returned to the caller.
 	    {lists:concat(lists:reverse(NewAcc)),
 	     fun() ->
-		     do_select_(Cont(), MSC, NewAcc, Limit0, Limit0)
+		     do_select_(Cont(), Conv, MSC, NewAcc, Limit0, Limit0)
 	     end};
 	NewLimit when NewLimit > 0 ->
-	    do_select_(Cont(), MSC, NewAcc, NewLimit, Limit0)
+	    do_select_(Cont(), Conv, MSC, NewAcc, NewLimit, Limit0)
     end.
 
 decr(infinity,_) ->
