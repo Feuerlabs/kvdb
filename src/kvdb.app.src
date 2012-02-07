@@ -1,11 +1,17 @@
+%% -*- erlang -*-
 {application, kvdb,
  [
   {description, "key value database API"},
-  {vsn, "1"},
+  {vsn, git},
   {registered, []},
   {applications, [
                   kernel,
-                  stdlib
+                  stdlib,
+		  gproc
                  ]},
-  {env, []}
+  {mod, {kvdb_app, []}},
+  {env, [
+	 {backend, ets}  % default
+	 %% {dir, DbDirectory}
+	]}
  ]}.

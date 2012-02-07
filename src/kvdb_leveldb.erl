@@ -11,33 +11,33 @@
 
 -export([open/2, close/1]).
 -export([add_table/2, delete_table/2]).
--export([put/4, get/3, delete/3]).
--export([iterator/2, iterator_close/2, first/2, last/2, next/2, prev/2]).
+-export([put/3, get/3, delete/3]).
+-export([first/2, last/2, next/2, prev/2]).
+
+-import(kvdb_lib, [dec/3, enc/3]).
+
+-record(db, {ref, encoding}).
 
 open(Db, Options) ->
     DbOpts = [{create_if_missing,true}],
-    case proplists:get_value(file, Options) of
-	undefined ->
-	    case eleveldb:open(atom_to_list(Db)++".db", DbOpts) of
-		{ok,Ref} ->
-		    {ok,{?MODULE,Ref}};
-		Error ->
-		    Error
-	    end;
-	Name ->
-	    case eleveldb:open(Name, DbOpts) of
-		{ok,Ref} ->
-		    {ok,{?MODULE,Ref}};
-		Error ->
-		    Error
-	    end		
+    Res = case proplists:get_value(file, Options) of
+	      undefined ->
+		  eleveldb:open(atom_to_list(Db)++".db", DbOpts);
+	      Name ->
+		  eleveldb:open(Name, DbOpts)
+	  end,
+    case Res of
+	{ok, Ref} ->
+	    {ok, #db{ref = Ref, encoding = proplists:get_value(encoding, Options, raw)}};
+	Error ->
+	    Error
     end.
 
 close(_Db) ->
     %% leveldb is garbage collected
     ok.
 
-add_table(Db, Table) ->
+add_table(#db{ref = Db}, Table) ->
     T = make_table_key(Table, <<>>),
     eleveldb:put(Db, T, <<>>, []).
 
@@ -46,7 +46,7 @@ delete_table(_Db, _Table)
     %% FIXME delete all elements (iterate!)
     ok.
 
-put(Db, Table, Key, Value) ->
+put(Db, Table, {Key, Value}) ->
     eleveldb:put(Db, make_table_key(Table,Key), Value, []).
 
 get(Db, Table, Key) ->
@@ -54,19 +54,6 @@ get(Db, Table, Key) ->
 
 delete(Db, Table, Key) ->
     eleveldb:delete(Db, make_table_key(Table,Key), []).
-
-iterator(Db, Table) ->
-    TableKey = make_table_first_key(Table),
-    case eleveldb:get(Db, TableKey, []) of
-	not_found ->
-	    {error, no_such_table};
-	{ok,<<>>} ->
-	    {ok,I} = eleveldb:iterator(Db, []),
-	    {ok,{I,Table}}
-    end.
-
-iterator_close(_Db, _Iter={I,_Tk}) ->
-    eleveldb:iterator_close(I).
 
 first(Db, Iter={I,Tk}) ->
     TableKey = make_table_first_key(Tk),
@@ -79,7 +66,7 @@ first(Db, Iter={I,Tk}) ->
 	    done;
 	{ok,_Key,_Value} ->
 	    done;
-	{error, invalid_iterator} ->	
+	{error, invalid_iterator} ->
 	    done
     end.
 
@@ -110,7 +97,7 @@ last(Db, Iter={I,Tk}) ->
 		    done
 	    end
     end.
-	
+
 next(_Db, _Iter={I,Tk}) ->
     TableKey = make_table_key(Tk),
     KeySize = byte_size(TableKey),
@@ -167,4 +154,3 @@ make_table_key(Table, Key) ->
 
 make_key(Table, Sep, Key) ->
     <<(atom_to_binary(Table,latin1))/binary,Sep,Key/binary>>.
-
