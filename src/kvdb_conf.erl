@@ -14,7 +14,9 @@
 	 next_at_level/1,
 	 first_tree/0,
 	 last_tree/0,
-	 next_tree/1]).
+	 next_tree/1,
+	 make_tree/1,
+	 flatten_tree/1]).
 
 -export([open/1,
 	 options/1]).
@@ -148,6 +150,10 @@ read_tree(Prefix) ->
     {Objs,_} = kvdb:prefix_match(?MODULE, data, Prefix, infinity),
     make_tree(Objs).
 
+-spec make_tree([conf_obj()]) -> conf_tree().
+%% @doc Converts an ordered list of configuration objects into a configuration tree.
+%% @end
+%%
 make_tree(Objs) ->
     make_tree_([split_key(O) || O <- Objs]).
 
@@ -169,6 +175,21 @@ make_tree_([{[H], A, V}|Rest]) ->
     end;
 make_tree_([{[_,_|_],_,_}|_] = Tree) ->
     make_tree_(pad_levels(Tree)).
+
+
+-spec flatten_tree(conf_tree()) -> [conf_obj()].
+%% @doc Converts a configuration tree into an ordered list of configuration objects.
+%% @end
+%%
+flatten_tree(Tree) when is_list(Tree) ->
+    lists:flatten([flatten_tree(T, <<>>) || T <- Tree]).
+
+flatten_tree({K, A, V}, Parent) ->
+    Key = next_key(Parent, K),
+    [{Key, A, V}];
+flatten_tree({K, A, V, C}, Parent) ->
+    Key = next_key(Parent, K),
+    [{Key, A, V} | [flatten_tree(Ch, Key) || Ch <- C]].
 
 %% there may be missing top- or intermediate nodes in the tree.
 %% If so, insert an empty node.
