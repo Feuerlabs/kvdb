@@ -1,3 +1,21 @@
+%% @doc
+%% API to store NETCONF-style config data in kvdb
+%%
+%% identifiers are stored as a structured key (binary)
+%% delimited by:
+%%
+%% Example:
+%% `{system,[{services, [{ssh,[...]}]}]}' would be stored as
+%%
+%% {"system", []}
+%% {"system*services", []}
+%% {"system*services*ssh", []}
+%%
+%% Netconf identifiers can consist of alphanumerics, '-', '_' or '.'. The '*' as delimiter
+%% is chosen so that a "wildcard" character can be used that is greater than the delimiter,
+%% but smaller than any identifier character.
+%% @end
+
 -module(kvdb_conf).
 
 -export([read/1,
@@ -31,21 +49,6 @@
 -type conf_obj() :: {key(), attrs(), data()}.
 -type conf_node() :: {key(), attrs(), data(), conf_tree()}.
 
-%% API to store NETCONF-style config data in kvdb
-%%
-%% identifiers are stored as a structured key (binary)
-%% delimited by:
-%%
-%% Example:
-%% `{system,[{services, [{ssh,[...]}]}]}' would be stored as
-%%
-%% {"system", []}
-%% {"system*services", []}
-%% {"system*services*ssh", []}
-%%
-%% Netconf identifiers can consist of alphanumerics, '-', '_' or '.'. The '*' as delimiter
-%% is chosen so that a "wildcard" character can be used that is greater than the delimiter,
-%% but smaller than any identifier character.
 
 open(File) ->
     kvdb:open_db(?MODULE, options(File)).
@@ -73,7 +76,12 @@ read(Key) when is_binary(Key) ->
 %% a node or leaf in the tree is a very cheap operation.
 %% @end
 write({K, As, Data} = Obj) when is_binary(K), is_list(As), is_binary(Data) ->
-    kvdb:put(?MODULE, data, Obj).
+    case kvdb:put(?MODULE, data, Obj) of
+	{ok, _} ->
+	    ok;
+	{error, _} = Error ->
+	    Error
+    end.
 
 delete(K) when is_binary(K) ->
     kvdb:delete(?MODULE, data, K).

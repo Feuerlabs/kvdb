@@ -1,7 +1,32 @@
 -module(kvdb_lib).
--export([enc/3,
+-export([table_name/1,
+	 valid_table_name/1,
+	 enc/3,
 	 dec/3,
-	 enc_prefix/3]).
+	 enc_prefix/3,
+	 is_prefix/3,
+	 check_valid_encoding/1,
+	 actual_key/3,
+	 split_queue_key/3,
+	 timestamp/0,
+	 timestamp_to_datetime/1]).
+
+valid_table_name(Table0) ->
+    Table = table_name(Table0),
+    case [C || <<C:8>> <= Table, lists:member(C, "-.,:;*/")] of
+	[_|_] ->
+	    error({illegal_table_name, Table0});
+	[] ->
+	    Table
+    end.
+
+table_name(Table) when is_atom(Table) ->
+    atom_to_binary(Table, latin1);
+table_name(Table) when is_binary(Table) ->
+    Table;
+table_name(Table) when is_list(Table) ->
+    list_to_binary(Table).
+
 
 enc(_, X, raw ) -> X;
 enc(_, X, term) -> term_to_binary(X);
@@ -22,10 +47,100 @@ dec(value, X, {_,_,Enc}) -> dec(value, X, Enc);
 dec(attrs, X, {_,Enc,_}) -> dec(attrs, X, Enc).
 
 enc_prefix(_, X, raw ) -> X;
-enc_prefix(_, X, sext) -> sext:encode_prefix(X);
+enc_prefix(_, X, sext) ->
+    case X of
+	<<>> -> <<>>;
+	_ when is_binary(X) ->
+	    %% sext-encoding terminates with padding and an end byte. This won't work
+	    %% for prefix matching, so we emulate the encoding, but without the ending.
+	    Enc = << 18, (<< <<1:1, B1:8>> || <<B1>> <= X >>)/bitstring >>,
+	    Sz = bit_size(Enc) div 8,
+	    <<P:Sz/binary, _/bitstring>> = Enc,
+	    P;
+	_ ->
+	    sext:prefix(X)
+    end;
 enc_prefix(key  , X, {Enc,_}  ) -> enc_prefix(key, X, Enc);
 enc_prefix(key  , X, {Enc,_,_}) -> enc_prefix(key, X, Enc);
 enc_prefix(value, X, {_,Enc}  ) -> enc_prefix(value, X, Enc);
 enc_prefix(value, X, {_,_,Enc}) -> enc_prefix(value, X, Enc);
 enc_prefix(attrs, X, {_,Enc,_}) -> enc_prefix(attrs, X, Enc).
 
+-define(VALID_ENC(E), (E==sext orelse E==raw orelse E==term)).
+check_valid_encoding({E1,E2}) when ?VALID_ENC(E1) andalso ?VALID_ENC(E2) -> true;
+check_valid_encoding({E1,E2,E3}) when ?VALID_ENC(E1)
+				      andalso ?VALID_ENC(E2)
+				      andalso ?VALID_ENC(E3) -> true;
+check_valid_encoding(E) when ?VALID_ENC(E) -> true;
+check_valid_encoding(E) -> error({illegal_encoding, E}).
+
+
+actual_key(fifo, Enc, Key) when Enc==raw; element(1, Enc) == raw ->
+    raw_queue_key(Key);
+actual_key(fifo, Enc, Key) when Enc==sext; element(1, Enc) == sext ->
+    {timestamp(), Key};
+actual_key(lifo, Enc, Key) when Enc==raw; element(1, Enc) == raw ->
+    raw_queue_key(Key);
+actual_key(lifo, Enc, Key) when Enc==sext; element(1, Enc) == sext ->
+    {timestamp(), Key};
+actual_key(_, _, Key) ->
+    Key.
+
+split_queue_key(fifo, Enc, Key) when Enc == raw; element(1, Enc) == raw ->
+    split_raw_queue_key(Key);
+split_queue_key(fifo, Enc, {_TS, Key}) when Enc == sext; element(1, Enc) == sext ->
+    Key;
+split_queue_key(lifo, Enc, Key) when Enc == raw; element(1, Enc) == raw ->
+    split_raw_queue_key(Key);
+split_queue_key(lifo, Enc, {_TS, Key}) when Enc == sext; element(1, Enc) == sext ->
+    Key;
+split_queue_key(_, _, Key) ->
+    Key.
+
+timestamp() ->
+    %% Invented epoc is {1258,0,0}, or 2009-11-12, 4:26:40
+    {MS,S,US} = erlang:now(),
+    (MS-1258)*1000000000000 + S*1000000 + US.
+
+timestamp_to_datetime(TS) ->
+    %% Our internal timestamps are relative to Now = {1258,0,0}
+    %% It doesn't really matter much how we construct a now()-like tuple,
+    %% as long as the weighted sum of the three numbers is correct.
+    S = TS div 1000000,
+    US = TS rem 1000000,
+    %% return {Datetime, Milliseconds}
+    {calendar:now_to_datetime({1258,S,0}), US}.
+
+%% Encode a 56-bit prefix using our special-epoch timestamp.
+%% It will not overflow until year 4293 - hopefully that will be sufficient.
+raw_queue_key(K) when is_binary(K) ->
+    TS = timestamp(),
+    <<TS:56/integer, K/binary>>.
+
+split_raw_queue_key(<<_:56/integer, K/binary>>) ->
+    K.
+
+is_prefix(Pfx, K, Enc) when is_binary(Pfx) ->
+    case dec(key, K, Enc) of
+	Bk when is_binary(Bk) ->
+	    binary_match(Bk, Pfx);
+	_ ->
+	    false
+    end;
+is_prefix(Pfx, K, Enc) ->
+    MS = ets:match_spec_compile([{Pfx, [], ['$_']}]),
+    case ets:match_spec_run([dec(key,K,Enc)], MS) of
+	[_] ->
+	    true;
+	[] ->
+	    false
+    end.
+
+binary_match(A, <<>>) when is_binary(A) ->
+    %% binary:match/2 doesn't handle this case
+    true;
+binary_match(A, B) ->
+    case binary:match(A, B) of
+	{0, _} -> true;
+	_ -> false
+    end.

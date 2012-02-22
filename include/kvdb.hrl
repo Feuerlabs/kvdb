@@ -1,5 +1,7 @@
 %% kvdb definitions
 
+-type table() :: atom() | binary().
+
 -record(kvdb_ref, {name, db, mod, schema = db}).
 -opaque db_ref()  :: #kvdb_ref{}.
 
@@ -8,7 +10,7 @@
 
 -opaque db() :: #db{}.
 
--define(SCHEMA_TABLE, kvdb__SCHEMA).
+-define(SCHEMA_TABLE, <<"kvdb__SCHEMA">>).
 
 -type name() :: any().
 -type key() :: any().

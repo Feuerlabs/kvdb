@@ -12,18 +12,26 @@
 -export([test/0]).
 
 -export([start/0, open_db/2, info/2]).
--export([open/2, close/1, db/1]).
--export([add_table/2, delete_table/2, list_tables/1]).
--export([put/3, get/3, delete/3]).
+-export([open/2, close/1, db/1, start_session/2]).
+-export([add_table/2, add_table/3, delete_table/2, list_tables/1]).
+-export([put/3, push/3, put_attr/5, put_attrs/4, get/3, pop/2, pop/3,
+	 get_attr/4, get_attrs/3, delete/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
 -export([select/3, select/4]).
 
 %% direct API towards an active kvdb instance
 -export([do_put/3,
+	 do_push/3,
 	 do_get/3,
+	 do_pop/2,
+	 do_pop/3,
+	 do_get_attr/4,
+	 do_get_attrs/3,
+	 do_put_attr/5,
+	 do_put_attrs/4,
 	 do_delete/3,
-	 do_add_table/2,
+	 do_add_table/3,
 	 do_delete_table/2,
 	 do_first/2,
 	 do_next/3,
@@ -43,8 +51,14 @@
 	 terminate/2,
 	 code_change/3]).
 
--record(st, {name, db}).
--record(kvdb_ref, {db, mod}).
+-import(kvdb_schema, [validate/3, validate_attr/3,
+		      encode/3, encode_attr/3,
+		      decode/3, on_update/3]).
+-import(kvdb_lib, [table_name/1]).
+
+-include("kvdb.hrl").
+
+-record(st, {name, db, is_owner = false}).
 
 -define(KVDB_CATCH(Expr, Args),
 	try Expr
@@ -68,13 +82,15 @@ behaviour_info(callbacks) ->
     [
      {open,2},
      {close,1},
-     {add_table,2},
+     {add_table,3},
      {delete_table,2},
      {put,3},
      {get,3},
+     {pop,2},
+     {pop,3},
      {delete,3},
-     {iterator,2},
-     {iterator_close,2},
+     %% {iterator,2},          % may remove
+     %% {iterator_close,2},    % may remove
      {first,2},
      {last,2},
      {next,3},
@@ -83,20 +99,11 @@ behaviour_info(callbacks) ->
 behaviour_info(_Other) ->
     undefined.
 
--opaque db_ref()  :: #kvdb_ref{}.
-
--type key() :: any().
--type value() :: any().
--type attrs() :: [{atom(), any()}].
--type options() :: [{atom(), any()}].
-
--type object() :: {key(), value()} | {key(), attrs(), value()}.
-
 start() ->
     application:start(gproc),
     application:start(kvdb).
 
--spec open_db(Name::any(), Options::options()) -> {ok, pid()} | {error, any()}.
+-spec open_db(name(), options()) -> {ok, pid()} | {error, any()}.
 
 %% @spec open_db(Name, Options) -> {ok, Pid} | {error, Reason}
 %% @doc Opens a kvdb database instance.
@@ -114,21 +121,26 @@ open_db(Name, Options) ->
 	    {error, already_loaded}
     end.
 
+-spec info(name(), attr_name()) -> undefined | attr_value().
 info(Name, Item) ->
     ?KVDB_CATCH(do_info(db(Name), Item), [Name, Item]).
 
+-spec do_info(db_ref(), attr_name()) -> undefined | attr_value().
 do_info(#kvdb_ref{mod = DbMod, db = Db}, Item) ->
     DbMod:info(Db, Item).
 
--spec open(Nam::atom(), Options::[{atom(),term()}]) ->
+-spec open(name(), Options::[{atom(),term()}]) ->
 		  {ok,db_ref()} | {error,term()}.
 
-open(Name, Options) when is_atom(Name), is_list(Options) ->
+open(Name, Options) ->
+    supervisor:start_child(kvdb_sup, kvdb_sup:childspec({Name, Options})).
+
+do_open(Name, Options) when is_list(Options) ->
     DbMod = proplists:get_value(backend, Options, kvdb_sqlite3),
     case DbMod:open(Name,Options) of
 	{ok, Db} ->
 	    io:fwrite("opened ~p database: ~p~n", [DbMod, Options]),
-	    {ok, #kvdb_ref{mod = DbMod, db = Db}};
+	    {ok, #kvdb_ref{name = Name, mod = DbMod, db = Db}};
 	Error ->
 	    io:fwrite("ERROR opening ~p database: ~p. Opts = ~p~n", [DbMod, Error, Options]),
 	    Error
@@ -139,28 +151,33 @@ close(#kvdb_ref{mod = DbMod, db = Db}) ->
 close(Name) ->
     ?KVDB_CATCH(call(Name, close), [Name]).
 
+-spec db(name() | db_ref()) -> db_ref().
+db(#kvdb_ref{} = Db) ->
+    Db;
 db(Name) ->
     call(Name, db).
 
--spec add_table(Db::db_ref(), Table::atom()) ->
-		       ok | {error, any()}.
+add_table(Name, Table) ->
+    add_table(Name, Table, [{type, set}]).
 
-do_add_table(#kvdb_ref{mod = DbMod, db = Db}, Table) when is_atom(Table) ->
-    DbMod:add_table(Db, Table).
+add_table(Name, Table, Opts) when is_list(Opts) ->
+    ?KVDB_CATCH(call(Name, {add_table, Table, Opts}), [Name, Table, Opts]).
 
-add_table(Name, Table)
-  when is_atom(Table) ->
-    ?KVDB_CATCH(call(Name, {add_table, Table}), [Name, Table]).
-
--spec delete_table(Db::db_ref(), Table::atom()) ->
+-spec do_add_table(Db::db_ref(), Table::table(), Opts::list()) ->
 			  ok | {error, any()}.
 
-do_delete_table(#kvdb_ref{mod = DbMod, db = Db}, Table)
-  when is_atom(Table)->
+do_add_table(#kvdb_ref{mod = DbMod, db = Db}, Table0, Opts) ->
+    Table = kvdb_lib:valid_table_name(Table0),
+    DbMod:add_table(Db, Table, Opts).
+
+-spec do_delete_table(Db::db_ref(), Table::table()) ->
+			     ok | {error, any()}.
+
+do_delete_table(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
+    Table = table_name(Table0),
     DbMod:delete_table(Db, Table).
 
-delete_table(Name, Table)
-  when is_atom(Table) ->
+delete_table(Name, Table) ->
     ?KVDB_CATCH(call(Name, {delete_table, Table}), [Name, Table]).
 
 list_tables(#kvdb_ref{mod = DbMod, db = Db}) ->
@@ -170,86 +187,206 @@ list_tables(Name) ->
 
 
 
--spec put(Db::db_ref(), Table::atom(), Obj::object()) ->
+-spec do_put(Db::db_ref(), Table::table(), Obj::object()) ->
+		    ok | {error, any()}.
+
+do_put(#kvdb_ref{} = DbRef, Table0, {_,_} = Obj) ->
+    Table = table_name(Table0),
+    do_put_(DbRef, Table, Obj);
+do_put(#kvdb_ref{} = DbRef, Table0, {K,As,V}) when is_list(As) ->
+    Table = table_name(Table0),
+    do_put_(DbRef, Table, {K, fix_attrs(As), V}).
+
+do_put_(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Obj) ->
+    case DbMod:put(Db, Table, validate(DbRef, put, Actual = encode(DbRef, obj, Obj))) of
+	ok ->
+	    on_update(DbRef, put, Actual),
+	    ok;
+	Error ->
+	    Error
+    end.
+
+-spec put(any(), Table::table(), Obj::object()) ->
 		 ok | {error, any()}.
-
-do_put(#kvdb_ref{mod = DbMod, db = Db}, Table, {_,_} = Obj) when is_atom(Table) ->
-    DbMod:put(Db, Table, Obj);
-do_put(#kvdb_ref{mod = DbMod, db = Db}, Table, {_,As,_} = Obj)
-  when is_atom(Table), is_list(As) ->
-    DbMod:put(Db, Table, Obj).
-
-put(Name, Table, Obj)
-  when is_atom(Table), is_tuple(Obj) ->
+put(Name, Table, Obj) when is_tuple(Obj) ->
     ?KVDB_CATCH(call(Name, {put, Table, Obj}), [Name, Table, Obj]).
 
--spec get(Db::db_ref(), Table::atom(), Key::binary()) ->
-		 {ok, binary()} | {error,any()}.
 
-do_get(#kvdb_ref{mod = DbMod, db = Db}, Table, Key)
-  when is_atom(Table) ->
+-spec do_put_attr(db_ref(), Table::table(), Key::key(), atom(), any()) ->
+			 ok | {error, any()}.
+do_put_attr(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table0, Key, AttrN, Value)
+  when is_atom(AttrN) ->
+    Table = table_name(Table0),
+    Attr = validate_attr(DbRef, Key, encode_attr(Db, Key, {AttrN, Value})),
+    case DbMod:put_attr(Db, Table, Key, Attr) of
+	{ok, Actual} ->
+	    on_update(DbRef, put_attr, Attr),
+	    {ok, Actual};
+	Error ->
+	    Error
+    end.
+
+-spec put_attr(name(), Table::table(), Key::key(), atom(), any()) ->
+		      ok | {error, any()}.
+put_attr(Name, Table, Key, Attr, Value) when is_atom(Attr) ->
+    ?KVDB_CATCH(call(Name, {put_attr, Table, Key, Attr, Value}),
+		[Name, Table, Key, Attr, Value]).
+
+
+do_put_attrs(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, As) ->
+    Table = table_name(Table0),
+    DbMod:put_attrs(Db, Table, Key, fix_attrs(As)).
+
+-spec put_attrs(any(), Table::table(), Key::key(), Attrs::attrs()) ->
+		       ok | {error, any()}.
+put_attrs(Name, Table, Key, As) when is_list(As) ->
+    ?KVDB_CATCH(call(Name, {put_attrs, Table, Key, As}), [Name, Table, Key, As]).
+
+
+-spec do_get(Db::db_ref(), Table::table(), Key::binary()) ->
+		    {ok, binary()} | {error,any()}.
+
+do_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
+    Table = table_name(Table0),
     DbMod:get(Db, Table, Key).
+
+-spec get(name(), Table::table(), Key::binary()) ->
+		 {ok, binary()} | {error,any()}.
 
 get(Name, Table, Key) ->
     #kvdb_ref{} = Ref = call(Name, db),
-    do_get(Ref, Table, Key).
+    ?KVDB_CATCH(do_get(Ref, Table, Key), [Name, Table, Key]).
 
 
--spec delete(Db::db_ref(), Table::atom(), Key::binary()) ->
+-spec do_push(Db::db_ref(), Table::table(), Obj::object()) ->
+		     {ok, ActualKey::any()} | {error, any()}.
+
+do_push(#kvdb_ref{} = DbRef, Table0, {_,_} = Obj) ->
+    Table = table_name(Table0),
+    do_push_(DbRef, Table, Obj);
+do_push(#kvdb_ref{} = DbRef, Table0, {K,As,V}) when is_list(As) ->
+    Table = table_name(Table0),
+    do_push_(DbRef, Table, {K, fix_attrs(As), V}).
+
+do_push_(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Obj) ->
+    case DbMod:push(Db, Table, validate(DbRef, put, Actual = encode(DbRef, obj, Obj))) of
+	{ok, ActualKey} ->
+	    on_update(DbRef, put, Actual),
+	    {ok, ActualKey};
+	Error ->
+	    Error
+    end.
+
+-spec push(any(), Table::table(), Obj::object()) ->
+		 {ok, ActualKey::any()} | {error, any()}.
+push(Name, Table, Obj) when is_tuple(Obj) ->
+    ?KVDB_CATCH(call(Name, {push, Table, Obj}), [Name, Table, Obj]).
+
+
+-spec do_pop(Db::db_ref(), Table::table()) ->
+		    {ok, binary()} | done | {error,any()}.
+
+do_pop(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
+    Table = table_name(Table0),
+    DbMod:pop(Db, Table).
+
+-spec pop(name(), Table::table()) ->
+		 {ok, binary()} | done | {error,any()}.
+
+pop(Name, Table) ->
+    #kvdb_ref{} = Ref = call(Name, db),
+    ?KVDB_CATCH(do_pop(Ref, Table), [Name, Table]).
+
+-spec do_pop(Db::db_ref(), Table::table(), Key::binary()) ->
+		    {ok, binary()} | {error,any()}.
+
+do_pop(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
+    Table = table_name(Table0),
+    DbMod:pop(Db, Table, Key).
+
+-spec pop(name(), Table::table(), Key::binary()) ->
+		 {ok, binary()} | {error,any()}.
+
+pop(Name, Table, Key) ->
+    #kvdb_ref{} = Ref = call(Name, db),
+    ?KVDB_CATCH(do_pop(Ref, Table, Key), [Name, Table, Key]).
+
+
+do_get_attr(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, Attr) when is_atom(Attr) ->
+    Table = table_name(Table0),
+    DbMod:get_attr(Db, Table, Key, Attr).
+
+get_attr(Name, Table, Key, Attr) when is_atom(Attr) ->
+    ?KVDB_CATCH(do_get_attr(db(Name), Table, Key, Attr), [Name, Table, Key, Attr]).
+
+
+do_get_attrs(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
+    Table = table_name(Table0),
+    DbMod:get_attrs(Db, Table, Key).
+
+get_attrs(Name, Table, Key) ->
+    ?KVDB_CATCH(do_get_attrs(db(Name), Table, Key), [Name, Table, Key]).
+
+
+-spec delete(Db::db_ref(), Table::table(), Key::binary()) ->
 		    ok | {error, any()}.
 
-do_delete(#kvdb_ref{mod = DbMod, db = Db}, Table, Key)
-  when is_atom(Table) ->
+do_delete(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
+    Table = table_name(Table0),
     DbMod:delete(Db, Table, Key).
 
-delete(Name, Table, Key) when is_atom(Table) ->
+delete(Name, Table, Key) ->
     ?KVDB_CATCH(call(Name, {delete, Table, Key}), [Name, Table, Key]).
 
--spec first(Db::db_ref(), Table::atom()) ->
+-spec first(Db::db_ref(), Table::table()) ->
 		   {ok,Key::binary()} |
 		   {ok,Key::binary(),Value::binary()} |
 		   done |
 		   {error,any()}.
 
-do_first(#kvdb_ref{mod = DbMod, db = Db}, Table) ->
+do_first(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
+    Table = table_name(Table0),
     DbMod:first(Db, Table).
 
 first(Name, Table) ->
     ?KVDB_CATCH(do_first(db(Name), Table), [Name, Table]).
 
 
--spec last(Db::db_ref(), Table::atom()) ->
+-spec last(Db::db_ref(), Table::table()) ->
 		   {ok,Key::binary()} |
 		   {ok,Key::binary(),Value::binary()} |
 		   done |
 		   {error,any()}.
 
-do_last(#kvdb_ref{mod = DbMod, db = Db}, Table) ->
+do_last(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
+    Table = table_name(Table0),
     DbMod:last(Db, Table).
 
 last(Name, Table) ->
     ?KVDB_CATCH(do_last(db(Name), Table), [Name, Table]).
 
--spec next(Db::db_ref(), Table::atom(), FromKey::binary()) ->
+-spec next(Db::db_ref(), Table::table(), FromKey::binary()) ->
 		   {ok,Key::binary()} |
 		   {ok,Key::binary(),Value::binary()} |
 		   done |
 		   {error,any()}.
 
-do_next(#kvdb_ref{mod = DbMod, db = Db}, Table, Key) ->
+do_next(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
+    Table = table_name(Table0),
     DbMod:next(Db, Table, Key).
 
 next(Name, Table, Key) ->
     ?KVDB_CATCH(do_next(db(Name), Table, Key), [Name, Table, Key]).
 
 
--spec prev(Db::db_ref(), Table::atom(), FromKey::binary()) ->
+-spec prev(Db::db_ref(), Table::table(), FromKey::binary()) ->
 		  {ok,Key::binary()} |
 		  {ok,Key::binary(),Value::binary()} |
 		  done |
 		  {error,any()}.
 
-do_prev(#kvdb_ref{mod = DbMod, db = Db}, Table, Key) ->
+do_prev(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
+    Table = table_name(Table0),
     DbMod:prev(Db, Table, Key).
 
 prev(Name, Table, Key) ->
@@ -263,8 +400,9 @@ prefix_match(Db, Table, Prefix, Limit)
   when Limit==infinity orelse (is_integer(Limit) andalso Limit >= 0) ->
     ?KVDB_CATCH(do_prefix_match(db(Db), Table, Prefix, Limit), [Db, Table, Prefix, Limit]).
 
-do_prefix_match(#kvdb_ref{mod = DbMod, db = Db}, Table, Prefix, Limit)
+do_prefix_match(#kvdb_ref{mod = DbMod, db = Db}, Table0, Prefix, Limit)
   when Limit==infinity orelse (is_integer(Limit) andalso Limit >= 0) ->
+    Table = table_name(Table0),
     DbMod:prefix_match(Db, Table, Prefix, Limit).
 
 default_limit() ->
@@ -287,7 +425,8 @@ select(Db, Table, MatchSpec) ->
 select(Db, Table, MatchSpec, Limit) ->
     ?KVDB_CATCH(do_select(db(Db), Table, MatchSpec, Limit), [Db, Table, MatchSpec, Limit]).
 
-do_select(#kvdb_ref{mod = DbMod, db = Db}, Table, MatchSpec, Limit) ->
+do_select(#kvdb_ref{mod = DbMod, db = Db}, Table0, MatchSpec, Limit) ->
+    Table = table_name(Table0),
     MSC = ets:match_spec_compile(MatchSpec),
     Encoding = DbMod:info(Db, encoding),
     {Prefix, Conv} = ms2pfx(MatchSpec, Encoding),
@@ -371,7 +510,14 @@ decr(Limit, N) when is_integer(Limit), is_integer(N) ->
 %% server-related code
 
 call(Name, Req) ->
-    Pid = gproc:where({n,l,{kvdb,Name}}),
+    Pid = case Name of
+	      #kvdb_ref{name = N} ->
+		  gproc:where({n, l, {kvdb, N}});
+	      P when is_pid(P) ->
+		  P;
+	      _ ->
+		  gproc:where({n,l,{kvdb,Name}})
+	  end,
     case gen_server:call(Pid, Req) of
 	badarg ->
 	    ?KVDB_THROW(badarg);
@@ -383,9 +529,20 @@ call(Name, Req) ->
 
 start_link(Name, Backend) ->
     io:fwrite("starting ~p, ~p~n", [Name, Backend]),
-    gen_server:start_link(?MODULE, {Name, Backend}, []).
+    gen_server:start_link(?MODULE, {owner, Name, Backend}, []).
 
-init({Name, Opts}) ->
+start_session(Name, Id) ->
+    gen_server:start_link(?MODULE, session(Name, Id)).
+
+session(Name, Id) ->
+    {Name, session, Id}.
+
+init({Name, session, _Id} = Alias) ->
+    Db = db(Name),
+    gproc:reg({p, l, {kvdb, session}}, Alias),
+    gproc:reg({n, l, {kvdb, Alias}}),
+    {ok, #st{db = Db}};
+init({owner, Name, Opts}) ->
     Backend = proplists:get_value(backend, Opts, ets),
     gproc:reg({n, l, {kvdb,Name}}, Backend),
     DbMod = mod(Backend),
@@ -401,10 +558,10 @@ init({Name, Opts}) ->
     NewOpts = lists:keystore(backend, 1,
 			     lists:keystore(file, 1, Opts, {file, File}),
 			     {backend, DbMod}),
-    case open(Name, NewOpts) of
+    case do_open(Name, NewOpts) of
 	{ok, Db} ->
 	    create_tables_(Db, Opts),
-	    {ok, #st{name = Name, db = Db}};
+	    {ok, #st{name = Name, db = Db, is_owner = true}};
 	{error,_} = Error ->
 	    io:fwrite("error opening kvdb database ~w:~n"
 		      "Error: ~p~n"
@@ -423,15 +580,21 @@ handle_call(Req, From, St) ->
 
 handle_call_({put, Tab, Obj}, _From, #st{db = Db} = St) ->
     {reply, do_put(Db, Tab, Obj), St};
+handle_call_({push, Tab, Obj}, _From, #st{db = Db} = St) ->
+    {reply, do_push(Db, Tab, Obj), St};
+handle_call_({put_attr, Table, Key, Attr, Value}, _From, #st{db = Db} = St) ->
+    {reply, do_put_attr(Db, Table, Key, Attr, Value), St};
+handle_call_({put_attrs, Tab, Key, As}, _From, #st{db = Db} = St) ->
+    {reply, do_put_attrs(Db, Tab, Key, As), St};
 handle_call_({delete, Tab, Key}, _From, #st{db = Db} = St) ->
     {reply, do_delete(Db, Tab, Key), St};
-handle_call_({add_table, Table}, _From, #st{db = Db} = St) ->
+handle_call_({add_table, Table, Opts}, _From, #st{db = Db} = St) ->
     io:fwrite("adding table ~p~n", [Table]),
-    {reply, do_add_table(Db, Table), St};
+    {reply, do_add_table(Db, Table, Opts), St};
 handle_call_({delete_table, Table}, _From, #st{db = Db} = St) ->
     io:fwrite("deleting table ~p~n", [Table]),
     {reply, do_delete_table(Db, Table), St};
-handle_call_(close, _From, #st{} = St) ->
+handle_call_(close, _From, #st{is_owner = true} = St) ->
     {stop, normal, ok, St};
 handle_call_(db, _From, #st{db = Db} = St) ->
     {reply, Db, St}.
@@ -483,9 +646,25 @@ create_tables_(Db, Opts) ->
 	[] ->
 	    ok;
 	Ts ->
+	    Tabs0 = lists:map(fun({T,Os}) ->
+				      {table_name(T), Os};
+				 (T) -> {table_name(T),[]}
+			      end, Ts),
 	    %% We don't warn if there are more tables than we've specified, and we certainly
 	    %% don't remove them. Ok to do nothing?
+	    Tables = internal_tables() ++ Tabs0,
 	    Existing = list_tables(Db),
-	    New = Ts -- Existing,
-	    [do_add_table(Db, T) || T <- New]
+	    New = lists:filter(fun({T,_}) -> not lists:member(T, Existing) end, Tables),
+	    [do_add_table(Db, T, Os) || {T, Os} <- New]
     end.
+
+internal_tables() ->
+    [].
+
+fix_attrs(As) ->
+    %% Treat the list of attributes as a proplist. This means there can be duplicates.
+    %% Return an orddict, where values from the head of the list take priority over values
+    %% from tail.
+    lists:foldr(fun({K,V}, Acc) when is_atom(K) ->
+			orddict:store(K, V, Acc)
+		end, orddict:new(), As).
