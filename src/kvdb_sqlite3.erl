@@ -12,7 +12,7 @@
 
 -export([open/2, close/1]).
 -export([add_table/3, delete_table/2, list_tables/1]).
--export([put/3, push/3, put_attr/5, put_attrs/4, get/3, pop/2, pop/3,
+-export([put/3, push/4, put_attr/5, put_attrs/4, get/3, pop/3, extract/3,
 	 get_attr/4, get_attrs/3, delete/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
@@ -121,11 +121,11 @@ put(#db{ref = Ref} = Db, Table, {Key, Attrs, Value}) ->
 	    Error
     end.
 
-push(#db{ref = Ref} = Db, Table, {Key, Value}) ->
+push(#db{ref = Ref} = Db, Table, Q, {Key, Value}) ->
     Type = type(Db, Table),
     if Type == fifo; Type == lifo ->
 	    Enc = encoding(Db, Table),
-	    ActualKey = kvdb_lib:actual_key(Type, Enc, Key),
+	    ActualKey = kvdb_lib:actual_key(Enc, Q, Key),
 	    case insert_or_replace(Ref, Table, [{key, {blob, enc(key, ActualKey, Enc)}},
 						{value, {blob, enc(value, Value, Enc)}}]) of
 		ok ->
@@ -136,11 +136,11 @@ push(#db{ref = Ref} = Db, Table, {Key, Value}) ->
        true ->
 	    {error, badarg}
     end;
-push(#db{ref = Ref} = Db, Table, {Key, Attrs, Value}) ->
+push(#db{ref = Ref} = Db, Table, Q, {Key, Attrs, Value}) ->
     Type = type(Db, Table),
     if Type == fifo; Type == lifo ->
 	    Enc = encoding(Db, Table),
-	    ActualKey = kvdb_lib:actual_key(type(Db, Table), Enc, Key),
+	    ActualKey = kvdb_lib:actual_key(Enc, Q, Key),
 	    case insert_or_replace(Ref, Table, [{key, {blob, enc(key, ActualKey, Enc)}},
 						{attrs, {blob, enc(attrs, Attrs, Enc)}},
 						{value, {blob, enc(value, Value, Enc)}}]) of
@@ -190,29 +190,43 @@ get(#db{ref = Ref} = Db, Table, Key) ->
 	    {error,not_found}
     end.
 
-pop(#db{} = Db, Table) ->
+pop(#db{} = Db, Table, Q) ->
     Type = type(Db, Table),
-    case case Type of fifo -> first(Db, Table); lifo -> last(Db, Table) end of
-	{ok, Obj} ->
+    Enc = encoding(Db, Table),
+    case case Type of
+	     %% fifo -> first(Db, Table);
+	     %% lifo -> last(Db, Table);
+	     fifo -> prefix_match(Db, Table, kvdb_lib:queue_prefix(Enc, Q),
+				  Enc, asc, 1);
+	     lifo -> prefix_match(Db, Table, kvdb_lib:queue_prefix(Enc, Q),
+				  Enc, desc, 1);
+	     _ -> error(illegal)
+	 end of
+	{[Obj], _} ->
 	    K = element(1, Obj),
-	    K1 = kvdb_lib:split_queue_key(Type, encoding(Db, Table), K),
+	    K1 = kvdb_lib:split_queue_key(Enc, K),
 	    delete(Db, Table, K),
 	    {ok, setelement(1, Obj, K1)};
-	done ->
+	{[], _} ->
 	    done;
 	{error, _} = Error ->
 	    Error
     end.
 
-pop(#db{} = Db, Table, Key) ->
-    case get(Db, Table, Key) of
-	{ok, Obj} ->
-	    K = element(1, Obj),
-	    K1 = kvdb_lib:split_queue_key(type(Db, Table), encoding(Db, Table), K),
-	    delete(Db, Table, Key),
-	    {ok, setelement(1, Obj, K1)};
-	{error, _} = Error ->
-	    Error
+extract(#db{} = Db, Table, Key) ->
+    Type = type(Db, Table),
+    if Type == fifo; Type == lifo ->
+	    case get(Db, Table, Key) of
+		{ok, Obj} ->
+		    K = element(1, Obj),
+		    K1 = kvdb_lib:split_queue_key(encoding(Db, Table), K),
+		    delete(Db, Table, Key),
+		    {ok, setelement(1, Obj, K1)};
+		{error, _} = Error ->
+		    Error
+	    end;
+       true ->
+	    error(illegal)
     end.
 
 get_attrs(#db{ref = Ref} = Db, Table, Key) ->
@@ -277,15 +291,22 @@ delete(#db{ref = Ref} = Db, Table, Key) ->
 prefix_match(Db, Table, Prefix) ->
     prefix_match(Db, Table, Prefix, 100).
 
-prefix_match(#db{ref = Ref} = Db, Table, Prefix, Limit)
-  when (is_integer(Limit) orelse Limit==infinity) ->
+prefix_match(Db, Table, Prefix, Limit) ->
     Enc = encoding(Db, Table),
+    EncPrefix = enc_prefix(key, Prefix, Enc),
+    prefix_match(Db, Table, EncPrefix, Enc, asc, Limit).
+
+prefix_match(#db{ref = Ref}, Table, EncPrefix, Enc, Dir, Limit)
+  when (is_integer(Limit) orelse Limit==infinity) ->
+    DirS = case Dir of
+	       asc  -> "ASC";
+	       desc -> "DESC"
+	   end,
     {ok, Handle} = sqlite3:prepare(Ref, ["SELECT * FROM ", Table,
 					 " WHERE key >= ?"
-					 " ORDER BY key ASC"]),
-    EncPrefix = enc_prefix(key, Prefix, Enc),
+					 " ORDER BY key ", DirS]),
     ok = sqlite3:bind(Ref, Handle, [{blob, EncPrefix}]),
-    prefix_match_(Ref, Handle, EncPrefix, Prefix, Enc, Limit, Limit, []).
+    prefix_match_(Ref, Handle, EncPrefix, EncPrefix, Enc, Limit, Limit, []).
 
 prefix_match_(Ref, Handle, Pfx, Pfx0, Enc, 0, Limit0, Acc) ->
     {lists:reverse(Acc), fun() ->
@@ -381,10 +402,10 @@ check_options([], _, Rec) ->
 ensure_schema(#db{ref = Ref} = Db) ->
     ETS = ets:new(kvdb_schema, [ordered_set]),
     Db1 = Db#db{metadata = ETS},
-    case lists:member(?SCHEMA_TABLE, sqlite3:list_tables(Ref)) of
+    case lists:member(?SCHEMA_TABLE, [to_bin(T) || T <- sqlite3:list_tables(Ref)]) of
 	false ->
 	    Columns = [{key, blob, primary_key}, {value, blob}],
-	    ok = sqlite3:create_table(Ref, ?SCHEMA_TABLE, Columns),
+	    sqlite3:create_table(Ref, ?SCHEMA_TABLE, Columns),
 	    Tab = #table{name = ?SCHEMA_TABLE, encoding = sext, columns = [key,value]},
 	    schema_write(Db1, {{table, ?SCHEMA_TABLE}, Tab}),
 	    schema_write(Db1, {{?SCHEMA_TABLE, encoding}, sext}),
@@ -393,6 +414,15 @@ ensure_schema(#db{ref = Ref} = Db) ->
 	    [ets:insert(ETS, X) || X <- whole_table(Ref, ?SCHEMA_TABLE, sext)],
 	    Db1
     end.
+
+to_bin(A) when is_atom(A) ->
+    atom_to_binary(A, latin1);
+to_bin(B) when is_binary(B) ->
+    B;
+to_bin(L) when is_list(L) ->
+    list_to_binary(L).
+
+
 
 whole_table(Ref, Table, Enc) ->
     SQL = ["SELECT * FROM ", Table],

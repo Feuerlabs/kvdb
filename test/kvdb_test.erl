@@ -20,7 +20,7 @@
 basic_test_() ->
     {setup,
      fun() ->
-	     application:start(gproc),
+	     ?debugVal(application:start(gproc)),
 	     %% dbg:tracer(),
 	     %% dbg:tpl(kvdb,x),
 	     %% dbg:ctp(kvdb,handle_call),
@@ -35,14 +35,15 @@ basic_test_() ->
 	     %% dbg:tp(eleveldb,x),
 	     %% dbg:tp(gproc,x),
 	     %% dbg:p(all,[c]),
-	     application:start(kvdb)
+	     ?debugVal(application:start(kvdb)),
+	     ok
      end,
      fun(_) ->
-	     application:stop(kvdb),
-	     application:stop(gproc)
+	     ?debugVal(application:stop(kvdb)),
+	     ?debugVal(application:stop(gproc))
      end,
      [{foreachx,
-       fun({Db, Enc, Backend}) -> create_db(Db, Enc, Backend) end,
+       fun({Db, Enc, Backend}) -> ?debugVal(catch create_db(Db, Enc, Backend)) end,
        [{{Db,E,B}, fun({Db1,_,_},_) ->
 			   [
 			    ?_test(?debugVal(fill_db(Db1)))
@@ -51,14 +52,20 @@ basic_test_() ->
 			    , ?_test(?debugVal(prefix_match(Db1)))
 			    , ?_test(?debugVal(add_delete_add_tab(Db1)))
 			    , ?_test(?debugVal(queue(Db1)))
+			    , ?_test(?debugVal(subqueues(Db1)))
 			   ]
 		   end} ||
-	   {Db,E,B} <- [{s,raw,sqlite3}, {e,raw,leveldb}]]
+	   {Db,E,B} <- [
+			{s1,sext,sqlite3},
+			{s2,raw,sqlite3},
+			{e1,sext,leveldb},
+			{e2,raw,leveldb}]]
       }]}.
 
 create_db(Name, Encoding, Backend) ->
-    File = db_file("test", Backend),
-    ok = delete_db_file("test", Backend),
+    F = "test" ++ atom_to_list(Name),
+    File = db_file(F, Backend),
+    ok = delete_db_file(F, Backend),
     {ok,Db} = kvdb:open(Name, [{file,File},{backend,Backend},{encoding,Encoding}]),
     kvdb:add_table(Db, type),
     kvdb:add_table(Db, value),
@@ -183,7 +190,7 @@ queue(Db, Type, Enc) ->
      {ok,_K3}] = [kvdb:push(Db, Q, Obj) || Obj <- [{<<"1">>,<<"a">>},
 						   {<<"2">>,<<"b">>},
 						   {<<"3">>,<<"c">>}]],
-    ?match(M, {ok, {<<"2">>,<<"b">>}}, kvdb:pop(Db, Q, K2)),
+    ?match(M, {ok, {<<"2">>,<<"b">>}}, kvdb:extract(Db, Q, K2)),
     if Type == lifo ->
 	    ?match(M, {ok, {<<"3">>,<<"c">>}}, catch kvdb:pop(Db, Q)),
 	    ?match(M, {ok, {<<"1">>,<<"a">>}}, catch kvdb:pop(Db, Q)),
@@ -195,6 +202,73 @@ queue(Db, Type, Enc) ->
     end,
     ?match(M, ok, catch kvdb:delete_table(Db, Q)),
     ok.
+
+subqueues(Db) ->
+    subqueues(Db, fifo, raw),
+    subqueues(Db, lifo, raw),
+    subqueues(Db, fifo, sext),
+    subqueues(Db, lifo, sext).
+
+subqueues(Db, Type, Enc) ->
+    T = <<"q_",(atom_to_binary(Type,latin1))/binary, "_",
+	  (atom_to_binary(Enc, latin1))/binary>>, % binary, parameterized table name
+    M = {Db,Type,Enc,T},
+    Qs = if Enc == raw -> [<<"q1">>, <<"q2">>, <<"q3">>];
+	    Enc == sext -> [1,2,3]
+	 end,
+    ?match(M, ok, kvdb:add_table(Db, T, [{type, Type},{encoding, Enc}])),
+    PushResults = 
+	[kvdb:push(Db, T, Q, Obj) || Q <- Qs,
+				     Obj <- [{<<"1">>,<<"a">>},
+					     {<<"2">>,<<"b">>},
+					     {<<"3">>,<<"c">>}]],
+    ?match(M, true, lists:all(fun({ok,_}) -> true; (_) -> false end, PushResults)),
+    if Type == lifo ->
+	    ?match(
+	       M,
+	       [{ok,{<<"3">>,<<"c">>}},
+		{ok, {<<"2">>,<<"b">>}},
+		{ok, {<<"1">>,<<"a">>}},
+		done], [kvdb:pop(Db, T, lists:nth(2,Qs)) || _ <- [1, 2, 3, 4]]),
+	    ?match(
+	       M,
+	       [{ok,{<<"3">>,<<"c">>}},
+		{ok, {<<"2">>,<<"b">>}},
+		{ok, {<<"1">>,<<"a">>}},
+		done], [kvdb:pop(Db, T, lists:nth(3,Qs)) || _ <- [1, 2, 3, 4]]),
+	    ?match(
+	       M,
+	       [{ok,{<<"3">>,<<"c">>}},
+		{ok, {<<"2">>,<<"b">>}},
+		{ok, {<<"1">>,<<"a">>}},
+		done], [kvdb:pop(Db, T, lists:nth(1,Qs)) || _ <- [1, 2, 3, 4]]);
+       Type == fifo ->
+	    ?match(
+	       M,
+	       [{ok,{<<"1">>,<<"a">>}},
+		{ok, {<<"2">>,<<"b">>}},
+		{ok, {<<"3">>,<<"c">>}},
+		done], [kvdb:pop(Db, T, lists:nth(2,Qs)) || _ <- [1, 2, 3, 4]]),
+	    ?match(
+	       M,
+	       [{ok,{<<"1">>,<<"a">>}},
+		{ok, {<<"2">>,<<"b">>}},
+		{ok, {<<"3">>,<<"c">>}},
+		done], [kvdb:pop(Db, T, lists:nth(3,Qs)) || _ <- [1, 2, 3, 4]]),
+	    ?match(
+	       M,
+	       [{ok,{<<"1">>,<<"a">>}},
+		{ok, {<<"2">>,<<"b">>}},
+		{ok, {<<"3">>,<<"c">>}},
+		done], [kvdb:pop(Db, T, lists:nth(1,Qs)) || _ <- [1, 2, 3, 4]])
+    end,
+    ?match(M, ok, catch kvdb:delete_table(Db, T)),
+    ok.
+
+
+
+
+
 
 %% These are not run automatically by eunit
 %%

@@ -7,7 +7,9 @@
 	 is_prefix/3,
 	 check_valid_encoding/1,
 	 actual_key/3,
-	 split_queue_key/3,
+	 split_queue_key/2,
+	 queue_prefix/2,
+	 queue_prefix/3,
 	 timestamp/0,
 	 timestamp_to_datetime/1]).
 
@@ -75,26 +77,30 @@ check_valid_encoding(E) when ?VALID_ENC(E) -> true;
 check_valid_encoding(E) -> error({illegal_encoding, E}).
 
 
-actual_key(fifo, Enc, Key) when Enc==raw; element(1, Enc) == raw ->
-    raw_queue_key(Key);
-actual_key(fifo, Enc, Key) when Enc==sext; element(1, Enc) == sext ->
-    {timestamp(), Key};
-actual_key(lifo, Enc, Key) when Enc==raw; element(1, Enc) == raw ->
-    raw_queue_key(Key);
-actual_key(lifo, Enc, Key) when Enc==sext; element(1, Enc) == sext ->
-    {timestamp(), Key};
-actual_key(_, _, Key) ->
-    Key.
+queue_prefix(Enc, Q) when Enc == raw; element(1, Enc) == raw ->
+    raw_queue_prefix(Q);
+queue_prefix(Enc, Q) when Enc == sext; element(1, Enc) == sext ->
+    sext:prefix({Q, '_', '_'}).
 
-split_queue_key(fifo, Enc, Key) when Enc == raw; element(1, Enc) == raw ->
+queue_prefix(Enc, Q, End) when Enc == raw; element(1, Enc) == raw ->
+    raw_queue_prefix(Q, End);
+queue_prefix(Enc, Q, End) when Enc == sext; element(1, Enc) == sext ->
+    %% The timestamp is a positive integer
+    case End of
+	first ->
+	    sext:prefix({Q, -1, '_'});
+	last ->
+	    sext:prefix({Q, a, '_'})
+    end.
+
+actual_key(Enc, Q, Key) when Enc==raw; element(1, Enc) == raw ->
+    raw_queue_key(Q, Key);
+actual_key(Enc, Q, Key) when Enc==sext; element(1, Enc) == sext ->
+    {Q, timestamp(), Key}.
+
+split_queue_key(Enc, Key) when Enc == raw; element(1, Enc) == raw ->
     split_raw_queue_key(Key);
-split_queue_key(fifo, Enc, {_TS, Key}) when Enc == sext; element(1, Enc) == sext ->
-    Key;
-split_queue_key(lifo, Enc, Key) when Enc == raw; element(1, Enc) == raw ->
-    split_raw_queue_key(Key);
-split_queue_key(lifo, Enc, {_TS, Key}) when Enc == sext; element(1, Enc) == sext ->
-    Key;
-split_queue_key(_, _, Key) ->
+split_queue_key(Enc, {_Q, _TS, Key}) when Enc == sext; element(1, Enc) == sext ->
     Key.
 
 timestamp() ->
@@ -113,12 +119,24 @@ timestamp_to_datetime(TS) ->
 
 %% Encode a 56-bit prefix using our special-epoch timestamp.
 %% It will not overflow until year 4293 - hopefully that will be sufficient.
-raw_queue_key(K) when is_binary(K) ->
+raw_queue_key(Q, K) when is_binary(Q), is_binary(K) ->
     TS = timestamp(),
-    <<TS:56/integer, K/binary>>.
+    <<Q/binary, "-", TS:56/integer, K/binary>>.
 
-split_raw_queue_key(<<_:56/integer, K/binary>>) ->
-    K.
+raw_queue_prefix(Q, first) ->
+    <<Q/binary, ",">>;
+raw_queue_prefix(Q, last) ->
+    <<Q/binary, ".">>.
+
+raw_queue_prefix(Q) ->
+    <<Q/binary, "-">>.
+
+split_raw_queue_key(K) ->
+    {P,_} = binary:match(K, <<"-">>),
+    <<_Q:P/binary, "-", _:56/integer, Key/binary>> = K,
+    Key.
+%% split_raw_queue_key(<<_:56/integer, K/binary>>) ->
+%%     K.
 
 is_prefix(Pfx, K, Enc) when is_binary(Pfx) ->
     case dec(key, K, Enc) of

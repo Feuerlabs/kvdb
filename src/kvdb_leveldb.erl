@@ -11,7 +11,7 @@
 
 -export([open/2, close/1]).
 -export([add_table/3, delete_table/2, list_tables/1]).
--export([put/3, push/3, get/3, pop/2, pop/3, delete/3]).
+-export([put/3, push/4, get/3, pop/3, extract/3, delete/3, list_queue/3]).
 -export([first/2, last/2, next/3, prev/3, prefix_match/3, prefix_match/4]).
 
 -import(kvdb_lib, [dec/3, enc/3]).
@@ -120,11 +120,11 @@ put(#db{ref = Ref} = Db, Table, Obj) ->
 	    Other
     end.
 
-push(#db{ref = Ref} = Db, Table, Obj) ->
+push(#db{ref = Ref} = Db, Table, Q, Obj) ->
     Type = type(Db, Table),
     if Type == fifo; Type == lifo ->
 	    Enc = encoding(Db, Table),
-	    ActualKey = kvdb_lib:actual_key(Type, Enc, element(1, Obj)),
+	    ActualKey = kvdb_lib:actual_key(Enc, Q, element(1, Obj)),
 	    {Key, Attrs, Value} = encode_obj(Enc, setelement(1, Obj, ActualKey)),
 	    put_attrs(Db, Table, Key, Attrs),
 	    case eleveldb:put(Ref, make_table_key(Table, Key), Value, []) of
@@ -134,36 +134,145 @@ push(#db{ref = Ref} = Db, Table, Obj) ->
 		    Other
 	    end;
        true ->
-	    {error, badarg}
+	    error(illegal)
     end.
 
 
 %% this functionality could be lifted up to kvdb.erl. There is no specific code, except
 %% for type/2 and encoding/2, and they should be generalized to Mod:table_info/2.
-pop(#db{} = Db, Table) ->
+pop(#db{} = Db, Table, Q) ->
     Type = type(Db, Table),
-    case case Type of fifo -> first(Db, Table); lifo -> last(Db, Table) end of
+    Enc = encoding(Db, Table),
+    case case Type of
+	     fifo -> q_first(Db, Table, Q, Enc);
+	     lifo -> q_last(Db, Table, Q, Enc)
+	 end of
 	{ok, Obj} ->
 	    K = element(1, Obj),
-	    K1 = kvdb_lib:split_queue_key(Type, encoding(Db, Table), K),
 	    delete(Db, Table, K),
-	    {ok, setelement(1, Obj, K1)};
+	    {ok, fix_q_obj(Obj, Enc)};
 	done ->
 	    done;
 	{error, _} = Error ->
 	    Error
     end.
 
-pop(#db{} = Db, Table, Key) ->
+extract(#db{} = Db, Table, Key) ->
+    Type = type(Db, Table),
     case get(Db, Table, Key) of
 	{ok, Obj} ->
-	    K = element(1, Obj),
-	    K1 = kvdb_lib:split_queue_key(type(Db, Table), encoding(Db, Table), K),
 	    delete(Db, Table, Key),
-	    {ok, setelement(1, Obj, K1)};
+	    case Type of
+		_ when Type==fifo; Type==lifo ->
+		    {ok, fix_q_obj(Obj, encoding(Db, Table))};
+		set ->
+		    {ok, Obj}
+	    end;
 	{error, _} = Error ->
 	    Error
     end.
+
+fix_q_obj(Obj, Enc) ->
+    K = element(1, Obj),
+    K1 = kvdb_lib:split_queue_key(Enc, K),
+    setelement(1, Obj, K1).
+
+q_first(#db{ref = Ref} = Db, Table, Q, Enc) ->
+    with_iterator(Ref, fun(I) -> q_first_(I, Db, Table, Q, Enc) end).
+
+q_first_(I, Db, Table, Q, Enc) ->
+    Prefix = make_table_key(Table, kvdb_lib:queue_prefix(Enc, Q, first)),
+    QPrefix = table_queue_prefix(Table, Q, Enc),
+    Sz = byte_size(QPrefix),
+    TPrefix = make_table_key(Table),
+    TPSz = byte_size(TPrefix),
+    case eleveldb:iterator_move(I, Prefix) of
+	{ok, <<QPrefix:Sz/binary, _/binary>> = K, V} ->
+	    <<TPrefix:TPSz/binary, Key/binary>> = K,
+	    case Key of
+		<<>> -> done;
+		_ ->
+		    {ok, decode_obj(Db, Enc, Table, Key, V)}
+	    end;
+	_ ->
+	    done
+    end.
+
+q_last(#db{ref = Ref} = Db, Table, Q, Enc) ->
+    with_iterator(Ref, fun(I) -> q_last_(I, Db, Table, Q, Enc) end).
+
+q_last_(I, Db, Table, Q, Enc) ->
+    Prefix = make_table_key(Table, kvdb_lib:queue_prefix(Enc, Q, last)),
+    QPrefix = table_queue_prefix(Table, Q, Enc),
+    Sz = byte_size(QPrefix),
+    TPrefix = make_table_key(Table),
+    TPSz = byte_size(TPrefix),
+    case eleveldb:iterator_move(I, Prefix) of
+	{ok, _K, _V} ->
+	    case eleveldb:iterator_move(I, prev) of
+		{ok, <<QPrefix:Sz/binary, _/binary>> = K1, V1} ->
+		    <<TPrefix:TPSz/binary, Key/binary>> = K1,
+		    case Key of
+			<<>> -> done;
+			_ ->
+			    {ok, decode_obj(Db, Enc, Table, Key, V1)}
+		    end;
+		_Other ->
+		    done
+	    end;
+	{error, invalid_iterator} ->
+	    %% likely stepped outside entire leveldb database
+	    case eleveldb:iterator_move(I, last) of
+		{ok, <<QPrefix:Sz/binary, _/binary>> = K, V} ->
+		    <<TPrefix:TPSz/binary, Key/binary>> = K,
+		    case Key of
+			<<>> -> done;
+			_ ->
+			    {ok, decode_obj(Db, Enc, Table, Key, V)}
+		    end;
+		_ ->
+		    done
+	    end
+    end.
+
+list_queue(#db{ref = Ref} = Db, Table, Q) ->
+    Type = type(Db, Table),
+    Enc = encoding(Db, Table),
+    QPrefix = table_queue_prefix(Table, Q, Enc),
+    TPrefix = make_table_key(Table),
+    with_iterator(
+      Ref,
+      fun(I) ->
+	      First = case Type of
+			  fifo -> q_last_(I, Db, Table, Q, Enc);
+			  lifo -> q_first_(I, Db, Table, Q, Enc)
+		      end,
+	      q_all_(First, I, Db, Table, q_all_dir(Type), Enc, QPrefix, TPrefix, [])
+      end).
+
+q_all_dir(fifo) -> prev;
+q_all_dir(lifo) -> next.
+
+q_all_({ok, Obj}, I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc) ->
+    Acc1 = [fix_q_obj(Obj, Enc)|Acc],
+    QSz = byte_size(QPrefix),
+    TSz = byte_size(TPrefix),
+    case eleveldb:iterator_move(I, Dir) of
+	{ok, <<QPrefix:QSz/binary, _/binary>> = K, V} ->
+	    <<TPrefix:TSz/binary, Key/binary>> = K,
+	    q_all_({ok, decode_obj(Db, Enc, Table, Key, V)},
+		   I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc1);
+	_ ->
+	    q_all_(done, I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc1)
+    end;
+q_all_(done, _, _, _, _, _, _, _, Acc) ->
+    Acc.
+
+
+table_queue_prefix(Table, Q, Enc) when Enc == raw; element(1, Enc) == raw ->
+    make_table_key(Table, Q);
+table_queue_prefix(Table, Q, Enc) when Enc == sext; element(1, Enc) == sext ->
+    make_table_key(Table, sext:prefix({Q,'_','_'})).
 
 
 get(#db{ref = Ref} = Db, Table, Key) ->
@@ -288,7 +397,7 @@ prefix_match_(I, Next, Db, Table, MatchKey, TPfx, Pfx, Enc, Limit, Limit0, Acc) 
 	{ok, <<MatchKey:Sz/binary, _/binary>> = Key, Val} ->
 	    PSz = byte_size(TPfx),
 	    <<TPfx:PSz/binary, K/binary>> = Key,
-	    case kvdb_lib:is_prefix(Pfx, K, Enc) of
+	    case (K =/= <<>> andalso kvdb_lib:is_prefix(Pfx, K, Enc)) of
 		true ->
 		    prefix_match_(I, next, Db, Table, MatchKey, TPfx, Pfx,
 				  Enc, decr(Limit), Limit0,
@@ -383,11 +492,15 @@ prev(#db{} = Db, Table, Rel) ->
     prev(Db, encoding(Db, Table), Table, Rel).
 
 prev(Db, Enc, Table, Rel) ->
-    case iterator_move(Db, Enc, Table, Rel, fun(A,B) -> A < B end, prev) of
+    try iterator_move(Db, Enc, Table, Rel, fun(A,B) -> A < B end, prev) of
 	{ok, {<<>>, _}} ->
 	    done;
 	Other ->
 	    Other
+    catch
+	error:Err ->
+	    io:fwrite("CRASH: ~p, ~p~n", [Err, erlang:get_stacktrace()]),
+	    error(Err)
     end.
 
 iterator_move(#db{ref = Ref} = Db, Enc, Table, Rel, Comp, Dir) ->
@@ -400,13 +513,17 @@ iterator_move(#db{ref = Ref} = Db, Enc, Table, Rel, Comp, Dir) ->
       fun(I) ->
 	      case eleveldb:iterator_move(I, RelKey) of
 		  {ok, <<TableKey:KeySize/binary, Key/binary>>, Value} ->
-		      case Comp(Key, EncRel) of
+		      case Key =/= <<>> andalso Comp(Key, EncRel) of
 			  true ->
 			      {ok, decode_obj(Db, Enc, Table, Key, Value)};
 			  false ->
 			      case eleveldb:iterator_move(I, Dir) of
 				  {ok, <<TableKey:KeySize/binary, Key2/binary>>, Value2} ->
-				      {ok, decode_obj(Db, Enc, Table, Key2, Value2)};
+				      case Key2 of
+					  <<>> -> done;
+					  _ ->
+					      {ok, decode_obj(Db, Enc, Table, Key2, Value2)}
+				      end;
 				  _ ->
 				      done
 			      end

@@ -14,7 +14,8 @@
 -export([start/0, open_db/2, info/2]).
 -export([open/2, close/1, db/1, start_session/2]).
 -export([add_table/2, add_table/3, delete_table/2, list_tables/1]).
--export([put/3, push/3, put_attr/5, put_attrs/4, get/3, pop/2, pop/3,
+-export([put/3, put_attr/5, put_attrs/4, get/3,
+	 push/3, push/4, pop/2, pop/3, extract/3, list_queue/3,
 	 get_attr/4, get_attrs/3, delete/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
@@ -23,9 +24,11 @@
 %% direct API towards an active kvdb instance
 -export([do_put/3,
 	 do_push/3,
+	 do_push/4,
 	 do_get/3,
 	 do_pop/2,
 	 do_pop/3,
+	 do_extract/3,
 	 do_get_attr/4,
 	 do_get_attrs/3,
 	 do_put_attr/5,
@@ -86,7 +89,10 @@ behaviour_info(callbacks) ->
      {delete_table,2},
      {put,3},
      {get,3},
-     {pop,2},
+     {push,4},
+     {pop,3},
+     {extract,3},
+     {list_queue, 3},
      {pop,3},
      {delete,3},
      %% {iterator,2},          % may remove
@@ -257,19 +263,23 @@ get(Name, Table, Key) ->
     #kvdb_ref{} = Ref = call(Name, db),
     ?KVDB_CATCH(do_get(Ref, Table, Key), [Name, Table, Key]).
 
-
 -spec do_push(Db::db_ref(), Table::table(), Obj::object()) ->
 		     {ok, ActualKey::any()} | {error, any()}.
+do_push(Db, Table, Obj) ->
+    do_push(Db, Table, <<>>, Obj).
 
-do_push(#kvdb_ref{} = DbRef, Table0, {_,_} = Obj) ->
-    Table = table_name(Table0),
-    do_push_(DbRef, Table, Obj);
-do_push(#kvdb_ref{} = DbRef, Table0, {K,As,V}) when is_list(As) ->
-    Table = table_name(Table0),
-    do_push_(DbRef, Table, {K, fix_attrs(As), V}).
+-spec do_push(Db::db_ref(), Table::table(), Q::any(), Obj::object()) ->
+		     {ok, ActualKey::any()} | {error, any()}.
 
-do_push_(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Obj) ->
-    case DbMod:push(Db, Table, validate(DbRef, put, Actual = encode(DbRef, obj, Obj))) of
+do_push(#kvdb_ref{} = DbRef, Table0, Q, {_,_} = Obj) ->
+    Table = table_name(Table0),
+    do_push_(DbRef, Table, Q, Obj);
+do_push(#kvdb_ref{} = DbRef, Table0, Q, {K,As,V}) when is_list(As) ->
+    Table = table_name(Table0),
+    do_push_(DbRef, Table, Q, {K, fix_attrs(As), V}).
+
+do_push_(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Q, Obj) ->
+    case DbMod:push(Db, Table, Q, validate(DbRef, put, Actual = encode(DbRef, obj, Obj))) of
 	{ok, ActualKey} ->
 	    on_update(DbRef, put, Actual),
 	    {ok, ActualKey};
@@ -280,36 +290,63 @@ do_push_(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Obj) ->
 -spec push(any(), Table::table(), Obj::object()) ->
 		 {ok, ActualKey::any()} | {error, any()}.
 push(Name, Table, Obj) when is_tuple(Obj) ->
-    ?KVDB_CATCH(call(Name, {push, Table, Obj}), [Name, Table, Obj]).
+    push(Name, Table, <<>>, Obj).
+
+-spec push(any(), Table::table(), Q::any(), Obj::object()) ->
+		 {ok, ActualKey::any()} | {error, any()}.
+push(Name, Table, Q, Obj) when is_tuple(Obj) ->
+    ?KVDB_CATCH(call(Name, {push, Table, Q, Obj}), [Name, Table, Q, Obj]).
 
 
 -spec do_pop(Db::db_ref(), Table::table()) ->
-		    {ok, binary()} | done | {error,any()}.
+		    {ok, object()} | done | {error,any()}.
 
-do_pop(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
+do_pop(Db, Table) ->
+    do_pop(Db, Table, <<>>).
+
+-spec do_pop(Db::db_ref(), Table::table(), Q::any()) ->
+		    {ok, object()} | done | {error,any()}.
+
+do_pop(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
     Table = table_name(Table0),
-    DbMod:pop(Db, Table).
+    DbMod:pop(Db, Table, Q).
 
 -spec pop(name(), Table::table()) ->
-		 {ok, binary()} | done | {error,any()}.
-
+		 {ok, object()} | done | {error,any()}.
 pop(Name, Table) ->
-    #kvdb_ref{} = Ref = call(Name, db),
-    ?KVDB_CATCH(do_pop(Ref, Table), [Name, Table]).
+    pop(Name, Table, <<>>).
 
--spec do_pop(Db::db_ref(), Table::table(), Key::binary()) ->
-		    {ok, binary()} | {error,any()}.
+-spec pop(name(), Table::table(), Q::any()) ->
+		 {ok, object()} | done | {error,any()}.
+pop(Name, Table, Q) ->
+    ?KVDB_CATCH(call(Name, {pop, Table, Q}), [Name, Table, Q]).
 
-do_pop(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
+-spec extract(name(), Table::table(), Key::binary()) ->
+		 {ok, object()} | {error,any()}.
+
+extract(Name, Table, Key) ->
+    ?KVDB_CATCH(call(Name, {extract, Table, Key}), [Name, Table, Key]).
+
+-spec do_extract(#kvdb_ref{}, Table::table(), Key::binary()) ->
+			{ok, object()} | {error,any()}.
+do_extract(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
     Table = table_name(Table0),
-    DbMod:pop(Db, Table, Key).
+    DbMod:extract(Db, Table, Key).
 
--spec pop(name(), Table::table(), Key::binary()) ->
-		 {ok, binary()} | {error,any()}.
 
-pop(Name, Table, Key) ->
+-spec list_queue(name(), Table::table(), Q::any()) ->
+			[object()] | {error,any()}.
+
+list_queue(Name, Table, Q) ->
     #kvdb_ref{} = Ref = call(Name, db),
-    ?KVDB_CATCH(do_pop(Ref, Table, Key), [Name, Table, Key]).
+    ?KVDB_CATCH(do_list_queue(Ref, Table, Q), [Name, Table, Q]).
+
+-spec do_list_queue(#kvdb_ref{}, Table::table(), Q::any()) ->
+			   [object()] | {error,any()}.
+do_list_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
+    Table = table_name(Table0),
+    DbMod:list_queue(Db, Table, Q).
+
 
 
 do_get_attr(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, Attr) when is_atom(Attr) ->
@@ -580,8 +617,12 @@ handle_call(Req, From, St) ->
 
 handle_call_({put, Tab, Obj}, _From, #st{db = Db} = St) ->
     {reply, do_put(Db, Tab, Obj), St};
-handle_call_({push, Tab, Obj}, _From, #st{db = Db} = St) ->
-    {reply, do_push(Db, Tab, Obj), St};
+handle_call_({push, Tab, Q, Obj}, _From, #st{db = Db} = St) ->
+    {reply, do_push(Db, Tab, Q, Obj), St};
+handle_call_({pop, Tab, Q}, _From, #st{db = Db} = St) ->
+    {reply, do_pop(Db, Tab, Q), St};
+handle_call_({extract, Tab, Key}, _From, #st{db = Db} = St) ->
+    {reply, do_extract(Db, Tab, Key), St};
 handle_call_({put_attr, Table, Key, Attr, Value}, _From, #st{db = Db} = St) ->
     {reply, do_put_attr(Db, Table, Key, Attr, Value), St};
 handle_call_({put_attrs, Tab, Key, As}, _From, #st{db = Db} = St) ->
