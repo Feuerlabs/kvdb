@@ -181,7 +181,8 @@ q_first(#db{ref = Ref} = Db, Table, Q, Enc) ->
     with_iterator(Ref, fun(I) -> q_first_(I, Db, Table, Q, Enc) end).
 
 q_first_(I, Db, Table, Q, Enc) ->
-    Prefix = make_table_key(Table, kvdb_lib:queue_prefix(Enc, Q, first)),
+    QPfx = kvdb_lib:queue_prefix(Enc, Q, first),
+    Prefix = make_table_key(Table, kvdb_lib:enc(key, QPfx, Enc)),
     QPrefix = table_queue_prefix(Table, Q, Enc),
     Sz = byte_size(QPrefix),
     TPrefix = make_table_key(Table),
@@ -202,7 +203,8 @@ q_last(#db{ref = Ref} = Db, Table, Q, Enc) ->
     with_iterator(Ref, fun(I) -> q_last_(I, Db, Table, Q, Enc) end).
 
 q_last_(I, Db, Table, Q, Enc) ->
-    Prefix = make_table_key(Table, kvdb_lib:queue_prefix(Enc, Q, last)),
+    QPfx = kvdb_lib:queue_prefix(Enc, Q, last),
+    Prefix = make_table_key(Table, kvdb_lib:enc(key, QPfx, Enc)),
     QPrefix = table_queue_prefix(Table, Q, Enc),
     Sz = byte_size(QPrefix),
     TPrefix = make_table_key(Table),

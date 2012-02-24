@@ -80,7 +80,7 @@ check_valid_encoding(E) -> error({illegal_encoding, E}).
 queue_prefix(Enc, Q) when Enc == raw; element(1, Enc) == raw ->
     raw_queue_prefix(Q);
 queue_prefix(Enc, Q) when Enc == sext; element(1, Enc) == sext ->
-    sext:prefix({Q, '_', '_'}).
+    {Q, '_', '_'}.
 
 queue_prefix(Enc, Q, End) when Enc == raw; element(1, Enc) == raw ->
     raw_queue_prefix(Q, End);
@@ -88,9 +88,9 @@ queue_prefix(Enc, Q, End) when Enc == sext; element(1, Enc) == sext ->
     %% The timestamp is a positive integer
     case End of
 	first ->
-	    sext:prefix({Q, -1, '_'});
+	    {Q, -1, '_'};
 	last ->
-	    sext:prefix({Q, a, '_'})
+	    {Q, a, '_'}
     end.
 
 actual_key(Enc, Q, Key) when Enc==raw; element(1, Enc) == raw ->

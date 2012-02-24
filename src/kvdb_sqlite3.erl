@@ -18,6 +18,9 @@
 -export([prefix_match/3, prefix_match/4]).
 -export([info/2]).
 
+%% for testing
+-export([prefix_match/5]).
+
 -import(kvdb_lib, [enc/3, dec/3, enc_prefix/3]).
 -include("kvdb.hrl").
 %-record(sqlite3_iter, {table, ref, db}).
@@ -193,13 +196,13 @@ get(#db{ref = Ref} = Db, Table, Key) ->
 pop(#db{} = Db, Table, Q) ->
     Type = type(Db, Table),
     Enc = encoding(Db, Table),
+    QPfx = kvdb_lib:queue_prefix(Enc, Q),
+    EncQPfx = kvdb_lib:enc_prefix(key, QPfx, Enc),
     case case Type of
 	     %% fifo -> first(Db, Table);
 	     %% lifo -> last(Db, Table);
-	     fifo -> prefix_match(Db, Table, kvdb_lib:queue_prefix(Enc, Q),
-				  Enc, asc, 1);
-	     lifo -> prefix_match(Db, Table, kvdb_lib:queue_prefix(Enc, Q),
-				  Enc, desc, 1);
+	     fifo -> prefix_match(Db, Table, EncQPfx, QPfx, Enc, 1, asc);
+	     lifo -> prefix_match(Db, Table, EncQPfx, QPfx, Enc, 1, desc);
 	     _ -> error(illegal)
 	 end of
 	{[Obj], _} ->
@@ -292,11 +295,14 @@ prefix_match(Db, Table, Prefix) ->
     prefix_match(Db, Table, Prefix, 100).
 
 prefix_match(Db, Table, Prefix, Limit) ->
+    prefix_match(Db, Table, Prefix, Limit, asc).
+
+prefix_match(Db, Table, Prefix, Limit, Dir) ->
     Enc = encoding(Db, Table),
     EncPrefix = enc_prefix(key, Prefix, Enc),
-    prefix_match(Db, Table, EncPrefix, Enc, asc, Limit).
+    prefix_match(Db, Table, EncPrefix, Prefix, Enc, Limit, Dir).
 
-prefix_match(#db{ref = Ref}, Table, EncPrefix, Enc, Dir, Limit)
+prefix_match(#db{ref = Ref}, Table, EncPrefix, Prefix, Enc, Limit, Dir)
   when (is_integer(Limit) orelse Limit==infinity) ->
     DirS = case Dir of
 	       asc  -> "ASC";
@@ -306,26 +312,79 @@ prefix_match(#db{ref = Ref}, Table, EncPrefix, Enc, Dir, Limit)
 					 " WHERE key >= ?"
 					 " ORDER BY key ", DirS]),
     ok = sqlite3:bind(Ref, Handle, [{blob, EncPrefix}]),
-    prefix_match_(Ref, Handle, EncPrefix, EncPrefix, Enc, Limit, Limit, []).
+    SH = track_resource(Ref, Handle),
+    prefix_match_([], Dir, Ref, SH, Table, EncPrefix, Prefix, Enc, Limit, Limit, []).
 
-prefix_match_(Ref, Handle, Pfx, Pfx0, Enc, 0, Limit0, Acc) ->
-    {lists:reverse(Acc), fun() ->
-				 prefix_match_(Ref, Handle, Pfx, Pfx0, Enc,
-					       Limit0, Limit0, [])
-			 end};
-prefix_match_(Ref, Handle, Pfx, Pfx0, Enc, Limit, Limit0, Acc) ->
+track_resource(Ref,Handle) ->
+    %% spawn a resource monitor, since a lingering prepare statement may lock the
+    %% database (I think...)
+    Pid = spawn(fun() -> receive finalize ->
+				 sqlite3:finalize(Ref, Handle)
+			 end
+		end),
+    N = resource:notify_when_destroyed(Pid, finalize),
+    {Pid, N, Handle}.
+
+finalize(Ref, {Pid, _Trk, Handle}) ->
+    exit(Pid, kill),
+    sqlite3:finalize(Ref, Handle).
+
+prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0, Enc, 0, Limit0, Acc) ->
+    finalize(Ref, Handle),
+    Cont = if Prev == []; Limit0 == 0 -> fun() -> done end;
+	      true ->
+		   SH = case Dir of
+			    asc ->
+				{ok, NewHandle} =
+				    sqlite3:prepare(
+				      Ref,
+				      ["SELECT * FROM ", Table,
+				       " WHERE key > ?"
+				       " ORDER BY key ASC"]),
+				ok = sqlite3:bind(Ref, NewHandle, [{blob, Prev}]),
+				track_resource(Ref, NewHandle);
+			    desc ->
+				{ok, NewHandle} =
+				    sqlite3:prepare(
+				      Ref,
+				      ["SELECT * FROM ", Table,
+				       " WHERE key >= ? AND key < ?"
+				       " ORDER BY key DESC"]),
+				ok = sqlite3:bind(Ref, NewHandle, [{blob, Pfx},
+								   {blob, Prev}]),
+				track_resource(Ref, NewHandle)
+			end,
+		   fun() ->
+			   prefix_match_(Prev, Dir, Ref, SH, Table, Pfx, Pfx0, Enc,
+					 Limit0, Limit0, [])
+		   end
+	   end,
+    {lists:reverse(Acc), Cont};
+    %% {lists:reverse(Acc), fun() ->
+    %% 				 prefix_match_(Ref, Handle, Pfx, Pfx0, Enc,
+    %% 					       Limit0, Limit0, [])
+    %% 			 end};
+prefix_match_(_Prev, Dir, Ref, {_, _, Handle} = SH, Table,
+	      Pfx, Pfx0, Enc, Limit, Limit0, Acc) ->
     case sqlite3:next(Ref, Handle) of
 	done ->
-	    sqlite3:finalize(Ref, Handle),
+	    finalize(Ref, SH),
 	    {lists:reverse(Acc), fun() -> done end};
 	Other ->
 	    {blob,K} = element(1, Other),
 	    case is_prefix(Pfx, K, Pfx0, Enc) of
 		true ->
 		    NewAcc = [decode_obj(Other, Enc) | Acc],
-		    prefix_match_(Ref, Handle, Pfx, Pfx0, Enc, decr(Limit), Limit0, NewAcc);
+		    prefix_match_(K, Dir, Ref, SH, Table,
+				  Pfx, Pfx0, Enc, decr(Limit), Limit0, NewAcc);
 		false ->
-		    {lists:reverse(Acc), fun() -> done end}
+		    if Dir == desc, K > Pfx ->
+			    prefix_match_(K, Dir, Ref, SH, Table,
+					  Pfx, Pfx0, Enc, Limit, Limit0, Acc);
+		       true ->
+			    finalize(Ref, SH),
+			    {lists:reverse(Acc), fun() -> done end}
+		    end
 	    end
     end.
 

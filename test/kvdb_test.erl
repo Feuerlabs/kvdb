@@ -14,6 +14,15 @@
 
 -define(match(X, A, B), ?assertMatch({X,A}, {X,B})).
 
+-define(CATCH(E),
+	try (E)
+	catch
+	    error:Err ->
+		io:fwrite(user, "~w/~w: ERROR: ~p~n    ~p~n", [?MODULE,?LINE,Err,
+							       erlang:get_stacktrace()]),
+		{'EXIT', Err}
+	end).
+
 -compile(export_all).
 
 %%
@@ -152,6 +161,7 @@ prefix_match(Db) ->
     SortedTypes = lists:sort(types()),
     Subset = [{K,V} || {K,V} <- SortedTypes,
 		       is_tuple(binary:match(K, Prefix))],
+    ?debugVal(Subset),
     ?match(Db, {SortedTypes, _}, catch kvdb:prefix_match(Db, type, <<>>)),
     ?match(Db, {Subset, _}, catch kvdb:prefix_match(Db, type, Prefix)),
     ok.
@@ -183,7 +193,9 @@ queue(Db) ->
 
 queue(Db, Type, Enc) ->
     M = {Db,Type,Enc},
-    Q = <<"q_1234">>, % binary, parameterized table name
+    Q = <<"q1_", (atom_to_binary(Db, latin1))/binary, "_",
+	  (atom_to_binary(Type,latin1))/binary, "_",
+	  (atom_to_binary(Enc, latin1))/binary>>, % binary, parameterized table name
     ?match(M, ok, kvdb:add_table(Db, Q, [{type, Type},{encoding, Enc}])),
     [{ok,_K1},
      {ok,K2},
@@ -196,8 +208,8 @@ queue(Db, Type, Enc) ->
 	    ?match(M, {ok, {<<"1">>,<<"a">>}}, catch kvdb:pop(Db, Q)),
 	    ?match(M, done, catch kvdb:pop(Db, Q));
        Type == fifo ->
-	    ?match(M, {ok, {<<"1">>,<<"a">>}}, catch kvdb:pop(Db, Q)),
-	    ?match(M, {ok, {<<"3">>,<<"c">>}}, catch kvdb:pop(Db, Q)),
+	    ?match(M, {ok, {<<"1">>,<<"a">>}}, ?CATCH(kvdb:pop(Db, Q))),
+	    ?match(M, {ok, {<<"3">>,<<"c">>}}, ?CATCH(kvdb:pop(Db, Q))),
 	    ?match(M, done, catch kvdb:pop(Db, Q))
     end,
     ?match(M, ok, catch kvdb:delete_table(Db, Q)),
@@ -217,7 +229,7 @@ subqueues(Db, Type, Enc) ->
 	    Enc == sext -> [1,2,3]
 	 end,
     ?match(M, ok, kvdb:add_table(Db, T, [{type, Type},{encoding, Enc}])),
-    PushResults = 
+    PushResults =
 	[kvdb:push(Db, T, Q, Obj) || Q <- Qs,
 				     Obj <- [{<<"1">>,<<"a">>},
 					     {<<"2">>,<<"b">>},
