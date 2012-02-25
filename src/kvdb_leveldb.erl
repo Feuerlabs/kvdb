@@ -326,7 +326,7 @@ get_attrs_({ok, K, V}, I, Prefix) ->
     [{sext:decode(K), binary_to_term(V)}|
      get_attrs_(prefix_move(I, Prefix, next), I, Prefix)];
 get_attrs_(done, _, _) ->
-   ok.
+   [].
 
 delete_attrs(#db{ref = Ref} = Db, Table, Key) ->
     case encoding(Db, Table) of
@@ -368,7 +368,7 @@ prefix_match(#db{ref = Ref} = Db, Table, Prefix, Limit)
     with_iterator(
       Ref,
       fun(I) ->
-	      if Prefix == <<>> ->
+	      if EncPrefix == <<>> ->
 		      case eleveldb:iterator_move(I, TablePrefix) of
 			  {ok, <<TablePrefix:TabPfxSz/binary>>, _} ->
 			      prefix_match_(I, next, Db, Table, MatchKey, TablePrefix,
@@ -562,12 +562,8 @@ decode_obj_v(Db, Enc, Table, Key, V) ->
     Value = dec(value, V, Enc),
     case Enc of
 	{_, _, _} ->
-	    case get_attrs(Db, Table, Key) of
-		{ok, Attrs} ->
-		    {Key, Attrs, Value};
-		{error, not_found} ->
-		    {Key, [], Value}
-	    end;
+	    Attrs = get_attrs(Db, Table, Key),
+	    {Key, Attrs, Value};
 	_ ->
 	    {Key, Value}
     end.

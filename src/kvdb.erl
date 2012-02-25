@@ -575,12 +575,23 @@ start_session(Name, Id) ->
 session(Name, Id) ->
     {Name, session, Id}.
 
-init({Name, session, _Id} = Alias) ->
+init(Alias) ->
+    try init_(Alias)
+    catch
+	error:Reason ->
+	    Trace = erlang:get_stacktrace(),
+	    error_logger:error_report([{error_opening_kvdb_db, Alias},
+				       {error, Reason},
+				       {stacktrace, Trace}]),
+	    error({Reason, Trace}, [Alias])
+    end.
+
+init_({Name, session, _Id} = Alias) ->
     Db = db(Name),
     gproc:reg({p, l, {kvdb, session}}, Alias),
     gproc:reg({n, l, {kvdb, Alias}}),
     {ok, #st{db = Db}};
-init({owner, Name, Opts}) ->
+init_({owner, Name, Opts}) ->
     Backend = proplists:get_value(backend, Opts, ets),
     gproc:reg({n, l, {kvdb,Name}}, Backend),
     DbMod = mod(Backend),

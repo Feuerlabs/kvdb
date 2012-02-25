@@ -25,19 +25,23 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    Children =
-	case application:get_env(databases) of
-	    {ok, DBs} when is_list(DBs) ->
-		childspecs(DBs);
-	    _ ->
-		[]
-	end,
+    Children = childspecs(DBs = get_databases()),
+    io:fwrite("DBs = ~p~n", [DBs]),
     {ok, { {one_for_one, 5, 10}, Children} }.
 
 
 childspecs(DBs) ->
-    [childspec(DB) || DB <- DBs].
+    [childspec(DB) || DB <- lists:concat(DBs)].
 
 childspec({Name, Opts}) ->
     {Name, {kvdb, start_link, [Name, Opts]},
      permanent, 5000, worker, [kvdb]}.
+
+get_databases() ->
+    OtherDBs = [DB || {_, DB} <- setup:find_env_vars(kvdb_databases)],
+    case application:get_env(databases) of
+	{ok, DBs} when is_list(DBs) ->
+	    [DBs | OtherDBs];
+	_ ->
+	    OtherDBs
+    end.
