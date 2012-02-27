@@ -77,7 +77,7 @@ read(Key) when is_binary(Key) ->
 %% @end
 write({K, As, Data} = Obj) when is_binary(K), is_list(As), is_binary(Data) ->
     case kvdb:put(?MODULE, data, Obj) of
-	{ok, _} ->
+	ok ->
 	    ok;
 	{error, _} = Error ->
 	    Error
