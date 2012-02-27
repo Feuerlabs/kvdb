@@ -38,7 +38,14 @@ childspec({Name, Opts}) ->
      permanent, 5000, worker, [kvdb]}.
 
 get_databases() ->
-    OtherDBs = [DB || {_, DB} <- setup:find_env_vars(kvdb_databases)],
+    %% If 'setup' is available, query for other databases
+    OtherDBs =
+	case lists:keymember(setup, 1, application:loaded_applications()) of
+	    true ->
+		[DB || {_, DB} <- setup:find_env_vars(kvdb_databases)];
+	    false ->
+		[]
+	end,
     case application:get_env(databases) of
 	{ok, DBs} when is_list(DBs) ->
 	    [DBs | OtherDBs];
