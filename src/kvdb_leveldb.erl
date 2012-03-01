@@ -11,12 +11,23 @@
 
 -export([open/2, close/1]).
 -export([add_table/3, delete_table/2, list_tables/1]).
--export([put/3, push/4, get/3, pop/3, extract/3, delete/3, list_queue/3]).
+-export([put/3, push/4, get/3, pop/3, extract/3, delete/3, list_queue/3,
+	 list_queue/5, is_queue_empty/3]).
 -export([first/2, last/2, next/3, prev/3, prefix_match/3, prefix_match/4]).
+-export([get_schema_mod/2]).
 
 -import(kvdb_lib, [dec/3, enc/3]).
 
 -include("kvdb.hrl").
+
+get_schema_mod(Db, Default) ->
+    case schema_lookup(Db, schema_mod, undefined) of
+	undefined ->
+	    schema_write(Db, {schema_mod, Default}),
+	    Default;
+	M ->
+	    M
+    end.
 
 open(Db0, Options) ->
     Db = make_string(Db0),
@@ -31,7 +42,7 @@ open(Db0, Options) ->
 	  end,
     case Res of
 	{ok, Ref} ->
-	    {ok, ensure_schema(#db{ref = Ref, encoding = E})};
+	    {ok, ensure_schema(#db{ref = Ref, encoding = E}, Options)};
 	Error ->
 	    Error
     end.
@@ -140,45 +151,104 @@ push(#db{ref = Ref} = Db, Table, Q, Obj) ->
 
 %% this functionality could be lifted up to kvdb.erl. There is no specific code, except
 %% for type/2 and encoding/2, and they should be generalized to Mod:table_info/2.
+%% pop(#db{} = Db, Table, Q) ->
+%%     Type = type(Db, Table),
+%%     Enc = encoding(Db, Table),
+%%     case case Type of
+%% 	     fifo -> q_first(Db, Table, Q, Enc);
+%% 	     lifo -> q_last(Db, Table, Q, Enc)
+%% 	 end of
+%% 	{ok, Obj} ->
+%% 	    K = element(1, Obj),
+%% 	    delete(Db, Table, K),
+%% 	    {ok, fix_q_obj(Obj, Enc)};
+%% 	done ->
+%% 	    done;
+%% 	{error, _} = Error ->
+%% 	    Error
+%%     end.
+
+%% pop1(#db{} = Db, Table, Q) ->
+%%     Enc = encoding(Db, Table),
+%%     case list_queue(Db, Table, Q, false, 1) of
+%% 	[Obj] ->
+%% 	    K = element(1, Obj),
+%% 	    delete(Db, Table, K),
+%% 	    {ok, fix_q_obj(Obj, Enc)};
+%% 	[] ->
+%% 	    done;
+%% 	{error, _} = Error ->
+%% 	    Error
+%%     end.
+
 pop(#db{} = Db, Table, Q) ->
-    Type = type(Db, Table),
     Enc = encoding(Db, Table),
-    case case Type of
-	     fifo -> q_first(Db, Table, Q, Enc);
-	     lifo -> q_last(Db, Table, Q, Enc)
-	 end of
-	{ok, Obj} ->
+    case list_queue(Db, Table, Q, false, 2) of
+	[Obj|More] ->
 	    K = element(1, Obj),
 	    delete(Db, Table, K),
-	    {ok, fix_q_obj(Obj, Enc)};
-	done ->
+	    {ok, fix_q_obj(Obj, Enc), More == []};
+	[] ->
 	    done;
 	{error, _} = Error ->
 	    Error
     end.
 
+
 extract(#db{} = Db, Table, Key) ->
-    Type = type(Db, Table),
-    case get(Db, Table, Key) of
-	{ok, Obj} ->
-	    delete(Db, Table, Key),
-	    case Type of
-		_ when Type==fifo; Type==lifo ->
-		    {ok, fix_q_obj(Obj, encoding(Db, Table))};
-		set ->
-		    {ok, Obj}
-	    end;
-	{error, _} = Error ->
-	    Error
+    case type(Db, Table) of
+	set -> error(illegal);
+	Type ->
+	    Enc = encoding(Db, Table),
+	    case get(Db, Table, Key) of
+		{ok, Obj} ->
+		    delete(Db, Table, Key),
+		    case Type of
+			_ when Type==fifo; Type==lifo ->
+			    {Q, _} = kvdb_lib:split_queue_key(Enc, Key),
+			    IsEmpty = list_queue(Db, Table, Q, false, 1) == [],
+			    {ok, fix_q_obj(Obj, Enc), Q, IsEmpty};
+			set ->
+			    {ok, Obj}
+		    end;
+		{error, _} = Error ->
+		    Error
+	    end
     end.
+
+
+is_queue_empty(#db{ref = Ref} = Db, Table, Q) ->
+    Enc = encoding(Db, Table),
+    QPfx = kvdb_lib:queue_prefix(Enc, Q, first),
+    Prefix = make_table_key(Table, kvdb_lib:enc(key, QPfx, Enc)),
+    QPrefix = table_queue_prefix(Table, Q, Enc),
+    Sz = byte_size(QPrefix),
+    TPrefix = make_table_key(Table),
+    TPSz = byte_size(TPrefix),
+    with_iterator(
+      Ref,
+      fun(I) ->
+	      case eleveldb:iterator_move(I, Prefix) of
+		  {ok, <<QPrefix:Sz/binary, _/binary>> = K, _} ->
+		      <<TPrefix:TPSz/binary, Key/binary>> = K,
+		      case Key of
+			  <<>> -> true;
+			  _ ->
+			      false
+		      end;
+		  _ ->
+		      true
+	      end
+      end).
+
 
 fix_q_obj(Obj, Enc) ->
     K = element(1, Obj),
-    K1 = kvdb_lib:split_queue_key(Enc, K),
+    {_, K1} = kvdb_lib:split_queue_key(Enc, K),
     setelement(1, Obj, K1).
 
-q_first(#db{ref = Ref} = Db, Table, Q, Enc) ->
-    with_iterator(Ref, fun(I) -> q_first_(I, Db, Table, Q, Enc) end).
+%% q_first(#db{ref = Ref} = Db, Table, Q, Enc) ->
+%%     with_iterator(Ref, fun(I) -> q_first_(I, Db, Table, Q, Enc) end).
 
 q_first_(I, Db, Table, Q, Enc) ->
     QPfx = kvdb_lib:queue_prefix(Enc, Q, first),
@@ -191,7 +261,7 @@ q_first_(I, Db, Table, Q, Enc) ->
 	{ok, <<QPrefix:Sz/binary, _/binary>> = K, V} ->
 	    <<TPrefix:TPSz/binary, Key/binary>> = K,
 	    case Key of
-		<<>> -> done;
+		<<>> -> [];
 		_ ->
 		    {ok, decode_obj(Db, Enc, Table, Key, V)}
 	    end;
@@ -199,8 +269,8 @@ q_first_(I, Db, Table, Q, Enc) ->
 	    done
     end.
 
-q_last(#db{ref = Ref} = Db, Table, Q, Enc) ->
-    with_iterator(Ref, fun(I) -> q_last_(I, Db, Table, Q, Enc) end).
+%% q_last(#db{ref = Ref} = Db, Table, Q, Enc) ->
+%%     with_iterator(Ref, fun(I) -> q_last_(I, Db, Table, Q, Enc) end).
 
 q_last_(I, Db, Table, Q, Enc) ->
     QPfx = kvdb_lib:queue_prefix(Enc, Q, last),
@@ -237,7 +307,11 @@ q_last_(I, Db, Table, Q, Enc) ->
 	    end
     end.
 
-list_queue(#db{ref = Ref} = Db, Table, Q) ->
+list_queue(Db, Table, Q) ->
+    list_queue(Db, Table, Q, true, infinity).
+
+list_queue(#db{ref = Ref} = Db, Table, Q, Fix, Limit)
+  when Limit > 0 ->  % includes 'infinity'
     Type = type(Db, Table),
     Enc = encoding(Db, Table),
     QPrefix = table_queue_prefix(Table, Q, Enc),
@@ -246,29 +320,39 @@ list_queue(#db{ref = Ref} = Db, Table, Q) ->
       Ref,
       fun(I) ->
 	      First = case Type of
-			  fifo -> q_last_(I, Db, Table, Q, Enc);
-			  lifo -> q_first_(I, Db, Table, Q, Enc)
+			  fifo -> q_first_(I, Db, Table, Q, Enc);
+			  lifo -> q_last_(I, Db, Table, Q, Enc)
 		      end,
-	      q_all_(First, I, Db, Table, q_all_dir(Type), Enc, QPrefix, TPrefix, [])
-      end).
+	      q_all_(First, Limit, Fix, I, Db, Table, 
+		     q_all_dir(Type), Enc, QPrefix, TPrefix, [])
+      end);
+list_queue(_, _, _, _, 0) ->
+    [].
 
-q_all_dir(fifo) -> prev;
-q_all_dir(lifo) -> next.
+q_all_dir(fifo) -> next;
+q_all_dir(lifo) -> prev.
 
-q_all_({ok, Obj}, I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc) ->
-    Acc1 = [fix_q_obj(Obj, Enc)|Acc],
-    QSz = byte_size(QPrefix),
-    TSz = byte_size(TPrefix),
-    case eleveldb:iterator_move(I, Dir) of
-	{ok, <<QPrefix:QSz/binary, _/binary>> = K, V} ->
-	    <<TPrefix:TSz/binary, Key/binary>> = K,
-	    q_all_({ok, decode_obj(Db, Enc, Table, Key, V)},
-		   I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc1);
+q_all_({ok, Obj}, Limit, Fix, I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc)
+  when Limit > 0 ->
+    Acc1 = [if Fix -> fix_q_obj(Obj, Enc);
+	       true -> Obj end|Acc],
+    case decr(Limit) of
+	Limit1 when Limit1 > 0 ->
+	    QSz = byte_size(QPrefix),
+	    TSz = byte_size(TPrefix),
+	    case eleveldb:iterator_move(I, Dir) of
+		{ok, <<QPrefix:QSz/binary, _/binary>> = K, V} ->
+		    <<TPrefix:TSz/binary, Key/binary>> = K,
+		    q_all_({ok, decode_obj(Db, Enc, Table, Key, V)}, Limit1, Fix,
+			   I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc1);
+		_ ->
+		    q_all_(done, Limit1, Fix, I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc1)
+	    end;
 	_ ->
-	    q_all_(done, I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc1)
+	    lists:reverse(Acc1)
     end;
-q_all_(done, _, _, _, _, _, _, _, Acc) ->
-    Acc.
+q_all_(done, _, _, _, _, _, _, _, _, _, Acc) ->
+    lists:reverse(Acc).
 
 
 table_queue_prefix(Table, Q, Enc) when Enc == raw; element(1, Enc) == raw ->
@@ -586,6 +670,8 @@ encoding(#db{encoding = Enc} = Db, Table) ->
 
 check_options([{type, T}|Tl], Db, Rec) when T==set; T==fifo; T==lifo ->
     check_options(Tl, Db, Rec#table{type = T});
+check_options([{schema, S}|Tl], Db, Rec) when is_atom(S) ->
+    check_options(Tl, Db, Rec#table{schema = S});
 check_options([{encoding, E}|Tl], Db, Rec) ->
     Rec1 = Rec#table{encoding = E},
     kvdb_lib:check_valid_encoding(E),
@@ -593,7 +679,7 @@ check_options([{encoding, E}|Tl], Db, Rec) ->
 check_options([], _, Rec) ->
     Rec.
 
-ensure_schema(#db{ref = Ref} = Db) ->
+ensure_schema(#db{ref = Ref} = Db, Opts) ->
     ETS = ets:new(kvdb_schema, [ordered_set]),
     Db1 = Db#db{metadata = ETS},
     case eleveldb:get(Ref, make_table_key(?SCHEMA_TABLE, <<>>), []) of
@@ -606,6 +692,7 @@ ensure_schema(#db{ref = Ref} = Db) ->
 	    schema_write(Db1, {{table, ?SCHEMA_TABLE}, Tab}),
 	    schema_write(Db1, {{?SCHEMA_TABLE, encoding}, sext}),
 	    schema_write(Db1, {{?SCHEMA_TABLE, type}, set}),
+	    schema_write(Db1, {schema_mod, proplists:get_value(schema, Opts, kvdb_schema)}),
 	    Db1
     end.
 

@@ -6,7 +6,7 @@
 -opaque db_ref()  :: #kvdb_ref{}.
 
 -record(db, {ref, encoding = sext, metadata}).
--record(table, {name, type = set, encoding = sext, columns, indexes = []}).
+-record(table, {name, type = set, encoding = sext, columns, schema, indexes = []}).
 
 -opaque db() :: #db{}.
 

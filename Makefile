@@ -1,6 +1,6 @@
-.PHONE:	doc
+.PHONY:	test doc
 
-all: compile test doc
+all: compile
 
 compile:
 	./rebar compile

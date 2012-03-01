@@ -100,8 +100,8 @@ actual_key(Enc, Q, Key) when Enc==sext; element(1, Enc) == sext ->
 
 split_queue_key(Enc, Key) when Enc == raw; element(1, Enc) == raw ->
     split_raw_queue_key(Key);
-split_queue_key(Enc, {_Q, _TS, Key}) when Enc == sext; element(1, Enc) == sext ->
-    Key.
+split_queue_key(Enc, {Q, _TS, Key}) when Enc == sext; element(1, Enc) == sext ->
+    {Q, Key}.
 
 timestamp() ->
     %% Invented epoc is {1258,0,0}, or 2009-11-12, 4:26:40
@@ -133,8 +133,8 @@ raw_queue_prefix(Q) ->
 
 split_raw_queue_key(K) ->
     {P,_} = binary:match(K, <<"-">>),
-    <<_Q:P/binary, "-", _:56/integer, Key/binary>> = K,
-    Key.
+    <<Q:P/binary, "-", _:56/integer, Key/binary>> = K,
+    {Q, Key}.
 %% split_raw_queue_key(<<_:56/integer, K/binary>>) ->
 %%     K.
 

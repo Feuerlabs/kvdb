@@ -1,18 +1,41 @@
 -module(kvdb_schema).
 
--export([validate/3, on_update/3, encode/3, decode/3]).
+-export([
+	 validate/3, validate_attr/3,
+	 on_update/4, encode/3, decode/3, encode_attr/3
+	]).
 -export([write/2, read/1, read/2]).
 
+-export([behaviour_info/1]).
+
 -include("kvdb.hrl").
+
+behaviour_info(callbacks) ->
+    [{validate, 3},
+     {validate_attr, 3},
+     {on_update, 4},
+     {encode, 3},
+     {decode, 3},
+     {encode_attr, 3},
+     {decode_attr, 3}];
+behaviour_info(_) ->
+    undefined.
+
 
 validate(_Db, _Type, Obj) ->
     Obj.
 
-on_update(_Db, _Op, Obj) ->
+validate_attr(_Db, _Type, Attr) ->
+    Attr.
+
+on_update(_Op, _Db, _Table, _Obj) ->
     ok.
 
 encode(_Db, _Type, Obj) ->
     Obj.
+
+encode_attr(_Db, _Type, Attr) ->
+    Attr.
 
 decode(_Db, _Type, Obj) ->
     Obj.

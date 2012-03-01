@@ -15,7 +15,7 @@
 -export([open/2, close/1, db/1, start_session/2]).
 -export([add_table/2, add_table/3, delete_table/2, list_tables/1]).
 -export([put/3, put_attr/5, put_attrs/4, get/3,
-	 push/3, push/4, pop/2, pop/3, extract/3, list_queue/3,
+	 push/3, push/4, pop/2, pop/3, extract/3, list_queue/3, is_queue_empty/3,
 	 get_attr/4, get_attrs/3, delete/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
@@ -29,6 +29,8 @@
 	 do_pop/2,
 	 do_pop/3,
 	 do_extract/3,
+	 do_list_queue/3,
+	 do_is_queue_empty/3,
 	 do_get_attr/4,
 	 do_get_attrs/3,
 	 do_put_attr/5,
@@ -54,9 +56,9 @@
 	 terminate/2,
 	 code_change/3]).
 
--import(kvdb_schema, [validate/3, validate_attr/3,
-		      encode/3, encode_attr/3,
-		      decode/3, on_update/3]).
+%% -import(kvdb_schema, [validate/3, validate_attr/3,
+%% 		      encode/3, encode_attr/3,
+%% 		      decode/3, on_update/4]).
 -import(kvdb_lib, [table_name/1]).
 
 -include("kvdb.hrl").
@@ -84,6 +86,8 @@ test() ->
 %% The plugin behaviour
 behaviour_info(callbacks) ->
     [
+     {info, 2},
+     {get_schema_mod, 2},
      {open,2},
      {close,1},
      {add_table,3},
@@ -94,6 +98,7 @@ behaviour_info(callbacks) ->
      {pop,3},
      {extract,3},
      {list_queue, 3},
+     {is_queue_empty, 3},
      {pop,3},
      {delete,3},
      %% {iterator,2},          % may remove
@@ -147,9 +152,12 @@ do_open(Name, Options) when is_list(Options) ->
     case DbMod:open(Name,Options) of
 	{ok, Db} ->
 	    io:fwrite("opened ~p database: ~p~n", [DbMod, Options]),
-	    {ok, #kvdb_ref{name = Name, mod = DbMod, db = Db}};
+	    Default = DbMod:get_schema_mod(Db, kvdb_schema),
+	    Schema = proplists:get_value(schema, Options, Default),
+	    {ok, #kvdb_ref{name = Name, mod = DbMod, db = Db, schema = Schema}};
 	Error ->
-	    io:fwrite("ERROR opening ~p database: ~p. Opts = ~p~n", [DbMod, Error, Options]),
+	    io:fwrite("ERROR opening ~p database: ~p. Opts = ~p~n",
+		      [DbMod, Error, Options]),
 	    Error
     end.
 
@@ -204,10 +212,11 @@ do_put(#kvdb_ref{} = DbRef, Table0, {K,As,V}) when is_list(As) ->
     Table = table_name(Table0),
     do_put_(DbRef, Table, {K, fix_attrs(As), V}).
 
-do_put_(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Obj) ->
-    case DbMod:put(Db, Table, validate(DbRef, put, Actual = encode(DbRef, obj, Obj))) of
+do_put_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Obj) ->
+    case DbMod:put(Db, Table,
+		   Schema:validate(DbRef, put, Actual = Schema:encode(DbRef, obj, Obj))) of
 	ok ->
-	    on_update(DbRef, put, Actual),
+	    Schema:on_update(put, DbRef, Table, Actual),
 	    ok;
 	Error ->
 	    Error
@@ -221,13 +230,14 @@ put(Name, Table, Obj) when is_tuple(Obj) ->
 
 -spec do_put_attr(db_ref(), Table::table(), Key::key(), atom(), any()) ->
 			 ok | {error, any()}.
-do_put_attr(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table0, Key, AttrN, Value)
+do_put_attr(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
+	    Table0, Key, AttrN, Value)
   when is_atom(AttrN) ->
     Table = table_name(Table0),
-    Attr = validate_attr(DbRef, Key, encode_attr(Db, Key, {AttrN, Value})),
+    Attr = Schema:validate_attr(DbRef, Key, Schema:encode_attr(Db, Key, {AttrN, Value})),
     case DbMod:put_attr(Db, Table, Key, Attr) of
 	{ok, Actual} ->
-	    on_update(DbRef, put_attr, Attr),
+	    Schema:on_update(put_attr, DbRef, Table, {Key, Attr}),
 	    {ok, Actual};
 	Error ->
 	    Error
@@ -253,9 +263,14 @@ put_attrs(Name, Table, Key, As) when is_list(As) ->
 -spec do_get(Db::db_ref(), Table::table(), Key::binary()) ->
 		    {ok, binary()} | {error,any()}.
 
-do_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
+do_get(#kvdb_ref{mod = DbMod, db = Db, schema = Schema}, Table0, Key) ->
     Table = table_name(Table0),
-    DbMod:get(Db, Table, Key).
+    case DbMod:get(Db, Table, Key) of
+	{ok, Obj} ->
+	    {ok, Schema:decode(Db, Table, Obj)};
+	Other ->
+	    Other
+    end.
 
 -spec get(name(), Table::table(), Key::binary()) ->
 		 {ok, binary()} | {error,any()}.
@@ -279,10 +294,11 @@ do_push(#kvdb_ref{} = DbRef, Table0, Q, {K,As,V}) when is_list(As) ->
     Table = table_name(Table0),
     do_push_(DbRef, Table, Q, {K, fix_attrs(As), V}).
 
-do_push_(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Q, Obj) ->
-    case DbMod:push(Db, Table, Q, validate(DbRef, put, Actual = encode(DbRef, obj, Obj))) of
+do_push_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Q, Obj) ->
+    case DbMod:push(Db, Table, Q,
+		    Schema:validate(DbRef, put, Actual = Schema:encode(DbRef, obj, Obj))) of
 	{ok, ActualKey} ->
-	    on_update(DbRef, put, Actual),
+	    Schema:on_update({push,Q}, DbRef, Table, Actual),
 	    {ok, ActualKey};
 	Error ->
 	    Error
@@ -308,9 +324,15 @@ do_pop(Db, Table) ->
 -spec do_pop(Db::db_ref(), Table::table(), Q::any()) ->
 		    {ok, object()} | done | {error,any()}.
 
-do_pop(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
+do_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Q) ->
     Table = table_name(Table0),
-    DbMod:pop(Db, Table, Q).
+    case DbMod:pop(Db, Table, Q) of
+	{ok, Obj, IsEmpty} ->
+	    Schema:on_update({pop,Q,IsEmpty}, DbRef, Table, Obj),
+	    {ok, Schema:decode(Db, Table, Obj)};
+	done ->
+	    done
+    end.
 
 -spec pop(name(), Table::table()) ->
 		 {ok, object()} | done | {error,any()}.
@@ -330,9 +352,15 @@ extract(Name, Table, Key) ->
 
 -spec do_extract(#kvdb_ref{}, Table::table(), Key::binary()) ->
 			{ok, object()} | {error,any()}.
-do_extract(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
+do_extract(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Key) ->
     Table = table_name(Table0),
-    DbMod:extract(Db, Table, Key).
+    case DbMod:extract(Db, Table, Key) of
+	{ok, Obj, Q, IsEmpty} ->
+	    Schema:on_update({pop,Q,IsEmpty}, DbRef, Table, Obj),
+	    {ok, Obj};
+	Other ->
+	    Other
+    end.
 
 
 -spec list_queue(name(), Table::table(), Q::any()) ->
@@ -348,7 +376,15 @@ do_list_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
     Table = table_name(Table0),
     DbMod:list_queue(Db, Table, Q).
 
+-spec is_queue_empty(name(), table(), _Q::any()) -> boolean().
 
+is_queue_empty(Name, Table, Q) ->
+    #kvdb_ref{} = Ref = call(Name, db),
+    ?KVDB_CATCH(do_is_queue_empty(Ref, Table, Q), [Name, Table, Q]).
+
+-spec do_is_queue_empty(#kvdb_ref{}, table(), _Q::any()) -> boolean().
+do_is_queue_empty(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
+    DbMod:is_queue_empty(Db, table_name(Table0), Q).
 
 do_get_attr(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, Attr) when is_atom(Attr) ->
     Table = table_name(Table0),
@@ -366,8 +402,8 @@ get_attrs(Name, Table, Key) ->
     ?KVDB_CATCH(do_get_attrs(db(Name), Table, Key), [Name, Table, Key]).
 
 
--spec delete(Db::db_ref(), Table::table(), Key::binary()) ->
-		    ok | {error, any()}.
+-spec do_delete(Db::db_ref(), Table::table(), Key::binary()) ->
+		       ok | {error, any()}.
 
 do_delete(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
     Table = table_name(Table0),
@@ -376,11 +412,11 @@ do_delete(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
 delete(Name, Table, Key) ->
     ?KVDB_CATCH(call(Name, {delete, Table, Key}), [Name, Table, Key]).
 
--spec first(Db::db_ref(), Table::table()) ->
-		   {ok,Key::binary()} |
-		   {ok,Key::binary(),Value::binary()} |
-		   done |
-		   {error,any()}.
+-spec do_first(Db::db_ref(), Table::table()) ->
+		      {ok,Key::binary()} |
+		      {ok,Key::binary(),Value::binary()} |
+		      done |
+		      {error,any()}.
 
 do_first(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
     Table = table_name(Table0),
@@ -390,11 +426,11 @@ first(Name, Table) ->
     ?KVDB_CATCH(do_first(db(Name), Table), [Name, Table]).
 
 
--spec last(Db::db_ref(), Table::table()) ->
-		   {ok,Key::binary()} |
-		   {ok,Key::binary(),Value::binary()} |
-		   done |
-		   {error,any()}.
+-spec do_last(Db::db_ref(), Table::table()) ->
+		     {ok,Key::binary()} |
+		     {ok,Key::binary(),Value::binary()} |
+		     done |
+		     {error,any()}.
 
 do_last(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
     Table = table_name(Table0),
@@ -403,11 +439,11 @@ do_last(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
 last(Name, Table) ->
     ?KVDB_CATCH(do_last(db(Name), Table), [Name, Table]).
 
--spec next(Db::db_ref(), Table::table(), FromKey::binary()) ->
-		   {ok,Key::binary()} |
-		   {ok,Key::binary(),Value::binary()} |
-		   done |
-		   {error,any()}.
+-spec do_next(Db::db_ref(), Table::table(), FromKey::binary()) ->
+		     {ok,Key::binary()} |
+		     {ok,Key::binary(),Value::binary()} |
+		     done |
+		     {error,any()}.
 
 do_next(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
     Table = table_name(Table0),
@@ -417,11 +453,11 @@ next(Name, Table, Key) ->
     ?KVDB_CATCH(do_next(db(Name), Table, Key), [Name, Table, Key]).
 
 
--spec prev(Db::db_ref(), Table::table(), FromKey::binary()) ->
-		  {ok,Key::binary()} |
-		  {ok,Key::binary(),Value::binary()} |
-		  done |
-		  {error,any()}.
+-spec do_prev(Db::db_ref(), Table::table(), FromKey::binary()) ->
+		     {ok,Key::binary()} |
+		     {ok,Key::binary(),Value::binary()} |
+		     done |
+		     {error,any()}.
 
 do_prev(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
     Table = table_name(Table0),
@@ -570,7 +606,7 @@ start_link(Name, Backend) ->
     gen_server:start_link(?MODULE, {owner, Name, Backend}, []).
 
 start_session(Name, Id) ->
-    gen_server:start_link(?MODULE, session(Name, Id)).
+    gen_server:start_link(?MODULE, session(Name, Id), []).
 
 session(Name, Id) ->
     {Name, session, Id}.
@@ -721,3 +757,4 @@ fix_attrs(As) ->
     lists:foldr(fun({K,V}, Acc) when is_atom(K) ->
 			orddict:store(K, V, Acc)
 		end, orddict:new(), As).
+
