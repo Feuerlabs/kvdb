@@ -16,6 +16,7 @@
 -export([add_table/2, add_table/3, delete_table/2, list_tables/1]).
 -export([put/3, put_attr/5, put_attrs/4, get/3,
 	 push/3, push/4, pop/2, pop/3, extract/3, list_queue/3, is_queue_empty/3,
+	 first_queue/2, next_queue/3,
 	 get_attr/4, get_attrs/3, delete/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
@@ -31,6 +32,8 @@
 	 do_extract/3,
 	 do_list_queue/3,
 	 do_is_queue_empty/3,
+	 do_first_queue/2,
+	 do_next_queue/3,
 	 do_get_attr/4,
 	 do_get_attrs/3,
 	 do_put_attr/5,
@@ -99,6 +102,8 @@ behaviour_info(callbacks) ->
      {extract,3},
      {list_queue, 3},
      {is_queue_empty, 3},
+     {first_queue, 2},
+     {next_queue, 3},
      {pop,3},
      {delete,3},
      %% {iterator,2},          % may remove
@@ -385,6 +390,26 @@ is_queue_empty(Name, Table, Q) ->
 -spec do_is_queue_empty(#kvdb_ref{}, table(), _Q::any()) -> boolean().
 do_is_queue_empty(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
     DbMod:is_queue_empty(Db, table_name(Table0), Q).
+
+-spec first_queue(name(), table()) -> {ok, any()} | done.
+first_queue(Name, Table) ->
+    #kvdb_ref{} = Ref = call(Name, db),
+    ?KVDB_CATCH(do_first_queue(Ref, Table), [Name, Table]).
+
+-spec do_first_queue(#kvdb_ref{}, table()) -> {ok, any()} | done.
+do_first_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
+    Table = table_name(Table0),
+    DbMod:first_queue(Db, Table).
+
+-spec next_queue(name(), table(), _Q::any()) -> {ok, any()} | done.
+next_queue(Name, Table, Q) ->
+    #kvdb_ref{} = Ref = call(Name, db),
+    ?KVDB_CATCH(do_next_queue(Ref, Table, Q), [Name, Table, Q]).
+
+-spec do_next_queue(#kvdb_ref{}, table(), _Q::any()) -> {ok, any()} | done.
+do_next_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
+    Table = table_name(Table0),
+    DbMod:next_queue(Db, Table, Q).
 
 do_get_attr(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, Attr) when is_atom(Attr) ->
     Table = table_name(Table0),
