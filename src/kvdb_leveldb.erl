@@ -252,7 +252,7 @@ first_queue(#db{ref = Ref} = Db, Table) ->
 	    with_iterator(
 	      Ref,
 	      fun(I) ->
-		      first_queue_(eleveldb:iterator_move(I, first), I, Db, Table,
+		      first_queue_(eleveldb:iterator_move(I, TPrefix), I, Db, Table,
 				   TPrefix, TPSz)
 	      end)
     end.
@@ -422,7 +422,7 @@ q_all_(done, _, _, _, _, _, _, _, _, _, Acc) ->
 
 
 table_queue_prefix(Table, Q, Enc) when Enc == raw; element(1, Enc) == raw ->
-    make_table_key(Table, Q);
+    make_table_key(Table, <<Q/binary, "-">>);
 table_queue_prefix(Table, Q, Enc) when Enc == sext; element(1, Enc) == sext ->
     make_table_key(Table, sext:prefix({Q,'_','_'})).
 
