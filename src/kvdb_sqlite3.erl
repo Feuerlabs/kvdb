@@ -11,10 +11,11 @@
 -behaviour(kvdb).
 
 -export([open/2, close/1]).
--export([add_table/3, delete_table/2, list_tables/1]).
--export([put/3, push/4, put_attr/5, put_attrs/4, get/3, pop/3, extract/3,
-	 list_queue/3, is_queue_empty/3,
+-export([add_table/3, delete_table/2, list_tables/1,
 	 get_attr/4, get_attrs/3, delete/3]).
+-export([put/3, push/4, put_attr/5, put_attrs/4, get/3, pop/3, extract/3,
+	 list_queue/3, list_queue/5, is_queue_empty/3,
+	 first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
 -export([info/2, get_schema_mod/2]).
@@ -252,16 +253,17 @@ list_queue(Db, Table, Q, Limit) ->
 
 list_queue(Db, Table, Q, Fix, Limit) when Limit > 0 ->
     Type = type(Db, Table),
+    list_queue(Db, Table, Q, Fix, case Type of
+				      fifo -> asc;
+				      lifo -> desc;
+				      _ -> error(illegal)
+				  end, Limit).
+
+list_queue(Db, Table, Q, Fix, Order, Limit) when Order==asc; Order==desc ->
     Enc = encoding(Db, Table),
     QPfx = kvdb_lib:queue_prefix(Enc, Q),
     EncQPfx = kvdb_lib:enc_prefix(key, QPfx, Enc),
-    case case Type of
-	     %% fifo -> first(Db, Table);
-	     %% lifo -> last(Db, Table);
-	     fifo -> prefix_match(Db, Table, EncQPfx, QPfx, Enc, Limit, asc);
-	     lifo -> prefix_match(Db, Table, EncQPfx, QPfx, Enc, Limit, desc);
-	     _ -> error(illegal)
-	 end of
+    case prefix_match(Db, Table, EncQPfx, QPfx, Enc, Limit, Order) of
 	{Objs, _} when is_list(Objs) ->
 	    if Fix ->
 		    lists:map(fun(Obj) ->
@@ -275,9 +277,40 @@ list_queue(Db, Table, Q, Fix, Limit) when Limit > 0 ->
 	Other ->
 	    Other
     end;
-list_queue(_, _, _, _, 0) ->
+list_queue(_, _, _, _, _, 0) ->
     [].
 
+first_queue(#db{} = Db, Table) ->
+    Type = type(Db, Table),
+    case Type of
+	set -> error(illegal);
+	_ ->
+	    Enc = encoding(Db, Table),
+	    case first(Db, Table, Enc) of
+		{ok, Obj} ->
+		    Key = element(1, Obj),
+		    {Q, _} = kvdb_lib:split_queue_key(Enc, Key),
+		    {ok, Q};
+		done ->
+		    done
+	    end
+    end.
+
+next_queue(Db, Table, Q) ->
+    Enc = encoding(Db, Table),
+    RelK = case list_queue(Db, Table, Q, false, desc, 1) of
+	       [] ->
+		   kvdb_lib:queue_prefix(Enc, Q);
+	       [Last] ->
+		   element(1, Last)
+	   end,
+    case next(Db, Table, RelK) of
+	{ok, Obj} ->
+	    {Q1,_} = kvdb_lib:split_queue_key(Enc, element(1, Obj)),
+	    {ok, Q1};
+	done ->
+	    done
+    end.
 
 get_attrs(#db{ref = Ref} = Db, Table, Key) ->
     Enc = encoding(Db, Table),
@@ -454,8 +487,10 @@ decr(infinity) ->
 decr(N) when is_integer(N), N > 0 ->
     N - 1.
 
-first(#db{ref = Ref} = Db, Table) ->
-    Enc = encoding(Db, Table),
+first(Db, Table) ->
+    first(Db, Table, encoding(Db, Table)).
+
+first(#db{ref = Ref}, Table, Enc) ->
     select_one(Ref, Enc, ["SELECT * FROM ", Table,
 			 " ORDER BY key ASC LIMIT 1"]).
 

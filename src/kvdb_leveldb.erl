@@ -273,7 +273,7 @@ next_queue(#db{ref = Ref} = Db, Table, Q) ->
     Type = type(Db, Table),
     case Type of
 	set -> error(illegal);
-	fifo ->
+	_ ->
 	    Enc = encoding(Db, Table),
 	    QPfx = kvdb_lib:queue_prefix(Enc, Q, last),
 	    Prefix = make_table_key(Table, kvdb_lib:enc(key, QPfx, Enc)),

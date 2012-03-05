@@ -30,8 +30,8 @@ basic_test_() ->
     {setup,
      fun() ->
 	     ?debugVal(application:start(gproc)),
-	     dbg:tracer(),
-	     dbg:tp(kvdb,x),
+	     %% dbg:tracer(),
+	     %% dbg:tp(kvdb,x),
 	     %% dbg:ctp(kvdb,handle_call),
 	     %% dbg:tp(sqlite3,x),
 	     %% dbg:ctp(sqlite3,handle_call),
@@ -44,7 +44,7 @@ basic_test_() ->
 	     %% dbg:tpl(kvdb_sqlite3,x),
 	     %% dbg:tp(eleveldb,x),
 	     %% dbg:tp(gproc,x),
-	     dbg:p(all,[c]),
+	     %% dbg:p(all,[c]),
 	     ?debugVal(application:start(kvdb)),
 	     ok
      end,
@@ -63,13 +63,14 @@ basic_test_() ->
 			    , ?_test(?debugVal(add_delete_add_tab(Db1)))
 			    , ?_test(?debugVal(queue(Db1)))
 			    , ?_test(?debugVal(subqueues(Db1)))
+			    , ?_test(?debugVal(first_next_queue(Db1)))
 			   ]
 		   end} ||
 	   {Db,E,B} <- [
 			{s1,sext,sqlite3},
 			{s2,raw,sqlite3},
-			{e1,sext,leveldb},
-			{e2,raw,leveldb}]]
+			{l1,sext,leveldb},
+			{l2,raw,leveldb}]]
       }]}.
 
 create_db(Name, Encoding, Backend) ->
@@ -278,9 +279,37 @@ subqueues(Db, Type, Enc) ->
     ?match(M, ok, catch kvdb:delete_table(Db, T)),
     ok.
 
+first_next_queue(Db) ->
+    first_next_queue(Db, fifo, raw),
+    first_next_queue(Db, lifo, raw),
+    first_next_queue(Db, fifo, sext),
+    first_next_queue(Db, lifo, sext).
 
-
-
+first_next_queue(Db, Type, Enc) ->
+    T = <<"q1_",(atom_to_binary(Db,latin1))/binary, "_",
+	  (atom_to_binary(Type,latin1))/binary, "_",
+	  (atom_to_binary(Enc, latin1))/binary>>, % binary, parameterized table name
+    M = {Db,Type,Enc,T},
+    Qs = if Enc == raw -> [<<"q1">>, <<"q2">>, <<"q3">>, <<"q4">>];
+	    Enc == sext -> [1,2,3,4]
+	 end,
+    ?match(M, ok, kvdb:add_table(Db, T, [{type, Type},{encoding, Enc}])),
+    [First, Second, Third, Fourth] = lists:sort(Qs),
+    PushResults =
+	[kvdb:push(Db, T, Q, Obj) || Q <- lists:delete(Third, Qs),
+				     Obj <- [{<<"1">>,<<"a">>},
+					     {<<"2">>,<<"b">>},
+					     {<<"3">>,<<"c">>}]],
+    kvdb:push(Db, T, Third, {<<"1">>, <<"a">>}),
+    ?match(M, {ok,{<<"1">>,<<"a">>}}, kvdb:pop(Db, T, Third)),
+    %% Third is now empty
+    ?match(M, {ok, First}, kvdb:first_queue(Db, T)),
+    ?match(M, {ok, Second}, kvdb:next_queue(Db, T, First)),
+    ?match(M, {ok, Fourth}, kvdb:next_queue(Db, T, Second)),
+    ?match(M, {ok, Fourth}, kvdb:next_queue(Db, T, Third)),
+    ?match(M, done, kvdb:next_queue(Db, T, Fourth)),
+    ?match(M, ok, catch kvdb:delete_table(Db, T)),
+    ok.
 
 
 %% These are not run automatically by eunit
