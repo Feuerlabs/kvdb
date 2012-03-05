@@ -36,11 +36,8 @@
 	 make_tree/1,
 	 flatten_tree/1]).
 
--export([open/1,
-	 options/1]).
+-export([open/1, open/2, close/0, options/1]).
 
-%% for testing only
--export([test_tree/0]).
 
 -type key() :: binary().
 -type attrs() :: [{atom(), any()}].
@@ -49,15 +46,34 @@
 -type conf_obj() :: {key(), attrs(), data()}.
 -type conf_node() :: {key(), attrs(), data(), conf_tree()}.
 
+instance_() ->
+    case get(kvdb_conf) of
+	undefined -> ?MODULE;
+	Name -> Name
+    end.
 
 open(File) ->
     kvdb:open_db(?MODULE, options(File)).
+
+open(File, Options) ->
+    case proplists:lookup(name, Options) of
+	none ->
+	    put(kvdb_conf,?MODULE),
+	    kvdb:open_db(?MODULE, Options++options(File));
+	{name,Name} ->
+	    put(kvdb_conf,Name),
+	    Options1 = proplists:delete(name, Options),
+	    kvdb:open_db(Name, Options1++options(File))
+    end.
 
 options(File) ->
     [{file, File},
      {backend, sqlite},
      {tables, [data]},
      {encoding, {raw,term,raw}}].
+
+close() ->
+    kvdb:close(instance_()).
 
 
 -spec read(key()) -> {ok, conf_obj()} | {error, any()}.
@@ -67,7 +83,7 @@ options(File) ->
 %% entire tree structure.
 %% @end
 read(Key) when is_binary(Key) ->
-    kvdb:get(?MODULE, data, Key).
+    kvdb:get(instance_(), data, Key).
 
 -spec write(conf_obj()) -> ok.
 %% @doc Writes a configuration object into the database.
@@ -76,7 +92,7 @@ read(Key) when is_binary(Key) ->
 %% a node or leaf in the tree is a very cheap operation.
 %% @end
 write({K, As, Data} = Obj) when is_binary(K), is_list(As), is_binary(Data) ->
-    case kvdb:put(?MODULE, data, Obj) of
+    case kvdb:put(instance_(), data, Obj) of
 	ok ->
 	    ok;
 	{error, _} = Error ->
@@ -84,10 +100,10 @@ write({K, As, Data} = Obj) when is_binary(K), is_list(As), is_binary(Data) ->
     end.
 
 delete(K) when is_binary(K) ->
-    kvdb:delete(?MODULE, data, K).
+    kvdb:delete(instance_(), data, K).
 
 delete_all(Prefix) when is_binary(Prefix) ->
-    delete_all_(kvdb:prefix_match(?MODULE, data, Prefix, 100)).
+    delete_all_(kvdb:prefix_match(instance_(), data, Prefix, 100)).
 
 delete_all_({Objs, Cont}) ->
     _ = [delete(K) || {K,_,_} <- Objs],
@@ -96,17 +112,17 @@ delete_all_(done) ->
     ok.
 
 all() ->
-    all(kvdb:first(?MODULE, data)).
+    all(kvdb:first(instance_(), data)).
 
 all({ok, {K,_,_} = Obj}) ->
-    [Obj | all(kvdb:next(?MODULE, data, K))];
+    [Obj | all(kvdb:next(instance_(), data, K))];
 all(done) ->
     [].
 
-first() -> kvdb:first(?MODULE, data).
-last () -> kvdb:last(?MODULE, data).
-next(K) -> kvdb:next(?MODULE, data, K).
-prev(K) -> kvdb:prev(?MODULE, data, K).
+first() -> kvdb:first(instance_(), data).
+last () -> kvdb:last(instance_(), data).
+next(K) -> kvdb:next(instance_(), data, K).
+prev(K) -> kvdb:prev(instance_(), data, K).
 
 first_tree() ->
     case first() of
@@ -155,7 +171,7 @@ next_at_level(K) ->
 %% from the result. The empty binary will result in the whole tree being built.
 %% @end
 read_tree(Prefix) ->
-    {Objs,_} = kvdb:prefix_match(?MODULE, data, Prefix, infinity),
+    {Objs,_} = kvdb:prefix_match(instance_(), data, Prefix, infinity),
     make_tree(Objs).
 
 -spec make_tree([conf_obj()]) -> conf_tree().
@@ -242,25 +258,3 @@ next_key(<<>>, Key) ->
 next_key(Parent, Key) ->
     << Parent/binary, "*", Key/binary >>.
 
-test_tree() ->
-    [
-     {<<"a">>,[],<<"a data">>,
-      [{<<"1">>,[],<<"1 data">>,
-	[
-	 {<<"aa">>,[],<<"aa data">>},
-	 {<<"bb">>,[],<<"bb data">>}
-	]
-       },
-       {<<"2">>,[],<<"2 data">>,
-	[
-	 {<<"zz">>, [], <<"zz data">>},
-	 {<<"yy">>, [], <<"yy data">>}
-	]}
-      ]},
-     {<<"b">>,[],<<"b data">>,
-      [{<<"3">>,[],<<"3 data">>,
-	[
-	 {<<"cc">>,[],<<"cc data">>},
-	 {<<"dd">>,[],<<"dd data">>}
-	]}
-      ]}].
