@@ -12,6 +12,10 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
 
+%% for testing only
+-export([test_tree/0]).
+
+
 -define(match(X, A, B), ?assertMatch({X,A}, {X,B})).
 
 -define(CATCH(E),
@@ -514,5 +518,28 @@ db_file(Name, Backend) ->
     Dir = code:lib_dir(kvdb),
     FileName = Name ++ "_" ++ atom_to_list(Backend) ++ ".db",
     filename:join([Dir, "test", FileName]).
+
+test_tree() ->
+    [
+     {<<"a">>,[],<<"a data">>,
+      [{<<"1">>,[],<<"1 data">>,
+	[
+	 {<<"aa">>,[],<<"aa data">>},
+	 {<<"bb">>,[],<<"bb data">>}
+	]
+       },
+       {<<"2">>,[],<<"2 data">>,
+	[
+	 {<<"zz">>, [], <<"zz data">>},
+	 {<<"yy">>, [], <<"yy data">>}
+	]}
+      ]},
+     {<<"b">>,[],<<"b data">>,
+      [{<<"3">>,[],<<"3 data">>,
+	[
+	 {<<"cc">>,[],<<"cc data">>},
+	 {<<"dd">>,[],<<"dd data">>}
+	]}
+      ]}].
 
 -endif.
