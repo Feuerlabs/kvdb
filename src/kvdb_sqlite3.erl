@@ -13,7 +13,7 @@
 -export([open/2, close/1]).
 -export([add_table/3, delete_table/2, list_tables/1,
 	 get_attr/4, get_attrs/3, delete/3]).
--export([put/3, push/4, put_attr/5, put_attrs/4, get/3, pop/3, extract/3,
+-export([put/3, push/4, put_attr/5, put_attrs/4, get/3, pop/3, prel_pop/3, extract/3,
 	 list_queue/3, list_queue/5, is_queue_empty/3,
 	 first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3]).
@@ -75,11 +75,17 @@ add_table(#db{ref = Ref, encoding = Enc} = Db, Table, Opts) ->
 	T when T =/= undefined ->
 	    ok;
 	undefined ->
-	    Columns = case TabR#table.encoding of
-			  {_, _, _} ->
-			      [{key, blob, primary_key}, {attrs, blob}, {value, blob}];
+	    Columns0 = case TabR#table.encoding of
+			   {_, _, _} ->
+			       [{key, blob, primary_key}, {attrs, blob}, {value, blob}];
+			   _ ->
+			       [{key, blob, primary_key}, {value, blob}]
+		       end,
+	    Columns = case TabR#table.type of
+			  Type when Type==fifo; Type==lifo ->
+			      Columns0 ++ [{active, integer, [{default,1}]}];
 			  _ ->
-			      [{key, blob, primary_key}, {value, blob}]
+			      Columns0
 		      end,
 	    case sqlite3:create_table(Ref, Table, Columns) of
 		ok ->
@@ -189,15 +195,58 @@ insert_or_replace_sql(Table, Data) ->
 get(#db{ref = Ref} = Db, Table, Key) ->
     Enc = encoding(Db, Table),
     case sqlite3:read(Ref, Table, {key, {blob, enc(key, Key, Enc)}}) of
+	[{columns,["key","value","active"]},{rows,[{_,{blob,Value},_}]}] ->
+	    {ok, {Key, dec(value, Value, Enc)}};
 	[{columns,_},{rows,[{_,{blob,Value}}]}] ->
 	    {ok, {Key, dec(value, Value, Enc)}};
-	[{columns,_},{rows,[{_,{blob,Attrs},{blob,Value}}]}] ->
+	[{columns,["key","attrs","value","active"]},
+	 {rows,[{_,{blob,Attrs},{blob,Value},_}]}] ->
+	    {ok, {Key, dec(attrs, Attrs, Enc), dec(value, Value, Enc)}};
+	[{columns,["key","attrs","value"]},{rows,[{_,{blob,Attrs},{blob,Value}}]}] ->
 	    {ok, {Key, dec(attrs, Attrs, Enc), dec(value, Value, Enc)}};
 	_ ->
 	    {error,not_found}
     end.
 
-pop(#db{} = Db, Table, Q) ->
+pop(Db, Table, Q) ->
+    case type(Db, Table) of
+	set -> error(illegal);
+	_ ->
+	    Remove = fun(Obj, _) ->
+			     delete(Db, Table, element(1, Obj))
+		     end,
+	    do_pop(Db, Table, Q, Remove, false)
+    end.
+
+prel_pop(Db, Table, Q) ->
+    case type(Db, Table) of
+	set ->
+	    error(illegal);
+	_ ->
+	    Remove = fun(Obj, Enc) ->
+			     mark_queue_object(Db, Table, Enc, Obj, inactive)
+		     end,
+	    do_pop(Db, Table, Q, Remove, true)
+    end.
+
+mark_queue_object(#db{ref = Ref}, Table, Enc, Obj, St) when St==inactive;
+							    St==active ->
+    ActiveCol = case St of
+		    active   -> {active, {integer, 1}};
+		    inactive -> {active, {integer, 0}}
+		end,
+    insert_or_replace(Ref, Table, cols(Obj, Enc) ++ [ActiveCol]).
+
+cols({K,As,V}, Enc) ->
+    [{key, {blob, enc(key, K, Enc)}},
+     {attrs, {blob, enc(attrs, As, Enc)}},
+     {value, {blob, enc(value, V, Enc)}}];
+cols({K,V}, Enc) ->
+    [{key, {blob, enc(key, K, Enc)}},
+     {value, {blob, enc(value, V, Enc)}}].
+
+
+do_pop(#db{} = Db, Table, Q, Remove, ReturnKey) ->
     Type = type(Db, Table),
     Enc = encoding(Db, Table),
     QPfx = kvdb_lib:queue_prefix(Enc, Q),
@@ -212,8 +261,13 @@ pop(#db{} = Db, Table, Q) ->
 	{[Obj|More], _} ->
 	    K = element(1, Obj),
 	    {_, K1} = kvdb_lib:split_queue_key(Enc, K),
-	    delete(Db, Table, K),
-	    {ok, setelement(1, Obj, K1), More == []};
+	    Obj1 = setelement(1, Obj, K1),
+	    Remove(Obj, Enc),
+	    if ReturnKey ->
+		    {ok, Obj1, K, More == []};
+	       true ->
+		    {ok, Obj1, More == []}
+	    end;
 	{[], _} ->
 	    done;
 	{error, _} = Error ->
@@ -382,18 +436,24 @@ prefix_match(Db, Table, Prefix, Limit, Dir) ->
     EncPrefix = enc_prefix(key, Prefix, Enc),
     prefix_match(Db, Table, EncPrefix, Prefix, Enc, Limit, Dir).
 
-prefix_match(#db{ref = Ref}, Table, EncPrefix, Prefix, Enc, Limit, Dir)
+prefix_match(#db{ref = Ref} = Db, Table, EncPrefix, Prefix, Enc, Limit, Dir)
   when (is_integer(Limit) orelse Limit==infinity) ->
     DirS = case Dir of
 	       asc  -> "ASC";
 	       desc -> "DESC"
 	   end,
-    {ok, Handle} = sqlite3:prepare(Ref, ["SELECT * FROM ", Table,
-					 " WHERE key >= ?"
-					 " ORDER BY key ", DirS]),
+    AndActive = case type(Db, Table) of
+		    set -> "";
+		    _ -> " AND active == 1"
+		end,
+    SQL = ["SELECT ", sel_cols(Enc), " FROM ", Table,
+	   " WHERE key >= ?", AndActive,
+	   " ORDER BY key ", DirS],
+    {ok, Handle} = sqlite3:prepare(Ref, SQL),
     ok = sqlite3:bind(Ref, Handle, [{blob, EncPrefix}]),
     SH = track_resource(Ref, Handle),
-    prefix_match_([], Dir, Ref, SH, Table, EncPrefix, Prefix, Enc, Limit, Limit, []).
+    prefix_match_([], Dir, Ref, SH, Table, EncPrefix, Prefix, AndActive,
+		  Enc, Limit, Limit, []).
 
 track_resource(Ref,Handle) ->
     %% spawn a resource monitor, since a lingering prepare statement may lock the
@@ -409,7 +469,7 @@ finalize(Ref, {Pid, _Trk, Handle}) ->
     exit(Pid, kill),
     sqlite3:finalize(Ref, Handle).
 
-prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0, Enc, 0, Limit0, Acc) ->
+prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0, AndActive, Enc, 0, Limit0, Acc) ->
     finalize(Ref, Handle),
     Cont = if Prev == []; Limit0 == 0 -> fun() -> done end;
 	      true ->
@@ -418,8 +478,8 @@ prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0, Enc, 0, Limit0, Acc) ->
 				{ok, NewHandle} =
 				    sqlite3:prepare(
 				      Ref,
-				      ["SELECT * FROM ", Table,
-				       " WHERE key > ?"
+				      ["SELECT ", sel_cols(Enc), " FROM ", Table,
+				       " WHERE key > ?", AndActive,
 				       " ORDER BY key ASC"]),
 				ok = sqlite3:bind(Ref, NewHandle, [{blob, Prev}]),
 				track_resource(Ref, NewHandle);
@@ -427,16 +487,16 @@ prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0, Enc, 0, Limit0, Acc) ->
 				{ok, NewHandle} =
 				    sqlite3:prepare(
 				      Ref,
-				      ["SELECT * FROM ", Table,
-				       " WHERE key >= ? AND key < ?"
+				      ["SELECT ", sel_cols(Enc), " FROM ", Table,
+				       " WHERE key >= ? AND key < ?", AndActive,
 				       " ORDER BY key DESC"]),
 				ok = sqlite3:bind(Ref, NewHandle, [{blob, Pfx},
 								   {blob, Prev}]),
 				track_resource(Ref, NewHandle)
 			end,
 		   fun() ->
-			   prefix_match_(Prev, Dir, Ref, SH, Table, Pfx, Pfx0, Enc,
-					 Limit0, Limit0, [])
+			   prefix_match_(Prev, Dir, Ref, SH, Table, Pfx, Pfx0, AndActive,
+					 Enc, Limit0, Limit0, [])
 		   end
 	   end,
     {lists:reverse(Acc), Cont};
@@ -445,7 +505,7 @@ prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0, Enc, 0, Limit0, Acc) ->
     %% 					       Limit0, Limit0, [])
     %% 			 end};
 prefix_match_(_Prev, Dir, Ref, {_, _, Handle} = SH, Table,
-	      Pfx, Pfx0, Enc, Limit, Limit0, Acc) ->
+	      Pfx, Pfx0, AndActive, Enc, Limit, Limit0, Acc) ->
     case sqlite3:next(Ref, Handle) of
 	done ->
 	    finalize(Ref, SH),
@@ -456,11 +516,11 @@ prefix_match_(_Prev, Dir, Ref, {_, _, Handle} = SH, Table,
 		true ->
 		    NewAcc = [decode_obj(Other, Enc) | Acc],
 		    prefix_match_(K, Dir, Ref, SH, Table,
-				  Pfx, Pfx0, Enc, decr(Limit), Limit0, NewAcc);
+				  Pfx, Pfx0, AndActive, Enc, decr(Limit), Limit0, NewAcc);
 		false ->
 		    if Dir == desc, K > Pfx ->
 			    prefix_match_(K, Dir, Ref, SH, Table,
-					  Pfx, Pfx0, Enc, Limit, Limit0, Acc);
+					  Pfx, Pfx0, AndActive, Enc, Limit, Limit0, Acc);
 		       true ->
 			    finalize(Ref, SH),
 			    {lists:reverse(Acc), fun() -> done end}
@@ -477,8 +537,12 @@ is_prefix(Pfx, Key, Prefix0, Enc) ->
 	    false
     end.
 
+decode_obj({{blob,K},{blob,V}, A}, Enc) when A==0; A==1 ->
+    {dec(key,K,Enc), dec(value,V,Enc)};
 decode_obj({{blob,K},{blob,V}}, Enc) ->
     {dec(key,K,Enc), dec(value,V,Enc)};
+decode_obj({{blob,K},{blob,As},{blob,V}, A}, Enc) when A==0; A==1 ->
+    {dec(key,K,Enc), dec(attrs, As, Enc), dec(value,V,Enc)};
 decode_obj({{blob,K},{blob,As},{blob,V}}, Enc) ->
     {dec(key,K,Enc), dec(attrs, As, Enc), dec(value,V,Enc)}.
 
@@ -490,26 +554,57 @@ decr(N) when is_integer(N), N > 0 ->
 first(Db, Table) ->
     first(Db, Table, encoding(Db, Table)).
 
-first(#db{ref = Ref}, Table, Enc) ->
-    select_one(Ref, Enc, ["SELECT * FROM ", Table,
+first(#db{ref = Ref} = Db, Table, Enc) ->
+    Where = case type(Db, Table) of
+		set -> "";
+		_ -> " WHERE active == 1"
+	    end,
+    select_one(Ref, Enc, ["SELECT ", sel_cols(Enc), " FROM ", Table, Where,
 			 " ORDER BY key ASC LIMIT 1"]).
 
-last(#db{ref = Ref} = Db, Table) ->
+last(Db, Table) ->
+    last(Db, Table, false).
+
+last(#db{ref = Ref} = Db, Table, InclAll) when is_boolean(InclAll) ->
     Enc = encoding(Db, Table),
-    select_one(Ref, Enc, ["SELECT * FROM ", Table,
+    Where = case (InclAll orelse type(Db, Table)==set) of
+		true -> "";
+		false -> " WHERE active == 1"
+	    end,
+    select_one(Ref, Enc, ["SELECT ", sel_cols(Enc), " FROM ", Table, Where,
 			 " ORDER BY key DESC LIMIT 1"]).
 
-next(#db{ref = Ref} = Db, Table, Key) ->
+next(Db, Table, Key) ->
+    next(Db, Table, Key, false).
+
+next(#db{ref = Ref} = Db, Table, Key, InclAll) when is_boolean(InclAll) ->
     Enc = encoding(Db, Table),
-    select_one(Ref, Enc, ["SELECT * FROM ", Table,
-			 " WHERE key > ?"
+    IsActive = case (InclAll orelse type(Db, Table) == set) of
+		   true -> "";
+		   false -> " AND active == 1"
+	       end,
+    select_one(Ref, Enc, ["SELECT ", sel_cols(Enc), " FROM ", Table,
+			 " WHERE key > ?", IsActive,
 			 " ORDER BY key ASC LIMIT 1"], [{blob, enc(key, Key, Enc)}]).
 
-prev(#db{ref = Ref} = Db, Table, Key) ->
+prev(Db, Table, Key) ->
+    prev(Db, Table, Key, false).
+
+prev(#db{ref = Ref} = Db, Table, Key, InclAll) when is_boolean(InclAll) ->
     Enc = encoding(Db, Table),
-    select_one(Ref, Enc, ["SELECT * FROM ", Table,
-			 " WHERE key < ?"
+    IsActive = case (InclAll orelse type(Db, Table) == set) of
+		   true -> "";
+		   false -> " AND active == 1"
+	       end,
+    select_one(Ref, Enc, ["SELECT ", sel_cols(Enc), " FROM ", Table,
+			 " WHERE key < ?", IsActive,
 			 " ORDER BY key DESC LIMIT 1"], [{blob, enc(key, Key, Enc)}]).
+
+sel_cols({_,_,_}) ->
+    "key, attrs, value";
+sel_cols(_) ->
+    "key, value".
+
 
 select_one(Ref, Enc, SQL) ->
     select_one(Ref, Enc, SQL, []).
@@ -566,7 +661,7 @@ to_bin(L) when is_list(L) ->
 
 
 whole_table(Ref, Table, Enc) ->
-    SQL = ["SELECT * FROM ", Table],
+    SQL = ["SELECT ", sel_cols(Enc), " FROM ", Table],
     case sqlite3:sql_exec(Ref, SQL) of
 	[{columns, [_,_,_]},
 	 {rows, Rows}] ->

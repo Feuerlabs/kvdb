@@ -11,7 +11,7 @@
 
 -export([open/2, close/1]).
 -export([add_table/3, delete_table/2, list_tables/1]).
--export([put/3, push/4, get/3, pop/3, extract/3, delete/3, list_queue/3,
+-export([put/3, push/4, get/3, pop/3, prel_pop/3, extract/3, delete/3, list_queue/3,
 	 list_queue/5, is_queue_empty/3]).
 -export([first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3, prefix_match/3, prefix_match/4]).
@@ -137,7 +137,7 @@ push(#db{ref = Ref} = Db, Table, Q, Obj) ->
     if Type == fifo; Type == lifo ->
 	    Enc = encoding(Db, Table),
 	    ActualKey = kvdb_lib:actual_key(Enc, Q, element(1, Obj)),
-	    {Key, Attrs, Value} = encode_obj(Enc, setelement(1, Obj, ActualKey)),
+	    {Key, Attrs, Value} = encode_queue_obj(Enc, setelement(1, Obj, ActualKey)),
 	    put_attrs(Db, Table, Key, Attrs),
 	    case eleveldb:put(Ref, make_table_key(Table, Key), Value, []) of
 		ok ->
@@ -149,46 +149,43 @@ push(#db{ref = Ref} = Db, Table, Q, Obj) ->
 	    error(illegal)
     end.
 
-
-%% this functionality could be lifted up to kvdb.erl. There is no specific code, except
-%% for type/2 and encoding/2, and they should be generalized to Mod:table_info/2.
-%% pop(#db{} = Db, Table, Q) ->
-%%     Type = type(Db, Table),
-%%     Enc = encoding(Db, Table),
-%%     case case Type of
-%% 	     fifo -> q_first(Db, Table, Q, Enc);
-%% 	     lifo -> q_last(Db, Table, Q, Enc)
-%% 	 end of
-%% 	{ok, Obj} ->
-%% 	    K = element(1, Obj),
-%% 	    delete(Db, Table, K),
-%% 	    {ok, fix_q_obj(Obj, Enc)};
-%% 	done ->
-%% 	    done;
-%% 	{error, _} = Error ->
-%% 	    Error
-%%     end.
-
-%% pop1(#db{} = Db, Table, Q) ->
-%%     Enc = encoding(Db, Table),
-%%     case list_queue(Db, Table, Q, false, 1) of
-%% 	[Obj] ->
-%% 	    K = element(1, Obj),
-%% 	    delete(Db, Table, K),
-%% 	    {ok, fix_q_obj(Obj, Enc)};
-%% 	[] ->
-%% 	    done;
-%% 	{error, _} = Error ->
-%% 	    Error
-%%     end.
+mark_queue_obj(#db{ref = Ref}, Table, Enc, Obj, St) when St==active;
+							 St==inactive ->
+    {Key, _Attrs, Value} = encode_queue_obj(Enc, Obj, St),
+    eleveldb:put(Ref, make_table_key(Table, Key), Value, []).
 
 pop(#db{} = Db, Table, Q) ->
+    case type(Db, Table) of
+	set -> error(illegal);
+	_ ->
+	    Remove = fun(Obj, _) ->
+			     delete(Db, Table, element(1,Obj))
+		     end,
+	    do_pop(Db, Table, Q, Remove, false)
+    end.
+
+prel_pop(Db, Table, Q) ->
+    case type(Db, Table) of
+	set -> error(illegal);
+	_ ->
+	    Remove = fun(Obj, Enc) ->
+			     mark_queue_obj(Db, Table, Enc, Obj, inactive)
+		     end,
+	    do_pop(Db, Table, Q, Remove, true)
+    end.
+
+do_pop(Db, Table, Q, Remove, ReturnKey) ->
     Enc = encoding(Db, Table),
     case list_queue(Db, Table, Q, false, 2) of
 	[Obj|More] ->
-	    K = element(1, Obj),
-	    delete(Db, Table, K),
-	    {ok, fix_q_obj(Obj, Enc), More == []};
+	    Obj1 = fix_q_obj(Obj, Enc),
+	    Empty = More == [],
+	    Remove(Obj, Enc),
+	    if ReturnKey ->
+		    {ok, Obj1, element(1, Obj), Empty};
+	       true ->
+		    {ok, Obj1, Empty}
+	    end;
 	[] ->
 	    done;
 	{error, _} = Error ->
@@ -196,12 +193,13 @@ pop(#db{} = Db, Table, Q) ->
     end.
 
 
+
 extract(#db{} = Db, Table, Key) ->
     case type(Db, Table) of
 	set -> error(illegal);
 	Type ->
 	    Enc = encoding(Db, Table),
-	    case get(Db, Table, Key) of
+	    case q_get(Db, Table, Key) of
 		{ok, Obj} ->
 		    delete(Db, Table, Key),
 		    case Type of
@@ -316,12 +314,15 @@ q_first_(I, Db, Table, Q, Enc) ->
     Sz = byte_size(QPrefix),
     TPrefix = make_table_key(Table),
     TPSz = byte_size(TPrefix),
-    q_first_move(eleveldb:iterator_move(I, Prefix), 
+    q_first_move(eleveldb:iterator_move(I, Prefix),
 		 I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz).
 
 q_first_move(Res, I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz) ->
     case Res of
-	{ok, <<QPrefix:Sz/binary, _/binary>> = K, V} ->
+	{ok, <<QPrefix:Sz/binary, _/binary>>, <<"-", _/binary>>} ->
+	    q_first_move(eleveldb:iterator_move(I, next),
+			 I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz);
+	{ok, <<QPrefix:Sz/binary, _/binary>> = K, <<"+", V/binary>>} ->
 	    <<TPrefix:TPSz/binary, Key/binary>> = K,
 	    case Key of
 		<<>> -> q_first_move(eleveldb:iterator_move(I, next),
@@ -347,30 +348,28 @@ q_last_(I, Db, Table, Q, Enc) ->
     TPSz = byte_size(TPrefix),
     case eleveldb:iterator_move(I, Prefix) of
 	{ok, _K, _V} ->
-	    case eleveldb:iterator_move(I, prev) of
-		{ok, <<QPrefix:Sz/binary, _/binary>> = K1, V1} ->
-		    <<TPrefix:TPSz/binary, Key/binary>> = K1,
-		    case Key of
-			<<>> -> done;
-			_ ->
-			    {ok, decode_obj(Db, Enc, Table, Key, V1)}
-		    end;
-		_Other ->
-		    done
-	    end;
+	    q_last_move_(eleveldb:iterator_move(I, prev), I, Db, Table, Enc,
+			 QPrefix, Sz, TPrefix, TPSz);
 	{error, invalid_iterator} ->
-	    %% likely stepped outside entire leveldb database
-	    case eleveldb:iterator_move(I, last) of
-		{ok, <<QPrefix:Sz/binary, _/binary>> = K, V} ->
-		    <<TPrefix:TPSz/binary, Key/binary>> = K,
-		    case Key of
-			<<>> -> done;
-			_ ->
-			    {ok, decode_obj(Db, Enc, Table, Key, V)}
-		    end;
+	    q_last_move_(eleveldb:iterator_move(I, last), I, Db, Table, Enc,
+			 QPrefix, Sz, TPrefix, TPSz)
+    end.
+
+q_last_move_(Res, I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz) ->
+    case Res of
+	{ok, <<QPrefix:Sz/binary, _/binary>>, <<"-", _/binary>>} ->
+	    %% object marked as 'inactive'
+	    q_last_move_(eleveldb:iterator_move(I, prev), I, Db, Table, Enc,
+			 QPrefix, Sz, TPrefix, TPSz);
+	{ok, <<QPrefix:Sz/binary, _/binary>> = K1, <<"+", V1/binary>>} ->
+	    <<TPrefix:TPSz/binary, Key/binary>> = K1,
+	    case Key of
+		<<>> -> done;
 		_ ->
-		    done
-	    end
+		    {ok, decode_obj(Db, Enc, Table, Key, V1)}
+	    end;
+	_Other ->
+	    done
     end.
 
 list_queue(Db, Table, Q) ->
@@ -406,8 +405,8 @@ q_all_({ok, Obj}, Limit, Fix, I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc)
 	Limit1 when Limit1 > 0 ->
 	    QSz = byte_size(QPrefix),
 	    TSz = byte_size(TPrefix),
-	    case eleveldb:iterator_move(I, Dir) of
-		{ok, <<QPrefix:QSz/binary, _/binary>> = K, V} ->
+	    case q_move_next(I, Dir, QPrefix, QSz) of
+		{ok, <<QPrefix:QSz/binary, _/binary>> = K, <<"+", V/binary>>} ->
 		    <<TPrefix:TSz/binary, Key/binary>> = K,
 		    q_all_({ok, decode_obj(Db, Enc, Table, Key, V)}, Limit1, Fix,
 			   I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc1);
@@ -419,6 +418,14 @@ q_all_({ok, Obj}, Limit, Fix, I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc)
     end;
 q_all_(done, _, _, _, _, _, _, _, _, _, Acc) ->
     lists:reverse(Acc).
+
+q_move_next(I, Dir, QPrefix, QSz) ->
+    case eleveldb:iterator_move(I, Dir) of
+	{ok, <<QPrefix:QSz/binary, _/binary>>, <<"-", _/binary>>} ->
+	    q_move_next(I, Dir, QPrefix, QSz);
+	Other ->
+	    Other
+    end.
 
 
 table_queue_prefix(Table, Q, Enc) when Enc == raw; element(1, Enc) == raw ->
@@ -432,6 +439,18 @@ get(#db{ref = Ref} = Db, Table, Key) ->
     EncKey = enc(key, Key, Enc),
     case eleveldb:get(Ref, make_table_key(Table, EncKey), []) of
 	{ok, V} ->
+	    {ok, decode_obj_v(Db, Enc, Table, Key, V)};
+	not_found ->
+	    {error, not_found};
+	{error, _} = Error ->
+	    Error
+    end.
+
+q_get(#db{ref = Ref} = Db, Table, Key) ->
+    Enc = encoding(Db, Table),
+    EncKey = enc(key, Key, Enc),
+    case eleveldb:get(Ref, make_table_key(Table, EncKey), []) of
+	{ok, <<St:8, V/binary>>} when St==$-; St==$+ ->
 	    {ok, decode_obj_v(Db, Enc, Table, Key, V)};
 	not_found ->
 	    {error, not_found};
@@ -703,6 +722,18 @@ encode_obj({_,_,_} = Enc, {Key, Attrs, Value}) ->
 encode_obj(Enc, {Key, Value}) ->
     {enc(key, Key, Enc), none, enc(value, Value, Enc)}.
 
+encode_queue_obj(Enc, Obj) ->
+    encode_queue_obj(Enc, Obj, active).
+
+encode_queue_obj({_,_,_} = Enc, {Key, Attrs, Value}, Status) ->
+    St = enc_queue_obj_status(Status),
+    {enc(key, Key, Enc), Attrs, <<St:8, (enc(value, Value, Enc))/binary>>};
+encode_queue_obj(Enc, {Key, Value}, Status) ->
+    St = enc_queue_obj_status(Status),
+    {enc(key, Key, Enc), none, <<St:8, (enc(value, Value, Enc))/binary>>}.
+
+enc_queue_obj_status(active) -> $+;
+enc_queue_obj_status(inactive) -> $-.
 
 decode_obj(Db, Enc, Table, K, V) ->
     Key = dec(key, K, Enc),

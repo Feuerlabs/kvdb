@@ -15,7 +15,8 @@
 -export([open/2, close/1, db/1, start_session/2]).
 -export([add_table/2, add_table/3, delete_table/2, list_tables/1]).
 -export([put/3, put_attr/5, put_attrs/4, get/3,
-	 push/3, push/4, pop/2, pop/3, extract/3, list_queue/3, is_queue_empty/3,
+	 push/3, push/4, pop/2, pop/3, prel_pop/2, prel_pop/3,
+	 extract/3, list_queue/3, is_queue_empty/3,
 	 first_queue/2, next_queue/3,
 	 get_attr/4, get_attrs/3, delete/3]).
 -export([first/2, last/2, next/3, prev/3]).
@@ -29,6 +30,8 @@
 	 do_get/3,
 	 do_pop/2,
 	 do_pop/3,
+	 do_prel_pop/2,
+	 do_prel_pop/3,
 	 do_extract/3,
 	 do_list_queue/3,
 	 do_is_queue_empty/3,
@@ -348,6 +351,35 @@ pop(Name, Table) ->
 		 {ok, object()} | done | {error,any()}.
 pop(Name, Table, Q) ->
     ?KVDB_CATCH(call(Name, {pop, Table, Q}), [Name, Table, Q]).
+
+-spec do_prel_pop(Db::db_ref(), Table::table()) ->
+			 {ok, object(), binary()} | done | {error,any()}.
+
+do_prel_pop(Db, Table) ->
+    do_prel_pop(Db, Table, <<>>).
+
+-spec do_prel_pop(Db::db_ref(), Table::table(), Q::any()) ->
+			 {ok, object(), binary()} | done | {error,any()}.
+
+do_prel_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Q) ->
+    Table = table_name(Table0),
+    case DbMod:prel_pop(Db, Table, Q) of
+	{ok, Obj, RealKey, IsEmpty} ->
+	    Schema:on_update({pop,Q,IsEmpty}, DbRef, Table, Obj),
+	    {ok, Schema:decode(Db, Table, Obj), RealKey};
+	done ->
+	    done
+    end.
+
+-spec prel_pop(name(), Table::table()) ->
+		      {ok, object(), binary()} | done | {error,any()}.
+prel_pop(Name, Table) ->
+    pop(Name, Table, <<>>).
+
+-spec prel_pop(name(), Table::table(), Q::any()) ->
+		      {ok, object(), binary()} | done | {error,any()}.
+prel_pop(Name, Table, Q) ->
+    ?KVDB_CATCH(call(Name, {prel_pop, Table, Q}), [Name, Table, Q]).
 
 -spec extract(name(), Table::table(), Key::binary()) ->
 		 {ok, object()} | {error,any()}.
@@ -683,9 +715,9 @@ handle_call(Req, From, St) ->
     try handle_call_(Req, From, St)
     catch
 	error:badarg ->
-	    {reply, badarg, St};
+	    {reply, {badarg, erlang:get_stacktrace()}, St};
 	error:E ->
-	    {reply, {badarg,E}, St}
+	    {reply, {badarg,[E, erlang:get_stacktrace()]}, St}
     end.
 
 handle_call_({put, Tab, Obj}, _From, #st{db = Db} = St) ->
@@ -694,6 +726,8 @@ handle_call_({push, Tab, Q, Obj}, _From, #st{db = Db} = St) ->
     {reply, do_push(Db, Tab, Q, Obj), St};
 handle_call_({pop, Tab, Q}, _From, #st{db = Db} = St) ->
     {reply, do_pop(Db, Tab, Q), St};
+handle_call_({prel_pop, Tab, Q}, _From, #st{db = Db} = St) ->
+    {reply, do_prel_pop(Db, Tab, Q), St};
 handle_call_({extract, Tab, Key}, _From, #st{db = Db} = St) ->
     {reply, do_extract(Db, Tab, Key), St};
 handle_call_({put_attr, Table, Key, Attr, Value}, _From, #st{db = Db} = St) ->

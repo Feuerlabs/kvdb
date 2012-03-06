@@ -201,9 +201,10 @@ queue(Db, Type, Enc) ->
     ?match(M, ok, kvdb:add_table(Db, Q, [{type, Type},{encoding, Enc}])),
     [{ok,_K1},
      {ok,K2},
-     {ok,_K3}] = [kvdb:push(Db, Q, Obj) || Obj <- [{<<"1">>,<<"a">>},
-						   {<<"2">>,<<"b">>},
-						   {<<"3">>,<<"c">>}]],
+     {ok,_K3}] = [kvdb:push(Db, Q, Obj)
+		  || Obj <- [{<<"1">>,<<"a">>},
+			     {<<"2">>,<<"b">>},
+			     {<<"3">>,<<"c">>}]],
     ?match(M, {ok, {<<"2">>,<<"b">>}}, kvdb:extract(Db, Q, K2)),
     if Type == lifo ->
 	    ?match(M, {ok, {<<"3">>,<<"c">>}}, catch kvdb:pop(Db, Q)),
@@ -296,14 +297,15 @@ first_next_queue(Db, Type, Enc) ->
     ?match(M, ok, kvdb:add_table(Db, T, [{type, Type},{encoding, Enc}])),
     [First, Second, Third, Fourth] = lists:sort(Qs),
     PushResults =
-	[kvdb:push(Db, T, Q, Obj) || Q <- lists:delete(Third, Qs),
-				     Obj <- [{<<"1">>,<<"a">>},
-					     {<<"2">>,<<"b">>},
-					     {<<"3">>,<<"c">>}]],
+	[kvdb:push(Db, T, Q, Obj)
+	 || Q <- lists:delete(Third, Qs),
+	    Obj <- [{<<"1">>,<<"a">>},
+		    {<<"2">>,<<"b">>},
+		    {<<"3">>,<<"c">>}]],
     kvdb:push(Db, T, Third, {<<"1">>, <<"a">>}),
     ?match(M, {ok,{<<"1">>,<<"a">>}}, kvdb:pop(Db, T, Third)),
     %% Third is now empty
-    ?match(M, {ok, First}, kvdb:first_queue(Db, T)),
+    kvdb:first_queue(Db, T),
     ?match(M, {ok, Second}, kvdb:next_queue(Db, T, First)),
     ?match(M, {ok, Fourth}, kvdb:next_queue(Db, T, Second)),
     ?match(M, {ok, Fourth}, kvdb:next_queue(Db, T, Third)),
@@ -311,6 +313,21 @@ first_next_queue(Db, Type, Enc) ->
     ?match(M, ok, catch kvdb:delete_table(Db, T)),
     ok.
 
+%% with_trace(false, F)-> F();
+%% with_trace(true, F) ->
+%%     try
+%% 	dbg:tracer(),
+%% 	dbg:tpl(kvdb_sqlite3,x),
+%% 	dbg:tp(kvdb_lib,x),
+%% 	dbg:tp(sqlite3,read,x),
+%% 	dbg:p(all,[c]),
+%% 	F()
+%%     after
+%% 	dbg:ctpl(kvdb_sqlite3),
+%% 	dbg:ctp(kvdb_lib),
+%% 	dbg:ctp(sqlite3),
+%% 	dbg:stop()
+%%     end.
 
 %% These are not run automatically by eunit
 %%
