@@ -772,12 +772,10 @@ mod(M) ->
 	    error(illegal_backend_type)
     end.
 
-name2file({App,Backend}) ->
-    lists:flatten(io_lib:fwrite("~w-~w", [App,Backend]));
-name2file(Name) when is_atom(Name) ->
-    atom_to_list(Name);
-name2file(Str) when is_list(Str) ->
-    Str.
+name2file(X) ->
+    kvdb_lib:good_string(X).
+
+
 
 %% to_atom(A) when is_atom(A) ->
 %%     A;

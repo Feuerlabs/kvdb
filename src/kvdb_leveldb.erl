@@ -31,7 +31,7 @@ get_schema_mod(Db, Default) ->
     end.
 
 open(Db0, Options) ->
-    Db = make_string(Db0),
+    Db = kvdb_lib:good_string(Db0),
     E = proplists:get_value(encoding, Options, sext),
     kvdb_lib:check_valid_encoding(E),
     DbOpts = proplists:get_value(db_opts, Options, [{create_if_missing,true}]),

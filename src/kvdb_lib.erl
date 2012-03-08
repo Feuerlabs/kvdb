@@ -11,7 +11,8 @@
 	 queue_prefix/2,
 	 queue_prefix/3,
 	 timestamp/0,
-	 timestamp_to_datetime/1]).
+	 timestamp_to_datetime/1,
+	 good_string/1]).
 
 valid_table_name(Table0) ->
     Table = table_name(Table0),
@@ -162,3 +163,45 @@ binary_match(A, B) ->
 	{0, _} -> true;
 	_ -> false
     end.
+
+
+good_string(Name) when is_atom(Name) ->
+    atom_to_list(Name);
+good_string(Bin) when is_binary(Bin) ->
+    binary_to_list(Bin);
+good_string(T) when is_tuple(T), size(T) > 0 ->
+    L = tuple_to_list(T),
+    lists:flatten([str(hd(L)) | [["_", str(X)] || X <- tl(L)]]);
+good_string([I|_] = L) when is_integer(I) ->
+    case lists:all(fun(X) when $0 =< X, X =< $9 -> true;
+		      (X) when $a =< X, X =< $z -> true;
+		      (X) when $A =< X, X =< $Z -> true;
+		      (X) -> lists:member(X, ".#%=+!()-_åäöÅÄÖ")
+		   end, L) of
+	true ->
+	    lists:flatten(L);
+	false ->
+	    lists:flatten([str(hd(L)) | [["-", str(X)] || X <- tl(L)]])
+    end;
+good_string([_|_] = L) ->
+    lists:flatten([str(hd(L)) | [["-", str(X)] || X <- tl(L)]]);
+good_string(Other) ->
+    str(Other).
+
+str(I) when is_integer(I) ->
+    integer_to_list(I);
+str(X) ->
+    binary_to_list(bin(X)).
+
+bin(A) when is_atom(A) ->
+    atom_to_binary(A, latin1);
+bin(L) when is_list(L) ->
+    try iolist_to_binary(L)
+    catch
+	error:_ ->
+	    iolist_to_binary(io_lib:fwrite("~w", [L]))
+    end;
+bin(B) when is_binary(B) ->
+    B;
+bin(T) ->
+    iolist_to_binary(io_lib:fwrite("~w", [T])).
