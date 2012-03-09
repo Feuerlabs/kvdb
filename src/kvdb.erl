@@ -69,6 +69,10 @@
 
 -include("kvdb.hrl").
 
+-export_type([db/0, table/0, int_table_name/0, queue_name/0,
+	      db_ref/0, key/0, value/0, attr_name/0, attr_value/0, attrs/0, object/0,
+	      options/0]).
+
 -record(st, {name, db, is_owner = false}).
 
 -define(KVDB_CATCH(Expr, Args),
@@ -123,7 +127,7 @@ start() ->
     application:start(gproc),
     application:start(kvdb).
 
--spec open_db(name(), options()) -> {ok, pid()} | {error, any()}.
+-spec open_db(db_name(), options()) -> {ok, pid()} | {error, any()}.
 
 %% @spec open_db(Name, Options) -> {ok, Pid} | {error, Reason}
 %% @doc Opens a kvdb database instance.
@@ -141,7 +145,7 @@ open_db(Name, Options) ->
 	    {error, already_loaded}
     end.
 
--spec info(name(), attr_name()) -> undefined | attr_value().
+-spec info(db_name(), attr_name()) -> undefined | attr_value().
 info(Name, Item) ->
     ?KVDB_CATCH(do_info(db(Name), Item), [Name, Item]).
 
@@ -149,7 +153,7 @@ info(Name, Item) ->
 do_info(#kvdb_ref{mod = DbMod, db = Db}, Item) ->
     DbMod:info(Db, Item).
 
--spec open(name(), Options::[{atom(),term()}]) ->
+-spec open(db_name(), Options::[{atom(),term()}]) ->
 		  {ok,db_ref()} | {error,term()}.
 
 open(Name, Options) ->
@@ -174,7 +178,7 @@ close(#kvdb_ref{mod = DbMod, db = Db}) ->
 close(Name) ->
     ?KVDB_CATCH(call(Name, close), [Name]).
 
--spec db(name() | db_ref()) -> db_ref().
+-spec db(db_name() | db_ref()) -> db_ref().
 db(#kvdb_ref{} = Db) ->
     Db;
 db(Name) ->
@@ -251,7 +255,7 @@ do_put_attr(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
 	    Error
     end.
 
--spec put_attr(name(), Table::table(), Key::key(), atom(), any()) ->
+-spec put_attr(db_name(), Table::table(), Key::key(), atom(), any()) ->
 		      ok | {error, any()}.
 put_attr(Name, Table, Key, Attr, Value) when is_atom(Attr) ->
     ?KVDB_CATCH(call(Name, {put_attr, Table, Key, Attr, Value}),
@@ -280,7 +284,7 @@ do_get(#kvdb_ref{mod = DbMod, db = Db, schema = Schema}, Table0, Key) ->
 	    Other
     end.
 
--spec get(name(), Table::table(), Key::binary()) ->
+-spec get(db_name(), Table::table(), Key::binary()) ->
 		 {ok, binary()} | {error,any()}.
 
 get(Name, Table, Key) ->
@@ -312,24 +316,24 @@ do_push_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Q, Obj
 	    Error
     end.
 
--spec push(any(), Table::table(), Obj::object()) ->
-		 {ok, ActualKey::any()} | {error, any()}.
+-spec push(db_name(), table(), object()) ->
+		 {ok, _ActualKey::any()} | {error, any()}.
 push(Name, Table, Obj) when is_tuple(Obj) ->
     push(Name, Table, <<>>, Obj).
 
--spec push(any(), Table::table(), Q::any(), Obj::object()) ->
-		 {ok, ActualKey::any()} | {error, any()}.
+-spec push(any(), Table::table(), queue_name(), object()) ->
+		 {ok, _ActualKey::any()} | {error, any()}.
 push(Name, Table, Q, Obj) when is_tuple(Obj) ->
     ?KVDB_CATCH(call(Name, {push, Table, Q, Obj}), [Name, Table, Q, Obj]).
 
 
--spec do_pop(Db::db_ref(), Table::table()) ->
+-spec do_pop(db_ref(), table()) ->
 		    {ok, object()} | done | {error,any()}.
 
 do_pop(Db, Table) ->
     do_pop(Db, Table, <<>>).
 
--spec do_pop(Db::db_ref(), Table::table(), Q::any()) ->
+-spec do_pop(Db::db_ref(), Table::table(), queue_name()) ->
 		    {ok, object()} | done | {error,any()}.
 
 do_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Q) ->
@@ -342,12 +346,12 @@ do_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Q) ->
 	    done
     end.
 
--spec pop(name(), Table::table()) ->
+-spec pop(db_name(), Table::table()) ->
 		 {ok, object()} | done | {error,any()}.
 pop(Name, Table) ->
     pop(Name, Table, <<>>).
 
--spec pop(name(), Table::table(), Q::any()) ->
+-spec pop(db_name(), Table::table(), queue_name()) ->
 		 {ok, object()} | done | {error,any()}.
 pop(Name, Table, Q) ->
     ?KVDB_CATCH(call(Name, {pop, Table, Q}), [Name, Table, Q]).
@@ -358,7 +362,7 @@ pop(Name, Table, Q) ->
 do_prel_pop(Db, Table) ->
     do_prel_pop(Db, Table, <<>>).
 
--spec do_prel_pop(Db::db_ref(), Table::table(), Q::any()) ->
+-spec do_prel_pop(Db::db_ref(), Table::table(), queue_name()) ->
 			 {ok, object(), binary()} | done | {error,any()}.
 
 do_prel_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Q) ->
@@ -371,17 +375,17 @@ do_prel_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Q)
 	    done
     end.
 
--spec prel_pop(name(), Table::table()) ->
+-spec prel_pop(db_name(), Table::table()) ->
 		      {ok, object(), binary()} | done | {error,any()}.
 prel_pop(Name, Table) ->
     pop(Name, Table, <<>>).
 
--spec prel_pop(name(), Table::table(), Q::any()) ->
+-spec prel_pop(db_name(), Table::table(), queue_name()) ->
 		      {ok, object(), binary()} | done | {error,any()}.
 prel_pop(Name, Table, Q) ->
     ?KVDB_CATCH(call(Name, {prel_pop, Table, Q}), [Name, Table, Q]).
 
--spec extract(name(), Table::table(), Key::binary()) ->
+-spec extract(db_name(), Table::table(), Key::binary()) ->
 		 {ok, object()} | {error,any()}.
 
 extract(Name, Table, Key) ->
@@ -400,45 +404,45 @@ do_extract(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Key
     end.
 
 
--spec list_queue(name(), Table::table(), Q::any()) ->
+-spec list_queue(db_name(), Table::table(), Q::queue_name()) ->
 			[object()] | {error,any()}.
 
 list_queue(Name, Table, Q) ->
     #kvdb_ref{} = Ref = call(Name, db),
     ?KVDB_CATCH(do_list_queue(Ref, Table, Q), [Name, Table, Q]).
 
--spec do_list_queue(#kvdb_ref{}, Table::table(), Q::any()) ->
+-spec do_list_queue(#kvdb_ref{}, Table::table(), Q::queue_name()) ->
 			   [object()] | {error,any()}.
 do_list_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
     Table = table_name(Table0),
     DbMod:list_queue(Db, Table, Q).
 
--spec is_queue_empty(name(), table(), _Q::any()) -> boolean().
+-spec is_queue_empty(db_name(), table(), _Q::queue_name()) -> boolean().
 
 is_queue_empty(Name, Table, Q) ->
     #kvdb_ref{} = Ref = call(Name, db),
     ?KVDB_CATCH(do_is_queue_empty(Ref, Table, Q), [Name, Table, Q]).
 
--spec do_is_queue_empty(#kvdb_ref{}, table(), _Q::any()) -> boolean().
+-spec do_is_queue_empty(#kvdb_ref{}, table(), _Q::queue_name()) -> boolean().
 do_is_queue_empty(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
     DbMod:is_queue_empty(Db, table_name(Table0), Q).
 
--spec first_queue(name(), table()) -> {ok, any()} | done.
+-spec first_queue(db_name(), table()) -> {ok, queue_name()} | done.
 first_queue(Name, Table) ->
     #kvdb_ref{} = Ref = call(Name, db),
     ?KVDB_CATCH(do_first_queue(Ref, Table), [Name, Table]).
 
--spec do_first_queue(#kvdb_ref{}, table()) -> {ok, any()} | done.
+-spec do_first_queue(#kvdb_ref{}, table()) -> {ok, queue_name()} | done.
 do_first_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
     Table = table_name(Table0),
     DbMod:first_queue(Db, Table).
 
--spec next_queue(name(), table(), _Q::any()) -> {ok, any()} | done.
+-spec next_queue(db_name(), table(), _Q::queue_name()) -> {ok, any()} | done.
 next_queue(Name, Table, Q) ->
     #kvdb_ref{} = Ref = call(Name, db),
     ?KVDB_CATCH(do_next_queue(Ref, Table, Q), [Name, Table, Q]).
 
--spec do_next_queue(#kvdb_ref{}, table(), _Q::any()) -> {ok, any()} | done.
+-spec do_next_queue(#kvdb_ref{}, table(), _Q::queue_name()) -> {ok, any()} | done.
 do_next_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
     Table = table_name(Table0),
     DbMod:next_queue(Db, Table, Q).

@@ -48,18 +48,18 @@ open(Db0, Options) ->
 	    Error
     end.
 
-make_string(A) when is_atom(A) ->
-    atom_to_list(A);
-make_string(S) when is_list(S) ->
-    try binary_to_list(iolist_to_binary([S]))
-    catch
-	error:_ ->
-	    lists:flatten(io_lib:fwrite("~w",[S]))
-    end;
-make_string(B) when is_binary(B) ->
-    binary_to_list(B);
-make_string(X) ->
-    lists:flatten(io_lib:fwrite("~w", [X])).
+%% make_string(A) when is_atom(A) ->
+%%     atom_to_list(A);
+%% make_string(S) when is_list(S) ->
+%%     try binary_to_list(iolist_to_binary([S]))
+%%     catch
+%% 	error:_ ->
+%% 	    lists:flatten(io_lib:fwrite("~w",[S]))
+%%     end;
+%% make_string(B) when is_binary(B) ->
+%%     binary_to_list(B);
+%% make_string(X) ->
+%%     lists:flatten(io_lib:fwrite("~w", [X])).
 
 
 
@@ -124,8 +124,8 @@ delete_table_({error,invalid_iterator}, _, _, _, _) ->
 put(#db{ref = Ref} = Db, Table, Obj) ->
     Enc = encoding(Db, Table),
     {Key, Attrs, Value} = encode_obj(Enc, Obj),
-    put_attrs(Db, Table, Key, Attrs),
-    case eleveldb:put(Ref, make_table_key(Table, Key), Value, []) of
+    PutAttrs = attrs_to_put(Table, Key, Attrs),
+    case eleveldb:write(Ref, [{put, make_table_key(Table, Key), Value}|PutAttrs], []) of
 	ok ->
 	    ok;
 	Other ->
@@ -138,8 +138,9 @@ push(#db{ref = Ref} = Db, Table, Q, Obj) ->
 	    Enc = encoding(Db, Table),
 	    ActualKey = kvdb_lib:actual_key(Enc, Q, element(1, Obj)),
 	    {Key, Attrs, Value} = encode_queue_obj(Enc, setelement(1, Obj, ActualKey)),
-	    put_attrs(Db, Table, Key, Attrs),
-	    case eleveldb:put(Ref, make_table_key(Table, Key), Value, []) of
+	    PutAttrs = attrs_to_put(Table, Key, Attrs),
+	    Put = {put, make_table_key(Table, Key), Value},
+	    case eleveldb:write(Ref, [Put|PutAttrs], []) of
 		ok ->
 		    {ok, ActualKey};
 		Other ->
@@ -461,20 +462,23 @@ q_get(#db{ref = Ref} = Db, Table, Key) ->
 delete(#db{ref = Ref} = Db, Table, Key) ->
     Enc = encoding(Db, Table),
     EncKey = enc(key, Key, Enc),
-    delete_attrs(Db, Table, EncKey),
-    eleveldb:delete(Ref, make_table_key(Table, EncKey), []).
+    As = attrs_to_delete(Db, Table, EncKey),
+    eleveldb:write(Ref, [{delete, make_table_key(Table, EncKey)} | As], []).
 
-put_attrs(#db{ref = Ref} = Db, Table, EncKey, Attrs) when is_list(Attrs) ->
-    case encoding(Db, Table) of
-	{_, _, _} ->
-	    [eleveldb:put(Ref, make_key(Table, $=, <<EncKey/binary,
-						     (sext:encode(K))/binary>>),
-			  term_to_binary(V), []) || {K, V} <- Attrs];
-	_ ->
-	    error(badarg)
-    end;
-put_attrs(_, _, _, none) ->
-    ok.
+%% put_attrs(#db{ref = Ref} = Db, Table, EncKey, Attrs) ->
+%%     case encoding(Db, Table) of
+%% 	{_, _, _} ->
+%% 	    eleveldb:write(Ref, attrs_to_put(Table, EncKey, Attrs), []);
+%% 	_ ->
+%% 	    error(badarg)
+%%     end.
+
+attrs_to_put(Table, EncKey, Attrs) when is_list(Attrs) ->
+    [{put, make_key(Table, $=, <<EncKey/binary,
+				 (sext:encode(K))/binary>>),
+      term_to_binary(V)} || {K, V} <- Attrs];
+attrs_to_put(_, _, none) ->
+    [].
 
 
 get_attrs(#db{ref = Ref} = Db, Table, Key) ->
@@ -497,7 +501,16 @@ get_attrs_({ok, K, V}, I, Prefix) ->
 get_attrs_(done, _, _) ->
    [].
 
-delete_attrs(#db{ref = Ref} = Db, Table, Key) ->
+%% delete_attrs(#db{ref = Ref} = Db, Table, Key) ->
+%%     case encoding(Db, Table) of
+%% 	{_, _, _}  = Enc ->
+%% 	    DelAs = attrs_to_delete(Db, Table, Key),
+%% 	    eleveldb:write(Ref, DelAs, []);
+%% 	_ ->
+%% 	    ok
+%%     end.
+
+attrs_to_delete(#db{ref = Ref} = Db, Table, Key) ->
     case encoding(Db, Table) of
 	{_, _, _} = Enc ->
 	    EncKey = enc(key, Key, Enc),
@@ -505,24 +518,23 @@ delete_attrs(#db{ref = Ref} = Db, Table, Key) ->
 	    with_iterator(
 	      Ref,
 	      fun(I) ->
-		      delete_attrs_(eleveldb:iterator_move(I, TableKey), I, TableKey, Ref)
+		      attrs_to_delete_(eleveldb:iterator_move(I, TableKey), I, TableKey, Ref)
 	      end);
 	_ ->
 	    ok
     end.
 
-delete_attrs_({ok, K, _V}, I, Prefix, Ref) ->
+attrs_to_delete_({ok, K, _V}, I, Prefix, Ref) ->
     Sz = byte_size(Prefix),
     case K of
 	<<Prefix:Sz/binary, _/binary>> ->
-	    eleveldb:delete(Ref, K),
-	    delete_attrs_(eleveldb:iterator_move(I, Prefix, next), I, Prefix, Ref);
+	    [{delete, K}|
+	     attrs_to_delete_(eleveldb:iterator_move(I, Prefix, next), I, Prefix, Ref)];
 	_ ->
-	    ok
+	    []
     end;
-delete_attrs_(done, _, _, _) ->
-    ok.
-
+attrs_to_delete_(done, _, _, _) ->
+    [].
 
 prefix_match(Db, Table, Prefix) ->
     prefix_match(Db, Table, Prefix, 100).

@@ -1,6 +1,8 @@
 %% kvdb definitions
 
 -type table() :: atom() | binary().
+-type int_table_name() :: binary().
+-type queue_name() :: any().
 
 -record(kvdb_ref, {name, db, mod, schema = db}).
 -opaque db_ref()  :: #kvdb_ref{}.
@@ -12,7 +14,7 @@
 
 -define(SCHEMA_TABLE, <<"kvdb__SCHEMA">>).
 
--type name() :: any().
+-type db_name() :: any().
 -type key() :: any().
 -type value() :: any().
 -type attr_name() :: atom().
