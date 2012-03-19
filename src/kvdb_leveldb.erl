@@ -11,8 +11,8 @@
 
 -export([open/2, close/1]).
 -export([add_table/3, delete_table/2, list_tables/1]).
--export([put/3, push/4, get/3, pop/3, prel_pop/3, extract/3, delete/3, list_queue/3,
-	 list_queue/5, is_queue_empty/3]).
+-export([put/3, push/4, get/3, pop/3, prel_pop/3, extract/3, delete/3,
+	 list_queue/3, list_queue/6, is_queue_empty/3]).
 -export([first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3, prefix_match/3, prefix_match/4]).
 -export([get_schema_mod/2]).
@@ -177,8 +177,10 @@ prel_pop(Db, Table, Q) ->
 
 do_pop(Db, Table, Q, Remove, ReturnKey) ->
     Enc = encoding(Db, Table),
-    case list_queue(Db, Table, Q, false, 2) of
-	[Obj|More] ->
+    case list_queue(Db, Table, Q, fun(_,K,O) ->
+					  {keep, setelement(1,O,K)}
+				  end, false, 2) of
+	{[Obj|More], _} ->
 	    Obj1 = fix_q_obj(Obj, Enc),
 	    Empty = More == [],
 	    Remove(Obj, Enc),
@@ -187,10 +189,10 @@ do_pop(Db, Table, Q, Remove, ReturnKey) ->
 	       true ->
 		    {ok, Obj1, Empty}
 	    end;
-	[] ->
-	    done;
 	{error, _} = Error ->
-	    Error
+	    Error;
+	_ ->
+	    done
     end.
 
 
@@ -206,7 +208,15 @@ extract(#db{} = Db, Table, Key) ->
 		    case Type of
 			_ when Type==fifo; Type==lifo ->
 			    {Q, _} = kvdb_lib:split_queue_key(Enc, Key),
-			    IsEmpty = list_queue(Db, Table, Q, false, 1) == [],
+			    IsEmpty = case list_queue(Db, Table, Q,
+						      fun(_,K,O) ->
+							      {keep, 
+							       setelement(1,O,K)}
+						      end,
+						      false, 1) of
+					  {[_], _} -> false;
+					  _ -> true
+				      end,
 			    {ok, fix_q_obj(Obj, Enc), Q, IsEmpty};
 			set ->
 			    {ok, Obj}
@@ -305,10 +315,8 @@ fix_q_obj(Obj, Enc) ->
     {_, K1} = kvdb_lib:split_queue_key(Enc, K),
     setelement(1, Obj, K1).
 
-%% q_first(#db{ref = Ref} = Db, Table, Q, Enc) ->
-%%     with_iterator(Ref, fun(I) -> q_first_(I, Db, Table, Q, Enc) end).
 
-q_first_(I, Db, Table, Q, Enc) ->
+q_first_(I, Db, Table, Q, Enc, Inactive) ->
     QPfx = kvdb_lib:queue_prefix(Enc, Q, first),
     Prefix = make_table_key(Table, kvdb_lib:enc(key, QPfx, Enc)),
     QPrefix = table_queue_prefix(Table, Q, Enc),
@@ -316,21 +324,27 @@ q_first_(I, Db, Table, Q, Enc) ->
     TPrefix = make_table_key(Table),
     TPSz = byte_size(TPrefix),
     q_first_move(eleveldb:iterator_move(I, Prefix),
-		 I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz).
+		 I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz, Inactive).
 
-q_first_move(Res, I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz) ->
+q_first_move(Res, I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz, Inactive) ->
     case Res of
-	{ok, <<QPrefix:Sz/binary, _/binary>>, <<"-", _/binary>>} ->
-	    q_first_move(eleveldb:iterator_move(I, next),
-			 I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz);
-	{ok, <<QPrefix:Sz/binary, _/binary>> = K, <<"+", V/binary>>} ->
+	{ok, <<QPrefix:Sz/binary, _/binary>> = K, <<F:8, V/binary>>}
+	  when Inactive orelse F == $+ ->
 	    <<TPrefix:TPSz/binary, Key/binary>> = K,
 	    case Key of
 		<<>> -> q_first_move(eleveldb:iterator_move(I, next),
-				     I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz);
+				     I, Db, Table, Enc, QPrefix, Sz, TPrefix,
+				     TPSz, Inactive);
 		_ ->
-		    {ok, decode_obj(Db, Enc, Table, Key, V)}
+		    Status = case F of
+				 $+ -> active;
+				 $- -> inactive
+			     end,
+		    {Status, decode_obj(Db, Enc, Table, Key, V)}
 	    end;
+	{ok, <<QPrefix:Sz/binary, _/binary>>, <<"-", _/binary>>} ->
+	    q_first_move(eleveldb:iterator_move(I, next),
+			 I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz, Inactive);
 	_ ->
 	    done
     end.
@@ -340,7 +354,7 @@ q_first_move(Res, I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz) ->
 %% q_last(#db{ref = Ref} = Db, Table, Q, Enc) ->
 %%     with_iterator(Ref, fun(I) -> q_last_(I, Db, Table, Q, Enc) end).
 
-q_last_(I, Db, Table, Q, Enc) ->
+q_last_(I, Db, Table, Q, Enc, Inactive) ->
     QPfx = kvdb_lib:queue_prefix(Enc, Q, last),
     Prefix = make_table_key(Table, kvdb_lib:enc(key, QPfx, Enc)),
     QPrefix = table_queue_prefix(Table, Q, Enc),
@@ -350,33 +364,38 @@ q_last_(I, Db, Table, Q, Enc) ->
     case eleveldb:iterator_move(I, Prefix) of
 	{ok, _K, _V} ->
 	    q_last_move_(eleveldb:iterator_move(I, prev), I, Db, Table, Enc,
-			 QPrefix, Sz, TPrefix, TPSz);
+			 QPrefix, Sz, TPrefix, TPSz, Inactive);
 	{error, invalid_iterator} ->
 	    q_last_move_(eleveldb:iterator_move(I, last), I, Db, Table, Enc,
-			 QPrefix, Sz, TPrefix, TPSz)
+			 QPrefix, Sz, TPrefix, TPSz, Inactive)
     end.
 
-q_last_move_(Res, I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz) ->
+q_last_move_(Res, I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz, Inactive) ->
     case Res of
-	{ok, <<QPrefix:Sz/binary, _/binary>>, <<"-", _/binary>>} ->
-	    %% object marked as 'inactive'
-	    q_last_move_(eleveldb:iterator_move(I, prev), I, Db, Table, Enc,
-			 QPrefix, Sz, TPrefix, TPSz);
-	{ok, <<QPrefix:Sz/binary, _/binary>> = K1, <<"+", V1/binary>>} ->
+	{ok, <<QPrefix:Sz/binary, _/binary>> = K1, <<F:8, V1/binary>>}
+	  when Inactive orelse F == $+ ->
 	    <<TPrefix:TPSz/binary, Key/binary>> = K1,
 	    case Key of
 		<<>> -> done;
 		_ ->
-		    {ok, decode_obj(Db, Enc, Table, Key, V1)}
+		    Status = case F of
+				 $+ -> active;
+				 $- -> inactive
+			     end,
+		    {Status, decode_obj(Db, Enc, Table, Key, V1)}
 	    end;
+	{ok, <<QPrefix:Sz/binary, _/binary>>, <<"-", _/binary>>} ->
+	    %% object marked as 'inactive'
+	    q_last_move_(eleveldb:iterator_move(I, prev), I, Db, Table, Enc,
+			 QPrefix, Sz, TPrefix, TPSz, Inactive);
 	_Other ->
 	    done
     end.
 
 list_queue(Db, Table, Q) ->
-    list_queue(Db, Table, Q, true, infinity).
+    list_queue(Db, Table, Q, fun(_,_,O) -> {keep,O} end, false, infinity).
 
-list_queue(#db{ref = Ref} = Db, Table, Q, Fix, Limit)
+list_queue(#db{ref = Ref} = Db, Table, Q, Filter, Inactive, Limit)
   when Limit > 0 ->  % includes 'infinity'
     Type = type(Db, Table),
     Enc = encoding(Db, Table),
@@ -386,39 +405,73 @@ list_queue(#db{ref = Ref} = Db, Table, Q, Fix, Limit)
       Ref,
       fun(I) ->
 	      First = case Type of
-			  fifo -> q_first_(I, Db, Table, Q, Enc);
-			  lifo -> q_last_(I, Db, Table, Q, Enc)
+			  fifo -> q_first_(I, Db, Table, Q, Enc, Inactive);
+			  lifo -> q_last_(I, Db, Table, Q, Enc, Inactive)
 		      end,
-	      q_all_(First, Limit, Fix, I, Db, Table,
+	      q_all_(First, Limit, Limit, Filter, Inactive, I, Db, Table,
 		     q_all_dir(Type), Enc, QPrefix, TPrefix, [])
       end);
-list_queue(_, _, _, _, 0) ->
-    [].
+list_queue(_, _, _, _, _, 0) ->
+    {[], fun() -> done end}.
 
 q_all_dir(fifo) -> next;
 q_all_dir(lifo) -> prev.
 
-q_all_({ok, Obj}, Limit, Fix, I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc)
+q_all_({St, Obj}, Limit, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc,
+       QPrefix, TPrefix, Acc)
   when Limit > 0 ->
-    Acc1 = [if Fix -> fix_q_obj(Obj, Enc);
-	       true -> Obj end|Acc],
-    case decr(Limit) of
-	Limit1 when Limit1 > 0 ->
-	    QSz = byte_size(QPrefix),
-	    TSz = byte_size(TPrefix),
-	    case q_move_next(I, Dir, QPrefix, QSz) of
-		{ok, <<QPrefix:QSz/binary, _/binary>> = K, <<"+", V/binary>>} ->
-		    <<TPrefix:TSz/binary, Key/binary>> = K,
-		    q_all_({ok, decode_obj(Db, Enc, Table, Key, V)}, Limit1, Fix,
-			   I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc1);
-		_ ->
-		    q_all_(done, Limit1, Fix, I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc1)
-	    end;
-	_ ->
-	    lists:reverse(Acc1)
+    {Cont,Acc1} = case Filter(St, element(1, Obj), fix_q_obj(Obj, Enc)) of
+		      skip     -> {true, Acc};
+		      stop     -> {false, Acc};
+		      {stop,X} -> {false, [X|Acc]};
+		      {keep,X} -> {true, [X|Acc]}
+	   end,
+    case {Cont, decr(Limit)} of
+	{true, Limit1} when Limit1 > 0 ->
+	    q_all_cont(Limit1, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc,
+		       QPrefix, TPrefix, Acc1);
+	_ when Acc1 == [] ->
+	    done;
+	{true, _} ->
+	    Key = make_table_key(Table, enc(key, element(1, Obj), Enc)),
+	    {lists:reverse(Acc1),
+	     fun() ->
+		     with_iterator(
+		       Db#db.ref,
+		       fun(I1) ->
+			       eleveldb:iterator_move(I1, Key),
+			       q_all_cont(Limit0, Limit0, Filter, Inactive, I1,
+					  Db, Table, Dir, Enc, QPrefix, TPrefix, [])
+		       end)
+	     end};
+	{false, _}->
+	    {lists:reverse(Acc1), fun() -> done end}
     end;
-q_all_(done, _, _, _, _, _, _, _, _, _, Acc) ->
-    lists:reverse(Acc).
+q_all_(done, _, _, _, _, _, _, _, _, _, _, _, Acc) ->
+    if Acc == [] -> done;
+       true ->
+	    {lists:reverse(Acc), fun() -> done end}
+    end.
+
+q_all_cont(Limit, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc,
+	   QPrefix, TPrefix, Acc) ->
+    QSz = byte_size(QPrefix),
+    TSz = byte_size(TPrefix),
+    case q_move_next(I, Dir, QPrefix, QSz) of
+	{ok, <<QPrefix:QSz/binary, _/binary>> = K, <<F:8, V/binary>>}
+	  when Inactive orelse (F == $+) ->
+	    Status = case F of
+			 $+ -> active;
+			 $- -> inactive
+		     end,
+	    <<TPrefix:TSz/binary, Key/binary>> = K,
+	    q_all_({Status, decode_obj(Db, Enc, Table, Key, V)}, Limit, Limit0,
+		   Filter, Inactive, I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc);
+	_ ->
+	    q_all_(done, Limit, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc,
+		   QPrefix, TPrefix, Acc)
+    end.
+
 
 q_move_next(I, Dir, QPrefix, QSz) ->
     case eleveldb:iterator_move(I, Dir) of

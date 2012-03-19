@@ -7,10 +7,11 @@
 	 is_prefix/3,
 	 check_valid_encoding/1,
 	 actual_key/3,
+	 actual_key/4,
 	 split_queue_key/2,
 	 queue_prefix/2,
 	 queue_prefix/3,
-	 timestamp/0,
+	 timestamp/0, timestamp/1,
 	 timestamp_to_datetime/1,
 	 good_string/1]).
 
@@ -99,14 +100,21 @@ actual_key(Enc, Q, Key) when Enc==raw; element(1, Enc) == raw ->
 actual_key(Enc, Q, Key) when Enc==sext; element(1, Enc) == sext ->
     {Q, timestamp(), Key}.
 
+actual_key(Enc, Q, TS, Key) when Enc==raw; element(1, Enc) == raw ->
+    raw_queue_key(Q, TS, Key);
+actual_key(Enc, Q, TS, Key) when Enc==sext; element(1, Enc) == sext ->
+    {Q, TS, Key}.
+
 split_queue_key(Enc, Key) when Enc == raw; element(1, Enc) == raw ->
     split_raw_queue_key(Key);
 split_queue_key(Enc, {Q, _TS, Key}) when Enc == sext; element(1, Enc) == sext ->
     {Q, Key}.
 
 timestamp() ->
+    timestamp(erlang:now()).
+
+timestamp({MS,S,US}) ->
     %% Invented epoc is {1258,0,0}, or 2009-11-12, 4:26:40
-    {MS,S,US} = erlang:now(),
     (MS-1258)*1000000000000 + S*1000000 + US.
 
 timestamp_to_datetime(TS) ->
@@ -121,7 +129,9 @@ timestamp_to_datetime(TS) ->
 %% Encode a 56-bit prefix using our special-epoch timestamp.
 %% It will not overflow until year 4293 - hopefully that will be sufficient.
 raw_queue_key(Q, K) when is_binary(Q), is_binary(K) ->
-    TS = timestamp(),
+    raw_queue_key(Q, timestamp(), K).
+
+raw_queue_key(Q, TS, K) ->
     <<Q/binary, "-", TS:56/integer, K/binary>>.
 
 raw_queue_prefix(Q, first) ->
