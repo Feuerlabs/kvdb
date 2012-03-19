@@ -14,7 +14,7 @@
 -export([add_table/3, delete_table/2, list_tables/1,
 	 get_attr/4, get_attrs/3, delete/3]).
 -export([put/3, push/4, put_attr/5, put_attrs/4, get/3, pop/3, prel_pop/3, extract/3,
-	 list_queue/3, list_queue/5, is_queue_empty/3,
+	 list_queue/3, list_queue/6, is_queue_empty/3,
 	 first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
@@ -77,9 +77,12 @@ add_table(#db{ref = Ref, encoding = Enc} = Db, Table, Opts) ->
 	undefined ->
 	    Columns0 = case TabR#table.encoding of
 			   {_, _, _} ->
-			       [{key, blob, primary_key}, {attrs, blob}, {value, blob}];
+			       [{key, blob, primary_key},
+				{attrs, blob},
+				{value, blob}];
 			   _ ->
-			       [{key, blob, primary_key}, {value, blob}]
+			       [{key, blob, primary_key},
+				{value, blob}]
 		       end,
 	    Columns = case TabR#table.type of
 			  Type when Type==fifo; Type==lifo ->
@@ -202,7 +205,8 @@ get(#db{ref = Ref} = Db, Table, Key) ->
 	[{columns,["key","attrs","value","active"]},
 	 {rows,[{_,{blob,Attrs},{blob,Value},_}]}] ->
 	    {ok, {Key, dec(attrs, Attrs, Enc), dec(value, Value, Enc)}};
-	[{columns,["key","attrs","value"]},{rows,[{_,{blob,Attrs},{blob,Value}}]}] ->
+	[{columns,["key","attrs","value"]},
+	 {rows,[{_,{blob,Attrs},{blob,Value}}]}] ->
 	    {ok, {Key, dec(attrs, Attrs, Enc), dec(value, Value, Enc)}};
 	_ ->
 	    {error,not_found}
@@ -232,8 +236,8 @@ prel_pop(Db, Table, Q) ->
 mark_queue_object(#db{ref = Ref}, Table, Enc, Obj, St) when St==inactive;
 							    St==active ->
     ActiveCol = case St of
-		    active   -> {active, {integer, 1}};
-		    inactive -> {active, {integer, 0}}
+		    active   -> {active, 1};
+		    inactive -> {active, 0}
 		end,
     insert_or_replace(Ref, Table, cols(Obj, Enc) ++ [ActiveCol]).
 
@@ -254,19 +258,20 @@ do_pop(#db{} = Db, Table, Q, Remove, ReturnKey) ->
     case case Type of
 	     %% fifo -> first(Db, Table);
 	     %% lifo -> last(Db, Table);
-	     fifo -> prefix_match(Db, Table, EncQPfx, QPfx, Enc, 2, asc);
-	     lifo -> prefix_match(Db, Table, EncQPfx, QPfx, Enc, 2, desc);
+	     fifo -> prefix_match(Db, Table, EncQPfx, QPfx, Enc,
+				  fun(_,Kr,O) -> {keep,{Kr,O}} end,
+				  false, 2, asc);
+	     lifo -> prefix_match(Db, Table, EncQPfx, QPfx, Enc,
+				  fun(_,Kr,O) -> {keep,{Kr,O}} end,
+				  false, 2, desc);
 	     _ -> error(illegal)
 	 end of
-	{[Obj|More], _} ->
-	    K = element(1, Obj),
-	    {_, K1} = kvdb_lib:split_queue_key(Enc, K),
-	    Obj1 = setelement(1, Obj, K1),
-	    Remove(Obj, Enc),
+	{[{RawKey,Obj}|More], _} ->
+	    Remove(setelement(1, Obj, RawKey), Enc),
 	    if ReturnKey ->
-		    {ok, Obj1, K, More == []};
+		    {ok, Obj, RawKey, More == []};
 	       true ->
-		    {ok, Obj1, More == []}
+		    {ok, Obj, More == []}
 	    end;
 	{[], _} ->
 	    done;
@@ -282,7 +287,7 @@ extract(#db{} = Db, Table, Key) ->
 		    K = element(1, Obj),
 		    {Q, K1} = kvdb_lib:split_queue_key(encoding(Db, Table), K),
 		    delete(Db, Table, Key),
-		    IsEmpty = list_queue(Db, Table, Q, false, 1) == [],
+		    IsEmpty = is_queue_empty(Db, Table, Q),
 		    {ok, setelement(1, Obj, K1), Q, IsEmpty};
 		{error, _} = Error ->
 		    Error
@@ -293,9 +298,9 @@ extract(#db{} = Db, Table, Key) ->
 
 is_queue_empty(Db, Table, Q) ->
     case list_queue(Db, Table, Q, 1) of
-	[_] ->
+	{[_], _} ->
 	    false;
-	[] ->
+	_ ->
 	    true
     end.
 
@@ -303,35 +308,24 @@ list_queue(Db, Table, Q) ->
     list_queue(Db, Table, Q, infinity).
 
 list_queue(Db, Table, Q, Limit) ->
-    list_queue(Db, Table, Q, true, Limit).
+    list_queue(Db, Table, Q, fun(_,_,O) -> {keep,O} end, false, Limit).
 
-list_queue(Db, Table, Q, Fix, Limit) when Limit > 0 ->
+list_queue(Db, Table, Q, Fltr, Inactive, Limit) when Limit > 0 ->
     Type = type(Db, Table),
-    list_queue(Db, Table, Q, Fix, case Type of
-				      fifo -> asc;
-				      lifo -> desc;
-				      _ -> error(illegal)
-				  end, Limit).
+    list_queue(Db, Table, Q, Fltr, Inactive,
+	       case Type of
+		   fifo -> asc;
+		   lifo -> desc;
+		   _ -> error(illegal)
+	       end, Limit).
 
-list_queue(Db, Table, Q, Fix, Order, Limit) when Order==asc; Order==desc ->
+list_queue(Db, Table, Q, Fltr, Inactive, Order, Limit)
+  when Order==asc; Order==desc ->
     Enc = encoding(Db, Table),
     QPfx = kvdb_lib:queue_prefix(Enc, Q),
     EncQPfx = kvdb_lib:enc_prefix(key, QPfx, Enc),
-    case prefix_match(Db, Table, EncQPfx, QPfx, Enc, Limit, Order) of
-	{Objs, _} when is_list(Objs) ->
-	    if Fix ->
-		    lists:map(fun(Obj) ->
-				      K = element(1, Obj),
-				      {_, K1} = kvdb_lib:split_queue_key(Enc, K),
-				      setelement(1, Obj, K1)
-			      end, Objs);
-	       true ->
-		    Objs
-	    end;
-	Other ->
-	    Other
-    end;
-list_queue(_, _, _, _, _, 0) ->
+    prefix_match(Db, Table, EncQPfx, QPfx, Enc, Fltr, Inactive, Limit, Order);
+list_queue(_, _, _, _, _, _, 0) ->
     [].
 
 first_queue(#db{} = Db, Table) ->
@@ -352,11 +346,12 @@ first_queue(#db{} = Db, Table) ->
 
 next_queue(Db, Table, Q) ->
     Enc = encoding(Db, Table),
-    RelK = case list_queue(Db, Table, Q, false, desc, 1) of
-	       [] ->
-		   kvdb_lib:queue_prefix(Enc, Q);
-	       [Last] ->
-		   element(1, Last)
+    RelK = case list_queue(Db, Table, Q,
+			   fun(_,K,_O) -> {keep,K} end, false, desc, 1) of
+	       {[Last],_} ->
+		   Last;
+	       _ ->
+		   kvdb_lib:queue_prefix(Enc, Q)
 	   end,
     case next(Db, Table, RelK) of
 	{ok, Obj} ->
@@ -434,26 +429,30 @@ prefix_match(Db, Table, Prefix, Limit) ->
 prefix_match(Db, Table, Prefix, Limit, Dir) ->
     Enc = encoding(Db, Table),
     EncPrefix = enc_prefix(key, Prefix, Enc),
-    prefix_match(Db, Table, EncPrefix, Prefix, Enc, Limit, Dir).
+    prefix_match(Db, Table, EncPrefix, Prefix, Enc,
+		 fun(_,_,O) -> {keep,O} end, false, Limit, Dir).
 
-prefix_match(#db{ref = Ref} = Db, Table, EncPrefix, Prefix, Enc, Limit, Dir)
+prefix_match(#db{ref = Ref} = Db, Table, EncPrefix, Prefix,
+	     Enc, Fltr, Inactive, Limit, Dir)
   when (is_integer(Limit) orelse Limit==infinity) ->
     DirS = case Dir of
 	       asc  -> "ASC";
 	       desc -> "DESC"
 	   end,
-    AndActive = case type(Db, Table) of
-		    set -> "";
+    AndActive = case {Inactive, type(Db, Table)} of
+		    {_, set} -> "";
+		    {true,_} -> "";
 		    _ -> " AND active == 1"
 		end,
-    SQL = ["SELECT ", sel_cols(Enc), " FROM ", Table,
+    Type = type(Db, Table),
+    SQL = ["SELECT ", sel_cols(Enc,Type,Inactive), " FROM ", Table,
 	   " WHERE key >= ?", AndActive,
 	   " ORDER BY key ", DirS],
     {ok, Handle} = sqlite3:prepare(Ref, SQL),
     ok = sqlite3:bind(Ref, Handle, [{blob, EncPrefix}]),
     SH = track_resource(Ref, Handle),
     prefix_match_([], Dir, Ref, SH, Table, EncPrefix, Prefix, AndActive,
-		  Enc, Limit, Limit, []).
+		  Enc, Fltr, Inactive, Type, Limit, Limit, []).
 
 track_resource(Ref,Handle) ->
     %% spawn a resource monitor, since a lingering prepare statement may lock the
@@ -469,7 +468,8 @@ finalize(Ref, {Pid, _Trk, Handle}) ->
     exit(Pid, kill),
     sqlite3:finalize(Ref, Handle).
 
-prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0, AndActive, Enc, 0, Limit0, Acc) ->
+prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0,
+	      AndActive, Enc, Fltr, Inactive, Type, 0, Limit0, Acc) ->
     finalize(Ref, Handle),
     Cont = if Prev == []; Limit0 == 0 -> fun() -> done end;
 	      true ->
@@ -478,7 +478,9 @@ prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0, AndActive, Enc, 0, Limit
 				{ok, NewHandle} =
 				    sqlite3:prepare(
 				      Ref,
-				      ["SELECT ", sel_cols(Enc), " FROM ", Table,
+				      ["SELECT ",
+				       sel_cols(Enc,Type,Inactive),
+				       " FROM ", Table,
 				       " WHERE key > ?", AndActive,
 				       " ORDER BY key ASC"]),
 				ok = sqlite3:bind(Ref, NewHandle, [{blob, Prev}]),
@@ -487,7 +489,9 @@ prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0, AndActive, Enc, 0, Limit
 				{ok, NewHandle} =
 				    sqlite3:prepare(
 				      Ref,
-				      ["SELECT ", sel_cols(Enc), " FROM ", Table,
+				      ["SELECT ",
+				       sel_cols(Enc,Type,Inactive),
+				       " FROM ", Table,
 				       " WHERE key >= ? AND key < ?", AndActive,
 				       " ORDER BY key DESC"]),
 				ok = sqlite3:bind(Ref, NewHandle, [{blob, Pfx},
@@ -495,8 +499,9 @@ prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0, AndActive, Enc, 0, Limit
 				track_resource(Ref, NewHandle)
 			end,
 		   fun() ->
-			   prefix_match_(Prev, Dir, Ref, SH, Table, Pfx, Pfx0, AndActive,
-					 Enc, Limit0, Limit0, [])
+			   prefix_match_(
+			     Prev, Dir, Ref, SH, Table, Pfx, Pfx0, AndActive,
+			     Enc, Fltr, Inactive, Type, Limit0, Limit0, [])
 		   end
 	   end,
     {lists:reverse(Acc), Cont};
@@ -505,7 +510,8 @@ prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0, AndActive, Enc, 0, Limit
     %% 					       Limit0, Limit0, [])
     %% 			 end};
 prefix_match_(_Prev, Dir, Ref, {_, _, Handle} = SH, Table,
-	      Pfx, Pfx0, AndActive, Enc, Limit, Limit0, Acc) ->
+	      Pfx, Pfx0, AndActive, Enc, Fltr, Inactive, Type,
+	      Limit, Limit0, Acc) ->
     case sqlite3:next(Ref, Handle) of
 	done ->
 	    finalize(Ref, SH),
@@ -514,13 +520,37 @@ prefix_match_(_Prev, Dir, Ref, {_, _, Handle} = SH, Table,
 	    {blob,K} = element(1, Other),
 	    case is_prefix(Pfx, K, Pfx0, Enc) of
 		true ->
-		    NewAcc = [decode_obj(Other, Enc) | Acc],
-		    prefix_match_(K, Dir, Ref, SH, Table,
-				  Pfx, Pfx0, AndActive, Enc, decr(Limit), Limit0, NewAcc);
+		    Status = obj_status(Other),
+		    Obj = decode_obj(Other, Enc),
+		    AbsKey = element(1, Obj),
+		    Obj1 = case Type of
+			       set -> Obj;
+			       _ ->
+				   {_,Kx} =
+				       kvdb_lib:split_queue_key(Enc, AbsKey),
+				   setelement(1,Obj, Kx)
+			   end,
+		    {Cont,Acc1} = case Fltr(Status, AbsKey, Obj1) of
+				      {keep, X} -> {true, [X|Acc]};
+				      {stop, X} -> {false, [X|Acc]};
+				      stop      -> {false, Acc};
+				      skip      -> {true, Acc}
+			   end,
+		    case Cont of
+			true ->
+			    prefix_match_(
+			      K, Dir, Ref, SH, Table,
+			      Pfx, Pfx0, AndActive, Enc, Fltr,
+			      Inactive, Type, decr(Limit), Limit0, Acc1);
+			false ->
+			    finalize(Ref, SH),
+			    {lists:reverse(Acc1), fun() -> done end}
+		    end;
 		false ->
 		    if Dir == desc, K > Pfx ->
 			    prefix_match_(K, Dir, Ref, SH, Table,
-					  Pfx, Pfx0, AndActive, Enc, Limit, Limit0, Acc);
+					  Pfx, Pfx0, AndActive, Enc, Fltr,
+					  Inactive, Type, Limit, Limit0, Acc);
 		       true ->
 			    finalize(Ref, SH),
 			    {lists:reverse(Acc), fun() -> done end}
@@ -545,6 +575,10 @@ decode_obj({{blob,K},{blob,As},{blob,V}, A}, Enc) when A==0; A==1 ->
     {dec(key,K,Enc), dec(attrs, As, Enc), dec(value,V,Enc)};
 decode_obj({{blob,K},{blob,As},{blob,V}}, Enc) ->
     {dec(key,K,Enc), dec(attrs, As, Enc), dec(value,V,Enc)}.
+
+obj_status({{blob,_}, {blob,_}, 0}) -> inactive;
+obj_status({{blob,_}, {blob,_}, {blob,_}, 0}) -> inactive;
+obj_status(_) -> active.
 
 decr(infinity) ->
     infinity;
@@ -604,6 +638,16 @@ sel_cols({_,_,_}) ->
     "key, attrs, value";
 sel_cols(_) ->
     "key, value".
+
+sel_cols({_,_,_},set,     _) -> "key, attrs, value";
+sel_cols({_,_,_},  _, false) -> "key, attrs, value";
+sel_cols({_,_,_},  _, true ) -> "key, attrs, value, active";
+sel_cols(_,        _, true ) -> "key, value, active";
+sel_cols(_,      set,     _) -> "key, value";
+sel_cols(_,        _, false) -> "key, value".
+
+
+
 
 
 select_one(Ref, Enc, SQL) ->
