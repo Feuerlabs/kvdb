@@ -16,7 +16,7 @@
 -export([add_table/2, add_table/3, delete_table/2, list_tables/1]).
 -export([put/3, put_attr/5, put_attrs/4, get/3,
 	 push/3, push/4, pop/2, pop/3, prel_pop/2, prel_pop/3,
-	 extract/3, list_queue/3, is_queue_empty/3,
+	 extract/3, list_queue/3, list_queue/5, is_queue_empty/3,
 	 first_queue/2, next_queue/3,
 	 get_attr/4, get_attrs/3, delete/3]).
 -export([first/2, last/2, next/3, prev/3]).
@@ -34,6 +34,7 @@
 	 do_prel_pop/3,
 	 do_extract/3,
 	 do_list_queue/3,
+	 do_list_queue/5,
 	 do_is_queue_empty/3,
 	 do_first_queue/2,
 	 do_next_queue/3,
@@ -393,7 +394,9 @@ extract(Name, Table, Key) ->
 
 -spec do_extract(#kvdb_ref{}, Table::table(), Key::binary()) ->
 			{ok, object()} | {error,any()}.
-do_extract(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Key) ->
+do_extract(#kvdb_ref{mod = DbMod,
+		     db = Db,
+		     schema = Schema} = DbRef, Table0, Key) ->
     Table = table_name(Table0),
     case DbMod:extract(Db, Table, Key) of
 	{ok, Obj, Q, IsEmpty} ->
@@ -411,11 +414,23 @@ list_queue(Name, Table, Q) ->
     #kvdb_ref{} = Ref = call(Name, db),
     ?KVDB_CATCH(do_list_queue(Ref, Table, Q), [Name, Table, Q]).
 
+list_queue(Name, Table, Q, FixKeys, Limit) ->
+    #kvdb_ref{} = Ref = call(Name, db),
+    ?KVDB_CATCH(do_list_queue(Ref, Table, Q, FixKeys, Limit),
+		[Name, Table, Q, FixKeys, Limit]).
+
 -spec do_list_queue(#kvdb_ref{}, Table::table(), Q::queue_name()) ->
 			   [object()] | {error,any()}.
 do_list_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
     Table = table_name(Table0),
     DbMod:list_queue(Db, Table, Q).
+
+-spec do_list_queue(#kvdb_ref{}, Table::table(), Q::queue_name(),
+		    _FixKeys :: boolean(), _Limit :: integer() | infinity) ->
+			   [object()] | {error,any()}.
+do_list_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q, FixKeys, Limit) ->
+    Table = table_name(Table0),
+    DbMod:list_queue(Db, Table, Q, FixKeys, Limit).
 
 -spec is_queue_empty(db_name(), table(), _Q::queue_name()) -> boolean().
 
