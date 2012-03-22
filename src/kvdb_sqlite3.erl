@@ -85,7 +85,8 @@ add_table(#db{ref = Ref, encoding = Enc} = Db, Table, Opts) ->
 				{value, blob}]
 		       end,
 	    Columns = case TabR#table.type of
-			  Type when Type==fifo; Type==lifo ->
+			  Type when Type==fifo; Type==lifo;
+				    element(1,Type) == keyed ->
 			      Columns0 ++ [{active, integer, [{default,1}]}];
 			  _ ->
 			      Columns0
@@ -139,11 +140,12 @@ put(#db{ref = Ref} = Db, Table, {Key, Attrs, Value}) ->
 
 push(#db{ref = Ref} = Db, Table, Q, {Key, Value}) ->
     Type = type(Db, Table),
-    if Type == fifo; Type == lifo ->
+    if Type == fifo; Type == lifo; element(1, Type) == keyed ->
 	    Enc = encoding(Db, Table),
-	    ActualKey = kvdb_lib:actual_key(Enc, Q, Key),
-	    case insert_or_replace(Ref, Table, [{key, {blob, enc(key, ActualKey, Enc)}},
-						{value, {blob, enc(value, Value, Enc)}}]) of
+	    ActualKey = kvdb_lib:actual_key(Enc, Type, Q, Key),
+	    case insert_or_replace(
+		   Ref, Table, [{key, {blob, enc(key, ActualKey, Enc)}},
+				{value, {blob, enc(value, Value, Enc)}}]) of
 		ok ->
 		    {ok, ActualKey};
 		{error, _} = Error ->
@@ -154,12 +156,13 @@ push(#db{ref = Ref} = Db, Table, Q, {Key, Value}) ->
     end;
 push(#db{ref = Ref} = Db, Table, Q, {Key, Attrs, Value}) ->
     Type = type(Db, Table),
-    if Type == fifo; Type == lifo ->
+    if Type == fifo; Type == lifo; element(1, Type) == keyed ->
 	    Enc = encoding(Db, Table),
-	    ActualKey = kvdb_lib:actual_key(Enc, Q, Key),
-	    case insert_or_replace(Ref, Table, [{key, {blob, enc(key, ActualKey, Enc)}},
-						{attrs, {blob, enc(attrs, Attrs, Enc)}},
-						{value, {blob, enc(value, Value, Enc)}}]) of
+	    ActualKey = kvdb_lib:actual_key(Enc, Type, Q, Key),
+	    case insert_or_replace(
+		   Ref, Table, [{key, {blob, enc(key, ActualKey, Enc)}},
+				{attrs, {blob, enc(attrs, Attrs, Enc)}},
+				{value, {blob, enc(value, Value, Enc)}}]) of
 		ok ->
 		    {ok, ActualKey};
 		{error,_} = Error ->
@@ -215,22 +218,22 @@ get(#db{ref = Ref} = Db, Table, Key) ->
 pop(Db, Table, Q) ->
     case type(Db, Table) of
 	set -> error(illegal);
-	_ ->
+	T ->
 	    Remove = fun(Obj, _) ->
 			     delete(Db, Table, element(1, Obj))
 		     end,
-	    do_pop(Db, Table, Q, Remove, false)
+	    do_pop(Db, Table, T, Q, Remove, false)
     end.
 
 prel_pop(Db, Table, Q) ->
     case type(Db, Table) of
 	set ->
 	    error(illegal);
-	_ ->
+	T ->
 	    Remove = fun(Obj, Enc) ->
 			     mark_queue_object(Db, Table, Enc, Obj, inactive)
 		     end,
-	    do_pop(Db, Table, Q, Remove, true)
+	    do_pop(Db, Table, T, Q, Remove, true)
     end.
 
 mark_queue_object(#db{ref = Ref}, Table, Enc, Obj, St) when St==inactive;
@@ -250,20 +253,19 @@ cols({K,V}, Enc) ->
      {value, {blob, enc(value, V, Enc)}}].
 
 
-do_pop(#db{} = Db, Table, Q, Remove, ReturnKey) ->
-    Type = type(Db, Table),
+do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
     Enc = encoding(Db, Table),
     QPfx = kvdb_lib:queue_prefix(Enc, Q),
     EncQPfx = kvdb_lib:enc_prefix(key, QPfx, Enc),
     case case Type of
-	     %% fifo -> first(Db, Table);
-	     %% lifo -> last(Db, Table);
-	     fifo -> prefix_match(Db, Table, EncQPfx, QPfx, Enc,
-				  fun(_,Kr,O) -> {keep,{Kr,O}} end,
-				  false, 2, asc);
-	     lifo -> prefix_match(Db, Table, EncQPfx, QPfx, Enc,
-				  fun(_,Kr,O) -> {keep,{Kr,O}} end,
-				  false, 2, desc);
+	     _ when Type==fifo; element(2, Type) == fifo ->
+		 prefix_match(Db, Table, EncQPfx, QPfx, Enc,
+			      fun(_,Kr,O) -> {keep,{Kr,O}} end,
+			      false, 2, asc);
+	     _ when Type==lifo; element(2, Type) == lifo ->
+		 prefix_match(Db, Table, EncQPfx, QPfx, Enc,
+			      fun(_,Kr,O) -> {keep,{Kr,O}} end,
+			      false, 2, desc);
 	     _ -> error(illegal)
 	 end of
 	{[{RawKey,Obj}|More], _} ->
@@ -281,11 +283,12 @@ do_pop(#db{} = Db, Table, Q, Remove, ReturnKey) ->
 
 extract(#db{} = Db, Table, Key) ->
     Type = type(Db, Table),
-    if Type == fifo; Type == lifo ->
+    if Type == fifo; Type == lifo; element(1, Type) == keyed ->
 	    case get(Db, Table, Key) of
 		{ok, Obj} ->
 		    K = element(1, Obj),
-		    {Q, K1} = kvdb_lib:split_queue_key(encoding(Db, Table), K),
+		    {Q, K1} = kvdb_lib:split_queue_key(
+				encoding(Db, Table), Type, K),
 		    delete(Db, Table, Key),
 		    IsEmpty = is_queue_empty(Db, Table, Q),
 		    {ok, setelement(1, Obj, K1), Q, IsEmpty};
@@ -316,6 +319,8 @@ list_queue(Db, Table, Q, Fltr, Inactive, Limit) when Limit > 0 ->
 	       case Type of
 		   fifo -> asc;
 		   lifo -> desc;
+		   {keyed,fifo} -> asc;
+		   {keyed,lifo} -> desc;
 		   _ -> error(illegal)
 	       end, Limit).
 
@@ -337,7 +342,7 @@ first_queue(#db{} = Db, Table) ->
 	    case first(Db, Table, Enc) of
 		{ok, Obj} ->
 		    Key = element(1, Obj),
-		    {Q, _} = kvdb_lib:split_queue_key(Enc, Key),
+		    {Q, _} = kvdb_lib:split_queue_key(Enc, Type, Key),
 		    {ok, Q};
 		done ->
 		    done
@@ -355,7 +360,8 @@ next_queue(Db, Table, Q) ->
 	   end,
     case next(Db, Table, RelK) of
 	{ok, Obj} ->
-	    {Q1,_} = kvdb_lib:split_queue_key(Enc, element(1, Obj)),
+	    Type = type(Db, Table),
+	    {Q1,_} = kvdb_lib:split_queue_key(Enc, Type, element(1, Obj)),
 	    {ok, Q1};
 	done ->
 	    done
@@ -527,7 +533,8 @@ prefix_match_(_Prev, Dir, Ref, {_, _, Handle} = SH, Table,
 			       set -> Obj;
 			       _ ->
 				   {_,Kx} =
-				       kvdb_lib:split_queue_key(Enc, AbsKey),
+				       kvdb_lib:split_queue_key(
+					 Enc, Type, AbsKey),
 				   setelement(1,Obj, Kx)
 			   end,
 		    {Cont,Acc1} = case Fltr(Status, AbsKey, Obj1) of
@@ -670,7 +677,8 @@ select_one(Ref, Enc, SQL, Params) ->
     end.
 
 
-check_options([{type, T}|Tl], Db, Rec) when T==set; T==lifo; T==fifo ->
+check_options([{type, T}|Tl], Db, Rec)
+  when T==set; T==lifo; T==fifo; T=={keyed,fifo}; T=={keyed,lifo} ->
     check_options(Tl, Db, Rec#table{type = T});
 check_options([{encoding, E}|Tl], Db, Rec) ->
     Rec1 = Rec#table{encoding = E},
