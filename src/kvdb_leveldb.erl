@@ -134,10 +134,11 @@ put(#db{ref = Ref} = Db, Table, Obj) ->
 
 push(#db{ref = Ref} = Db, Table, Q, Obj) ->
     Type = type(Db, Table),
-    if Type == fifo; Type == lifo ->
+    if Type == fifo; Type == lifo; element(1,Type) == keyed ->
 	    Enc = encoding(Db, Table),
-	    ActualKey = kvdb_lib:actual_key(Enc, Q, element(1, Obj)),
-	    {Key, Attrs, Value} = encode_queue_obj(Enc, setelement(1, Obj, ActualKey)),
+	    ActualKey = kvdb_lib:actual_key(Enc, Type, Q, element(1, Obj)),
+	    {Key, Attrs, Value} = encode_queue_obj(
+				    Enc, setelement(1, Obj, ActualKey)),
 	    PutAttrs = attrs_to_put(Table, Key, Attrs),
 	    Put = {put, make_table_key(Table, Key), Value},
 	    case eleveldb:write(Ref, [Put|PutAttrs], []) of
@@ -158,30 +159,30 @@ mark_queue_obj(#db{ref = Ref}, Table, Enc, Obj, St) when St==active;
 pop(#db{} = Db, Table, Q) ->
     case type(Db, Table) of
 	set -> error(illegal);
-	_ ->
+	T ->
 	    Remove = fun(Obj, _) ->
 			     delete(Db, Table, element(1,Obj))
 		     end,
-	    do_pop(Db, Table, Q, Remove, false)
+	    do_pop(Db, Table, T, Q, Remove, false)
     end.
 
 prel_pop(Db, Table, Q) ->
     case type(Db, Table) of
 	set -> error(illegal);
-	_ ->
+	T ->
 	    Remove = fun(Obj, Enc) ->
 			     mark_queue_obj(Db, Table, Enc, Obj, inactive)
 		     end,
-	    do_pop(Db, Table, Q, Remove, true)
+	    do_pop(Db, Table, T, Q, Remove, true)
     end.
 
-do_pop(Db, Table, Q, Remove, ReturnKey) ->
+do_pop(Db, Table, Type, Q, Remove, ReturnKey) ->
     Enc = encoding(Db, Table),
     case list_queue(Db, Table, Q, fun(_,K,O) ->
 					  {keep, setelement(1,O,K)}
 				  end, false, 2) of
 	{[Obj|More], _} ->
-	    Obj1 = fix_q_obj(Obj, Enc),
+	    Obj1 = fix_q_obj(Obj, Enc, Type),
 	    Empty = More == [],
 	    Remove(Obj, Enc),
 	    if ReturnKey ->
@@ -206,18 +207,19 @@ extract(#db{} = Db, Table, Key) ->
 		{ok, Obj} ->
 		    delete(Db, Table, Key),
 		    case Type of
-			_ when Type==fifo; Type==lifo ->
-			    {Q, _} = kvdb_lib:split_queue_key(Enc, Key),
+			_ when Type==fifo; Type==lifo;
+			       element(1,Type)==keyed ->
+			    {Q, _} = kvdb_lib:split_queue_key(Enc, Type, Key),
 			    IsEmpty = case list_queue(Db, Table, Q,
 						      fun(_,K,O) ->
-							      {keep, 
+							      {keep,
 							       setelement(1,O,K)}
 						      end,
 						      false, 1) of
 					  {[_], _} -> false;
 					  _ -> true
 				      end,
-			    {ok, fix_q_obj(Obj, Enc), Q, IsEmpty};
+			    {ok, fix_q_obj(Obj, Enc, Type), Q, IsEmpty};
 			set ->
 			    {ok, Obj}
 		    end;
@@ -310,9 +312,9 @@ next_queue_(Res, I, Db, Table, QPrefix, Sz, TPrefix, TPSz, Enc) ->
 	    done
     end.
 
-fix_q_obj(Obj, Enc) ->
+fix_q_obj(Obj, Enc, Type) ->
     K = element(1, Obj),
-    {_, K1} = kvdb_lib:split_queue_key(Enc, K),
+    {_, K1} = kvdb_lib:split_queue_key(Enc, Type, K),
     setelement(1, Obj, K1).
 
 
@@ -404,23 +406,28 @@ list_queue(#db{ref = Ref} = Db, Table, Q, Filter, Inactive, Limit)
     with_iterator(
       Ref,
       fun(I) ->
-	      First = case Type of
-			  fifo -> q_first_(I, Db, Table, Q, Enc, Inactive);
-			  lifo -> q_last_(I, Db, Table, Q, Enc, Inactive)
-		      end,
+	      First =
+		  case Type of
+		      fifo -> q_first_(I, Db, Table, Q, Enc, Inactive);
+		      lifo -> q_last_(I, Db, Table, Q, Enc, Inactive);
+		      {keyed,fifo} -> q_first_(I,Db,Table,Q,Enc,Inactive);
+		      {keyed,lifo} -> q_last_(I,Db,Table,Q,Enc,Inactive)
+		  end,
 	      q_all_(First, Limit, Limit, Filter, Inactive, I, Db, Table,
-		     q_all_dir(Type), Enc, QPrefix, TPrefix, [])
+		     q_all_dir(Type), Enc, Type, QPrefix, TPrefix, [])
       end);
 list_queue(_, _, _, _, _, 0) ->
     {[], fun() -> done end}.
 
-q_all_dir(fifo) -> next;
-q_all_dir(lifo) -> prev.
+q_all_dir(fifo)     -> next;
+q_all_dir(lifo)     -> prev;
+q_all_dir({keyed,fifo}) -> next;
+q_all_dir({keyed,lifo}) -> prev.
 
-q_all_({St, Obj}, Limit, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc,
+q_all_({St, Obj}, Limit, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc, Type,
        QPrefix, TPrefix, Acc)
   when Limit > 0 ->
-    {Cont,Acc1} = case Filter(St, element(1, Obj), fix_q_obj(Obj, Enc)) of
+    {Cont,Acc1} = case Filter(St, element(1, Obj), fix_q_obj(Obj, Enc, Type)) of
 		      skip     -> {true, Acc};
 		      stop     -> {false, Acc};
 		      {stop,X} -> {false, [X|Acc]};
@@ -429,7 +436,7 @@ q_all_({St, Obj}, Limit, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc,
     case {Cont, decr(Limit)} of
 	{true, Limit1} when Limit1 > 0 ->
 	    q_all_cont(Limit1, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc,
-		       QPrefix, TPrefix, Acc1);
+		       Type, QPrefix, TPrefix, Acc1);
 	_ when Acc1 == [] ->
 	    done;
 	{true, _} ->
@@ -441,19 +448,20 @@ q_all_({St, Obj}, Limit, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc,
 		       fun(I1) ->
 			       eleveldb:iterator_move(I1, Key),
 			       q_all_cont(Limit0, Limit0, Filter, Inactive, I1,
-					  Db, Table, Dir, Enc, QPrefix, TPrefix, [])
+					  Db, Table, Dir, Enc,
+					  Type, QPrefix, TPrefix, [])
 		       end)
 	     end};
 	{false, _}->
 	    {lists:reverse(Acc1), fun() -> done end}
     end;
-q_all_(done, _, _, _, _, _, _, _, _, _, _, _, Acc) ->
+q_all_(done, _, _, _, _, _, _, _, _, _, _, _, _, Acc) ->
     if Acc == [] -> done;
        true ->
 	    {lists:reverse(Acc), fun() -> done end}
     end.
 
-q_all_cont(Limit, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc,
+q_all_cont(Limit, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc, Type,
 	   QPrefix, TPrefix, Acc) ->
     QSz = byte_size(QPrefix),
     TSz = byte_size(TPrefix),
@@ -466,10 +474,11 @@ q_all_cont(Limit, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc,
 		     end,
 	    <<TPrefix:TSz/binary, Key/binary>> = K,
 	    q_all_({Status, decode_obj(Db, Enc, Table, Key, V)}, Limit, Limit0,
-		   Filter, Inactive, I, Db, Table, Dir, Enc, QPrefix, TPrefix, Acc);
+		   Filter, Inactive, I, Db, Table, Dir, Enc, Type,
+		   QPrefix, TPrefix, Acc);
 	_ ->
-	    q_all_(done, Limit, Limit0, Filter, Inactive, I, Db, Table, Dir, Enc,
-		   QPrefix, TPrefix, Acc)
+	    q_all_(done, Limit, Limit0, Filter, Inactive, I, Db, Table, Dir,
+		   Enc, Type, QPrefix, TPrefix, Acc)
     end.
 
 
@@ -830,7 +839,8 @@ encoding(#db{encoding = Enc} = Db, Table) ->
     schema_lookup(Db, {Table, encoding}, Enc).
 
 
-check_options([{type, T}|Tl], Db, Rec) when T==set; T==fifo; T==lifo ->
+check_options([{type, T}|Tl], Db, Rec)
+  when T==set; T==fifo; T==lifo; T=={keyed,fifo}; T=={keyed,lifo} ->
     check_options(Tl, Db, Rec#table{type = T});
 check_options([{schema, S}|Tl], Db, Rec) when is_atom(S) ->
     check_options(Tl, Db, Rec#table{schema = S});

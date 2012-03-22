@@ -8,7 +8,8 @@
 	 check_valid_encoding/1,
 	 actual_key/3,
 	 actual_key/4,
-	 split_queue_key/2,
+	 actual_key/5,
+	 split_queue_key/2, split_queue_key/3,
 	 queue_prefix/2,
 	 queue_prefix/3,
 	 timestamp/0, timestamp/1,
@@ -95,19 +96,34 @@ queue_prefix(Enc, Q, End) when Enc == sext; element(1, Enc) == sext ->
 	    {Q, a, '_'}
     end.
 
-actual_key(Enc, Q, Key) when Enc==raw; element(1, Enc) == raw ->
-    raw_queue_key(Q, Key);
-actual_key(Enc, Q, Key) when Enc==sext; element(1, Enc) == sext ->
+actual_key(Enc, Q, Key) ->
+    actual_key(Enc, fifo, Q, Key).
+
+actual_key(Enc, T, Q, Key) when Enc==raw; element(1, Enc) == raw ->
+    raw_queue_key(Q, T, Key);
+actual_key(Enc, {keyed,_}, Q, Key) when Enc==sext; element(1, Enc) == sext ->
+    {Q, Key, timestamp()};
+actual_key(Enc, _, Q, Key) when Enc==sext; element(1, Enc) == sext ->
     {Q, timestamp(), Key}.
 
-actual_key(Enc, Q, TS, Key) when Enc==raw; element(1, Enc) == raw ->
-    raw_queue_key(Q, TS, Key);
-actual_key(Enc, Q, TS, Key) when Enc==sext; element(1, Enc) == sext ->
+actual_key(Enc, T, Q, TS, Key) when Enc==raw; element(1, Enc) == raw ->
+    raw_queue_key(Q, T, TS, Key);
+actual_key(Enc, {keyed,_}, Q, TS, Key)
+  when Enc==sext; element(1, Enc) == sext ->
+    {Q, Key, TS};
+actual_key(Enc, _, Q, TS, Key) when Enc==sext; element(1, Enc) == sext ->
     {Q, TS, Key}.
 
-split_queue_key(Enc, Key) when Enc == raw; element(1, Enc) == raw ->
-    split_raw_queue_key(Key);
-split_queue_key(Enc, {Q, _TS, Key}) when Enc == sext; element(1, Enc) == sext ->
+split_queue_key(Enc, Key) ->
+    split_queue_key(Enc, fifo, Key).
+
+split_queue_key(Enc, T, Key) when Enc == raw; element(1, Enc) == raw ->
+    split_raw_queue_key(T, Key);
+split_queue_key(Enc, {keyed,_}, {Q, Key, _TS})
+  when Enc == sext; element(1, Enc) == sext ->
+    {Q, Key};
+split_queue_key(Enc, _, {Q, _TS, Key})
+  when Enc == sext; element(1, Enc) == sext ->
     {Q, Key}.
 
 timestamp() ->
@@ -128,11 +144,22 @@ timestamp_to_datetime(TS) ->
 
 %% Encode a 56-bit prefix using our special-epoch timestamp.
 %% It will not overflow until year 4293 - hopefully that will be sufficient.
-raw_queue_key(Q, K) when is_binary(Q), is_binary(K) ->
-    raw_queue_key(Q, timestamp(), K).
+raw_queue_key(Q, {keyed,_}, K) when is_binary(Q), is_binary(K) ->
+    raw_keyed_queue_key(Q, timestamp(), K);
+raw_queue_key(Q, _, K) when is_binary(Q), is_binary(K) ->
+    raw_queue_key_(Q, timestamp(), K).
 
-raw_queue_key(Q, TS, K) ->
+raw_queue_key(Q, {keyed,_}, TS, K) when is_binary(Q), is_binary(K) ->
+    raw_keyed_queue_key(Q, TS, K);
+raw_queue_key(Q, _, TS, K) ->
+    raw_queue_key_(Q, TS, K).
+
+
+raw_queue_key_(Q, TS, K) ->
     <<Q/binary, "-", TS:56/integer, K/binary>>.
+
+raw_keyed_queue_key(Q, TS, K) ->
+    <<Q/binary, "-", K/binary, TS:56/integer>>.
 
 raw_queue_prefix(Q, first) ->
     <<Q/binary, ",">>;
@@ -142,7 +169,13 @@ raw_queue_prefix(Q, last) ->
 raw_queue_prefix(Q) ->
     <<Q/binary, "-">>.
 
-split_raw_queue_key(K) ->
+split_raw_queue_key({keyed,_}, K) ->
+    Sz = byte_size(K),
+    {P,_} = binary:match(K, <<"-">>),
+    KSz = Sz - P - 7 - 1,
+    <<Q:P/binary, "-", Key:KSz/binary, _:56/integer>> = K,
+    {Q, Key};
+split_raw_queue_key(_, K) ->
     {P,_} = binary:match(K, <<"-">>),
     <<Q:P/binary, "-", _:56/integer, Key/binary>> = K,
     {Q, Key}.
