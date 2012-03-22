@@ -71,8 +71,8 @@
 -include("kvdb.hrl").
 
 -export_type([db/0, table/0, int_table_name/0, queue_name/0,
-	      db_ref/0, key/0, value/0, attr_name/0, attr_value/0, attrs/0, object/0,
-	      options/0]).
+	      db_ref/0, key/0, value/0, attr_name/0, attr_value/0, attrs/0,
+	      object/0, options/0]).
 
 -record(st, {name, db, is_owner = false}).
 
@@ -133,8 +133,8 @@ start() ->
 %% @spec open_db(Name, Options) -> {ok, Pid} | {error, Reason}
 %% @doc Opens a kvdb database instance.
 %%
-%% TODO: make sure that the database instance is able to remember relevant options and
-%% verify that given options are compatible.
+%% TODO: make sure that the database instance is able to remember relevant
+%% options and verify that given options are compatible.
 %% @end
 %%
 open_db(Name, Options) ->
@@ -227,7 +227,8 @@ do_put(#kvdb_ref{} = DbRef, Table0, {K,As,V}) when is_list(As) ->
 
 do_put_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Obj) ->
     case DbMod:put(Db, Table,
-		   Schema:validate(DbRef, put, Actual = Schema:encode(DbRef, obj, Obj))) of
+		   Schema:validate(DbRef, put,
+				   Actual = Schema:encode(DbRef, obj, Obj))) of
 	ok ->
 	    Schema:on_update(put, DbRef, Table, Actual),
 	    ok;
@@ -247,7 +248,8 @@ do_put_attr(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
 	    Table0, Key, AttrN, Value)
   when is_atom(AttrN) ->
     Table = table_name(Table0),
-    Attr = Schema:validate_attr(DbRef, Key, Schema:encode_attr(Db, Key, {AttrN, Value})),
+    Attr = Schema:validate_attr(DbRef, Key,
+				Schema:encode_attr(Db, Key, {AttrN, Value})),
     case DbMod:put_attr(Db, Table, Key, Attr) of
 	{ok, Actual} ->
 	    Schema:on_update(put_attr, DbRef, Table, {Key, Attr}),
@@ -270,7 +272,8 @@ do_put_attrs(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, As) ->
 -spec put_attrs(any(), Table::table(), Key::key(), Attrs::attrs()) ->
 		       ok | {error, any()}.
 put_attrs(Name, Table, Key, As) when is_list(As) ->
-    ?KVDB_CATCH(call(Name, {put_attrs, Table, Key, As}), [Name, Table, Key, As]).
+    ?KVDB_CATCH(call(Name, {put_attrs, Table, Key, As}),
+		[Name, Table, Key, As]).
 
 
 -spec do_get(Db::db_ref(), Table::table(), Key::binary()) ->
@@ -307,9 +310,11 @@ do_push(#kvdb_ref{} = DbRef, Table0, Q, {K,As,V}) when is_list(As) ->
     Table = table_name(Table0),
     do_push_(DbRef, Table, Q, {K, fix_attrs(As), V}).
 
-do_push_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Q, Obj) ->
+do_push_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
+	 Table, Q, Obj) ->
     case DbMod:push(Db, Table, Q,
-		    Schema:validate(DbRef, put, Actual = Schema:encode(DbRef, obj, Obj))) of
+		    Schema:validate(DbRef, put,
+				    Actual = Schema:encode(DbRef, obj, Obj))) of
 	{ok, ActualKey} ->
 	    Schema:on_update({push,Q}, DbRef, Table, Actual),
 	    {ok, ActualKey};
@@ -366,7 +371,8 @@ do_prel_pop(Db, Table) ->
 -spec do_prel_pop(Db::db_ref(), Table::table(), queue_name()) ->
 			 {ok, object(), binary()} | done | {error,any()}.
 
-do_prel_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Q) ->
+do_prel_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
+	    Table0, Q) ->
     Table = table_name(Table0),
     case DbMod:prel_pop(Db, Table, Q) of
 	{ok, Obj, RealKey, IsEmpty} ->
@@ -430,7 +436,8 @@ do_list_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
 					keep | keep_raw | skip | tuple()),
 		    _Inactive :: boolean(), _Limit :: integer() | infinity) ->
 			   [object()] | {error,any()}.
-do_list_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q, Fltr, Inactive, Limit) ->
+do_list_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q,
+	      Fltr, Inactive, Limit) ->
     Table = table_name(Table0),
     DbMod:list_queue(Db, Table, Q, Fltr, Inactive, Limit).
 
@@ -459,17 +466,20 @@ next_queue(Name, Table, Q) ->
     #kvdb_ref{} = Ref = call(Name, db),
     ?KVDB_CATCH(do_next_queue(Ref, Table, Q), [Name, Table, Q]).
 
--spec do_next_queue(#kvdb_ref{}, table(), _Q::queue_name()) -> {ok, any()} | done.
+-spec do_next_queue(#kvdb_ref{}, table(), _Q::queue_name()) ->
+			   {ok, any()} | done.
 do_next_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
     Table = table_name(Table0),
     DbMod:next_queue(Db, Table, Q).
 
-do_get_attr(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, Attr) when is_atom(Attr) ->
+do_get_attr(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, Attr)
+ when is_atom(Attr) ->
     Table = table_name(Table0),
     DbMod:get_attr(Db, Table, Key, Attr).
 
 get_attr(Name, Table, Key, Attr) when is_atom(Attr) ->
-    ?KVDB_CATCH(do_get_attr(db(Name), Table, Key, Attr), [Name, Table, Key, Attr]).
+    ?KVDB_CATCH(do_get_attr(db(Name), Table, Key, Attr),
+		[Name, Table, Key, Attr]).
 
 
 do_get_attrs(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
@@ -546,11 +556,13 @@ prev(Name, Table, Key) ->
 
 
 prefix_match(Db, Table, Prefix) ->
-    ?KVDB_CATCH(do_prefix_match(db(Db), Table, Prefix, default_limit()), [Db, Table, Prefix]).
+    ?KVDB_CATCH(do_prefix_match(db(Db), Table, Prefix, default_limit()),
+		[Db, Table, Prefix]).
 
 prefix_match(Db, Table, Prefix, Limit)
   when Limit==infinity orelse (is_integer(Limit) andalso Limit >= 0) ->
-    ?KVDB_CATCH(do_prefix_match(db(Db), Table, Prefix, Limit), [Db, Table, Prefix, Limit]).
+    ?KVDB_CATCH(do_prefix_match(db(Db), Table, Prefix, Limit),
+		[Db, Table, Prefix, Limit]).
 
 do_prefix_match(#kvdb_ref{mod = DbMod, db = Db}, Table0, Prefix, Limit)
   when Limit==infinity orelse (is_integer(Limit) andalso Limit >= 0) ->
@@ -563,36 +575,42 @@ default_limit() ->
 %% @spec select(Db, Table, MatchSpec) -> {Objects, Cont} | done
 %% @doc Similar to ets:select/3.
 %%
-%% This function builds on prefix_match/3, and applies a match specification on the results.
-%% If keys are using `raw' encoding, a partial key can be given using string syntax,
-%% e.g. <code>"abc" ++ '_'</code>. Note that this will necessitate some data conversion
-%% back and forth on the found objects. If a prefix cannot be determined for the key, a
-%% full traversal of the table will be performed. `sext'-encoded keys can be prefixed in the
-%% same way as normal erlang terms in an ets:select().
+%% This function builds on prefix_match/3, and applies a match specification
+%% on the results. If keys are using `raw' encoding, a partial key can be
+%% given using string syntax, e.g. <code>"abc" ++ '_'</code>. Note that this
+%% will necessitate some data conversion back and forth on the found objects.
+%% If a prefix cannot be determined for the key, a full traversal of the table
+%% will be performed. `sext'-encoded keys can be prefixed in the same way as
+%% normal erlang terms in an ets:select().
 %% @end
 %%
 select(Db, Table, MatchSpec) ->
-    ?KVDB_CATCH(do_select(db(Db), Table, MatchSpec, default_limit()), [Db, Table, MatchSpec]).
+    ?KVDB_CATCH(do_select(db(Db), Table, MatchSpec, default_limit()),
+		[Db, Table, MatchSpec]).
 
 select(Db, Table, MatchSpec, Limit) ->
-    ?KVDB_CATCH(do_select(db(Db), Table, MatchSpec, Limit), [Db, Table, MatchSpec, Limit]).
+    ?KVDB_CATCH(do_select(db(Db), Table, MatchSpec, Limit),
+		[Db, Table, MatchSpec, Limit]).
 
 do_select(#kvdb_ref{mod = DbMod, db = Db}, Table0, MatchSpec, Limit) ->
     Table = table_name(Table0),
     MSC = ets:match_spec_compile(MatchSpec),
     Encoding = DbMod:info(Db, encoding),
     {Prefix, Conv} = ms2pfx(MatchSpec, Encoding),
-    do_select_(DbMod:prefix_match(Db,Table,Prefix,Limit), Conv, MSC, [], Limit, Limit).
+    do_select_(DbMod:prefix_match(Db,Table,Prefix,Limit),
+	       Conv, MSC, [], Limit, Limit).
 
 %% We must create a prefix for the prefix_match().
-%% This is a problem if we have raw encoding on the key, since you cannot have a wildcard
-%% tail on a binary. You can do this on a list, however, so we allow the caller to provide
-%% a string pattern on the key - enabling the declaration of a prefix like "foo" ++ '_'.
+%% This is a problem if we have raw encoding on the key, since you cannot have
+%% a wildcard tail on a binary. You can do this on a list, however, so we allow
+%% the caller to provide a string pattern on the key - enabling the declaration
+%% of a prefix like "foo" ++ '_'.
 %%
-%% Unfortunately, this conflicts with match_spec_run(): we must convert the results from
-%% prefix_match(), changing from binaries to lists, then revert back to binaries on the
-%% objects that match. This is wasteful, but presumably faster than setting the prefix to
-%% <<>> (the empty binary), forcing select() to traverse the entire table.
+%% Unfortunately, this conflicts with match_spec_run(): we must convert the
+%% results from prefix_match(), changing from binaries to lists, then revert
+%% back to binaries on the objects that match. This is wasteful, but presumably
+%% faster than setting the prefix to <<>> (the empty binary), forcing select()
+%% to traverse the entire table.
 %%
 ms2pfx([{HeadPat,_,_}|_], Enc) when is_tuple(HeadPat) ->
     Key = element(1, HeadPat),
@@ -645,7 +663,7 @@ do_select_({Objs, Cont}, Conv, MSC, Acc, Limit, Limit0) ->
     NewAcc = [Matches | Acc],
     case decr(Limit, N) of
 	NewLimit when NewLimit =< 0 ->
-	    %% This can result in (> Limit) objects being returned to the caller.
+	    %% This can result in (> Limit) objects being returned to the caller
 	    {lists:concat(lists:reverse(NewAcc)),
 	     fun() ->
 		     do_select_(Cont(), Conv, MSC, NewAcc, Limit0, Limit0)
@@ -805,7 +823,8 @@ name2file(X) ->
 
 
 is_behaviour(_M) ->
-    %% TODO: check that exported functions match those listed in behaviour_info(callbacks).
+    %% TODO: check that exported functions match those listed in
+    %% behaviour_info(callbacks).
     true.
 
 create_tables_(Db, Opts) ->
@@ -817,11 +836,13 @@ create_tables_(Db, Opts) ->
 				      {table_name(T), Os};
 				 (T) -> {table_name(T),[]}
 			      end, Ts),
-	    %% We don't warn if there are more tables than we've specified, and we certainly
-	    %% don't remove them. Ok to do nothing?
+	    %% We don't warn if there are more tables than we've specified,
+	    %% and we certainly don't remove them. Ok to do nothing?
 	    Tables = internal_tables() ++ Tabs0,
 	    Existing = list_tables(Db),
-	    New = lists:filter(fun({T,_}) -> not lists:member(T, Existing) end, Tables),
+	    New = lists:filter(fun({T,_}) ->
+				       not lists:member(T, Existing) end,
+			       Tables),
 	    [do_add_table(Db, T, Os) || {T, Os} <- New]
     end.
 
@@ -829,9 +850,9 @@ internal_tables() ->
     [].
 
 fix_attrs(As) ->
-    %% Treat the list of attributes as a proplist. This means there can be duplicates.
-    %% Return an orddict, where values from the head of the list take priority over values
-    %% from tail.
+    %% Treat the list of attributes as a proplist. This means there can be
+    %% duplicates. Return an orddict, where values from the head of the list
+    %% take priority over values from tail.
     lists:foldr(fun({K,V}, Acc) when is_atom(K) ->
 			orddict:store(K, V, Acc)
 		end, orddict:new(), As).
