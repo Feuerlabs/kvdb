@@ -1,9 +1,34 @@
-%%% @author Tony Rogvall <tony@rogvall.se>
-%%% @copyright (C) 2011, Tony Rogvall
-%%% @doc
-%%%    key value database frontend
-%%% @end
-%%% Created : 29 Dec 2011 by Tony Rogvall <tony@rogvall.se>
+%% @author Ulf Wiger <ulf@feuerlabs.com>
+%% @author Tony Rogvall <tony@rogvall.se>
+%% @copyright 2011-2012, Feuerlabs Inc
+%% @doc
+%% Key-value database frontend
+%%
+%% Kvdb is a key-value database library, supporting different backends
+%% (currently: sqlite3 and leveldb), and a number of different table types.
+%%
+%% Feature overview:
+%%
+%% - Multiple logical tables per database
+%%
+%% - Persistent ordered-set semantics
+%%
+%% - `{Key, Value}' or `{Key, Attributes, Value}' structure (per-table)
+%%
+%% - Table types: set (normal) or queue (FIFO, LIFO or keyed FIFO or LIFO)
+%%
+%% - Attributes can be indexed
+%%
+%% - Schema-based validation (per-database) with update triggers
+%%
+%% - Prefix matching
+%%
+%% - ETS-style select() operations
+%%
+%% - Configurable encoding schemes (raw, sext or term_to_binary)
+%%
+%% @end
+%% Created : 29 Dec 2011 by Tony Rogvall <tony@rogvall.se>
 
 -module(kvdb).
 
@@ -87,6 +112,7 @@
 
 -define(KVDB_THROW(E), throw({kvdb_throw, E})).
 
+%% @private
 test() ->
     dbg:tracer(),
     [dbg:tpl(M, x) || M <- [kvdb, kvdb_sup, kvdb_sqlite3]],
@@ -95,6 +121,7 @@ test() ->
     application:start(gproc),
     application:start(kvdb).
 
+%% @private
 %% The plugin behaviour
 behaviour_info(callbacks) ->
     [
@@ -127,6 +154,7 @@ behaviour_info(callbacks) ->
 behaviour_info(_Other) ->
     undefined.
 
+%% @private
 start() ->
     application:start(gproc),
     application:start(kvdb).
@@ -160,7 +188,8 @@ do_info(#kvdb_ref{mod = DbMod, db = Db}, Item) ->
 -spec dump_tables(db_name()) -> list().
 %% @doc Returns the contents of the database as a list of objects
 %%
-%% This function is mainly for debugging, and should not be called on a large database.
+%% This function is mainly for debugging, and should not be called on a
+%% large database.
 %%
 %% The exact format of the list may vary from backend to backend.
 %% @end
@@ -168,13 +197,30 @@ dump_tables(Name) ->
     ?KVDB_CATCH(do_dump_tables(db(Name)), [Name]).
 
 -spec do_dump_tables(db_ref()) -> list().
-
+%% @doc Low-level equivalent to {@link dump_tables/1}
+%% @end
 do_dump_tables(#kvdb_ref{mod = DbMod, db = Db}) ->
     DbMod:dump_tables(Db).
 
 -spec open(db_name(), Options::[{atom(),term()}]) ->
 		  {ok,db_ref()} | {error,term()}.
-
+%% @doc Opens a database
+%%
+%% Options:
+%%
+%% - `{backend, Backend}' - select a backend<br/>
+%% Supported backends are Sqlite3 (`sqlite' or `sqlite3') and `leveldb',
+%% or any module that implements the `kvdb' behaviour.
+%%
+%% - `{schema, SchemaMod}' - Callback module used for validation and triggers.
+%% The module must implement the `kvdb_schema' behaviour.
+%%
+%% - `{file, File}' - File name or directory name of the database.
+%%
+%% - `{encoding, Encoding}' - Default encoding for tables.
+%%
+%% - `{db_opts, DbOpts}' - Backend-specific options.
+%% @end
 open(Name, Options) ->
     supervisor:start_child(kvdb_sup, kvdb_sup:childspec({Name, Options})).
 
@@ -198,11 +244,11 @@ close(Name) ->
     ?KVDB_CATCH(call(Name, close), [Name]).
 
 -spec db(db_name() | db_ref()) -> db_ref().
-%% @doc Returns a low-level handle for accessing the data directly via the do_ functions.
+%% @doc Returns a low-level handle for accessing the data via do_* functions.
 %%
-%% Note that not all functions are safe to use concurrently from different processes.
-%% When accessing a database via Name, update functions are serialized so that database
-%% corruption won't occur.
+%% Note that not all functions are safe to use concurrently from different
+%% processes. When accessing a database via Name, update functions are
+%% serialized so that database corruption won't occur.
 %% @end
 db(#kvdb_ref{} = Db) ->
     Db;
@@ -272,7 +318,7 @@ add_table(Name, Table, Opts) when is_list(Opts) ->
 -spec do_add_table(Db::db_ref(), Table::table(), Opts::list()) ->
 			  ok | {error, any()}.
 
-%% @doc Low-level equivalent to `add_table/3'. See {@link add_table/3}
+%% @doc Low-level equivalent to {@link add_table/3}
 %% @end
 do_add_table(#kvdb_ref{mod = DbMod, db = Db}, Table0, Opts) ->
     Table = kvdb_lib:valid_table_name(Table0),
@@ -280,7 +326,7 @@ do_add_table(#kvdb_ref{mod = DbMod, db = Db}, Table0, Opts) ->
 
 -spec do_delete_table(Db::db_ref(), Table::table()) ->
 			     ok | {error, any()}.
-%% @doc low-level equivalent to `delete_table/2'. See {@link delete_table/2}
+%% @doc low-level equivalent to {@link delete_table/2}
 %% @end
 do_delete_table(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
     Table = table_name(Table0),
@@ -291,7 +337,9 @@ do_delete_table(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
 delete_table(Name, Table) ->
     ?KVDB_CATCH(call(Name, {delete_table, Table}), [Name, Table]).
 
-
+-spec list_tables(db_name() | db_ref()) -> [binary()].
+%% @doc Lists the tables defined in the database
+%% @end
 list_tables(#kvdb_ref{mod = DbMod, db = Db}) ->
     DbMod:list_tables(Db);
 list_tables(Name) ->
@@ -301,7 +349,8 @@ list_tables(Name) ->
 
 -spec do_put(Db::db_ref(), Table::table(), Obj::object()) ->
 		    ok | {error, any()}.
-
+%% @doc Low-level equivalent to {@link put/3}
+%% @end
 do_put(#kvdb_ref{} = DbRef, Table0, {_,_} = Obj) ->
     Table = table_name(Table0),
     do_put_(DbRef, Table, Obj);
@@ -321,6 +370,8 @@ do_put_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Obj) ->
 
 -spec put(any(), Table::table(), Obj::object()) ->
 		 ok | {error, any()}.
+%% @doc Inserts an object into Table
+%% @end
 put(Name, Table, Obj) when is_tuple(Obj) ->
     ?KVDB_CATCH(call(Name, {put, Table, Obj}), [Name, Table, Obj]).
 
@@ -360,7 +411,8 @@ put_attrs(Name, Table, Key, As) when is_list(As) ->
 
 -spec do_get(Db::db_ref(), Table::table(), Key::binary()) ->
 		    {ok, binary()} | {error,any()}.
-
+%% @doc Low-level equivalent of {@link get/3}
+%% @end
 do_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
     Table = table_name(Table0),
     case DbMod:get(Db, Table, Key) of
@@ -371,15 +423,20 @@ do_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
     end.
 
 -spec get(db_name(), Table::table(), Key::binary()) ->
-		 {ok, binary()} | {error,any()}.
-
+		 {ok, object()} | {error,any()}.
+%% @doc Perform a lookup on `Key' in `Table'
+%%
+%% Returns `{ok, Object}' or `{error, Reason}', e.g. `{error, not_found}'
+%% if the object could not be found.
+%% @end
 get(Name, Table, Key) ->
     #kvdb_ref{} = Ref = call(Name, db),
     ?KVDB_CATCH(do_get(Ref, Table, Key), [Name, Table, Key]).
 
 -spec do_index_get(db_ref(), table(), _IxName::any(), _IxVal::any()) ->
-			  [object()].
-
+			  [object()] | {error, any()}.
+%% @doc Low-level equivalent of {@link index_get/4}
+%% @end
 do_index_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
     Table = table_name(Table0),
     case DbMod:index_get(Db, Table, IxName, IxVal) of
@@ -387,8 +444,12 @@ do_index_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
     end.
 
 -spec index_get(db_name(), table(), _IxName::any(), _IxVal::any()) ->
-		       [object()].
-
+		       [object()] | {error, any()}.
+%% @doc Perform an index lookup on the named index of Table
+%%
+%% This function returns a list of objects referenced by the index value, or
+%% an `{error, Reason}' tuple, if there is no such index for the Table.
+%% @end
 index_get(Name, Table, IxName, IxVal) ->
     #kvdb_ref{} = Ref = call(Name, db),
     ?KVDB_CATCH(do_index_get(Ref, Table, IxName, IxVal),
@@ -396,12 +457,15 @@ index_get(Name, Table, IxName, IxVal) ->
 
 -spec do_push(Db::db_ref(), Table::table(), Obj::object()) ->
 		     {ok, ActualKey::any()} | {error, any()}.
+%% @equiv do_push(Db, Table, <<>>, Obj)
+%%
 do_push(Db, Table, Obj) ->
     do_push(Db, Table, <<>>, Obj).
 
 -spec do_push(Db::db_ref(), Table::table(), Q::any(), Obj::object()) ->
 		     {ok, ActualKey::any()} | {error, any()}.
-
+%% @doc Low-level equivalent of {@link push/4}
+%% @end
 do_push(#kvdb_ref{} = DbRef, Table0, Q, {_,_} = Obj) ->
     Table = table_name(Table0),
     do_push_(DbRef, Table, Q, Obj);
@@ -422,18 +486,30 @@ do_push_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
 
 -spec push(db_name(), table(), object()) ->
 		 {ok, _ActualKey::any()} | {error, any()}.
+%% @equiv push(Name, Table, <<>>, Obj)
+%%
 push(Name, Table, Obj) when is_tuple(Obj) ->
     push(Name, Table, <<>>, Obj).
 
 -spec push(any(), Table::table(), queue_name(), object()) ->
 		 {ok, _ActualKey::any()} | {error, any()}.
+%% @doc Push an object onto a persistent queue
+%%
+%% `Table' must be of one of the queue types (see {@link create_table/3}).
+%% The queue identifier `Q' specifies a given queue instance inside the table
+%% (there may be a large number of queue instances), and a special key is
+%% created to uniquely identify the inserted object. The actual key must be
+%% used to delete the object (unless it is automatically removed using the
+%% {@link pop/3} function.
+%% @end
 push(Name, Table, Q, Obj) when is_tuple(Obj) ->
     ?KVDB_CATCH(call(Name, {push, Table, Q, Obj}), [Name, Table, Q, Obj]).
 
 
 -spec do_pop(db_ref(), table()) ->
 		    {ok, object()} | done | {error,any()}.
-
+%% @equiv do_pop(Db, Table, <<>>)
+%%
 do_pop(Db, Table) ->
     do_pop(Db, Table, <<>>).
 
@@ -442,7 +518,8 @@ do_pop(Db, Table) ->
 		    done |
 		    blocked |
 		    {error,any()}.
-
+%% @doc Low-level equivalent of {@link pop/3}
+%% @end
 do_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Q) ->
     Table = table_name(Table0),
     case DbMod:pop(Db, Table, Q) of
@@ -454,7 +531,9 @@ do_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Q) ->
     end.
 
 -spec pop(db_name(), Table::table()) ->
-		 {ok, object()} | done | {error,any()}.
+		 {ok, object()} | done | blocked | {error,any()}.
+%% @equiv pop(Name, Table, <<>>)
+%%
 pop(Name, Table) ->
     pop(Name, Table, <<>>).
 
@@ -463,6 +542,7 @@ pop(Name, Table) ->
 		 done |
 		 blocked |
 		 {error,any()}.
+%% @doc Fetches and deletes the 'first' object in the given queue
 pop(Name, Table, Q) ->
     ?KVDB_CATCH(call(Name, {pop, Table, Q}), [Name, Table, Q]).
 
@@ -817,6 +897,7 @@ start_session(Name, Id) ->
 session(Name, Id) ->
     {Name, session, Id}.
 
+%% @private
 init(Alias) ->
     try init_(Alias)
     catch
@@ -860,6 +941,7 @@ init_({owner, Name, Opts}) ->
 	    Error
     end.
 
+%% @private
 handle_call(Req, From, St) ->
     try handle_call_(Req, From, St)
     catch
@@ -896,16 +978,20 @@ handle_call_(close, _From, #st{is_owner = true} = St) ->
 handle_call_(db, _From, #st{db = Db} = St) ->
     {reply, Db, St}.
 
+%% @private
 handle_info(_, St) ->
     {noreply, St}.
 
+%% @private
 handle_cast(_, St) ->
     {noreply, St}.
 
+%% @private
 terminate(_Reason, #st{db = Db}) ->
     close(Db),
     ok.
 
+%% @private
 code_change(_FromVsn, St, _Extra) ->
     {ok, St}.
 

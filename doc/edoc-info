@@ -1,0 +1,4 @@
+{application,kvdb}.
+{packages,[]}.
+{modules,[kvdb,kvdb_app,kvdb_conf,kvdb_diff,kvdb_ets,kvdb_leveldb,kvdb_lib,
+          kvdb_queue,kvdb_schema,kvdb_schema_events,kvdb_sqlite3,kvdb_sup]}.
