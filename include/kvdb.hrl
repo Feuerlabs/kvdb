@@ -8,7 +8,7 @@
 -opaque db_ref()  :: #kvdb_ref{}.
 
 -record(db, {ref, encoding = sext, metadata}).
--record(table, {name, type = set, encoding = sext, columns, schema, indexes = []}).
+-record(table, {name, type = set, encoding = sext, columns, schema, index = []}).
 
 -opaque db() :: #db{}.
 
@@ -21,5 +21,9 @@
 -type attr_value() :: any().
 -type attrs() :: [{atom(), any()}].
 -type options() :: [{atom(), any()}].
+-type basic_encoding() :: sext | raw | term.
+-type encoding() :: basic_encoding() |
+		    {basic_encoding(), basic_encoding()} |
+		    {basic_encoding(), basic_encoding(), basic_encoding()}.
 
 -type object() :: {key(), value()} | {key(), attrs(), value()}.

@@ -1,8 +1,11 @@
 -module(kvdb_lib).
 -export([table_name/1,
 	 valid_table_name/1,
+	 index_vals/2,
+	 valid_indexes/1,
 	 enc/3,
 	 dec/3,
+	 try_decode/1,
 	 enc_prefix/3,
 	 is_prefix/3,
 	 check_valid_encoding/1,
@@ -18,7 +21,7 @@
 
 valid_table_name(Table0) ->
     Table = table_name(Table0),
-    case [C || <<C:8>> <= Table, lists:member(C, "-.,:;*/")] of
+    case [C || <<C:8>> <= Table, lists:member(C, "-=?+.,:;*/")] of
 	[_|_] ->
 	    error({illegal_table_name, Table0});
 	[] ->
@@ -32,6 +35,45 @@ table_name(Table) when is_binary(Table) ->
 table_name(Table) when is_list(Table) ->
     list_to_binary(Table).
 
+
+index_vals([H|T], Attrs) when is_atom(H) ->
+    case lists:keyfind(H, 1, Attrs) of
+	{_,_} = Found ->
+	    [Found | index_vals(T, Attrs)];
+	false ->
+	    index_vals(T, Attrs)
+    end;
+index_vals([{IxN, words, A}|T], Attrs) ->
+    case lists:keyfind(A, 1, Attrs) of
+	{_, S} when is_list(S); is_binary(S) ->
+	    lists:usort(
+	      [{IxN,X} || X <- re:split(S, "[().,-:;\\[\\]{}\\s]+")])
+		++ index_vals(T, Attrs);
+	_ ->
+	    index_vals(T, Attrs)
+    end;
+index_vals([{IxN, each, A}|T], Attrs) ->
+    case lists:keyfind(A, 1, Attrs) of
+	{_, L} when is_list(L) ->
+	    %% We could check if the list contains duplicates, but strictly
+	    %% speaking, it should resolve itself when we store the values.
+	    [{IxN,X} || X <- L] ++ index_vals(T, Attrs);
+	_ ->
+	    index_vals(T, Attrs)
+    end;
+index_vals([], _) ->
+    [].
+
+valid_indexes(Ix) ->
+    case lists:foldr(
+	   fun(A, Acc) when is_atom(A) -> Acc;
+	      ({_N, each, A}, Acc) when is_atom(A) -> Acc;
+	      ({_N, words, A}, Acc) when is_atom(A) -> Acc;
+	      (Other, Acc) -> [Other|Acc]
+	   end, [], Ix) of
+	[]  -> ok;
+	Bad -> {error, Bad}
+    end.
 
 enc(_, X, raw ) -> X;
 enc(_, X, term) -> term_to_binary(X);
@@ -51,13 +93,25 @@ dec(value, X, {_,Enc}  ) -> dec(value, X, Enc);
 dec(value, X, {_,_,Enc}) -> dec(value, X, Enc);
 dec(attrs, X, {_,Enc,_}) -> dec(attrs, X, Enc).
 
+try_decode(V) ->
+    try binary_to_term(V)
+    catch
+	error:_ ->
+	    try sext:decode(V)
+	    catch
+		error:_ ->
+		    V
+	    end
+    end.
+
 enc_prefix(_, X, raw ) -> X;
 enc_prefix(_, X, sext) ->
     case X of
 	<<>> -> <<>>;
 	_ when is_binary(X) ->
-	    %% sext-encoding terminates with padding and an end byte. This won't work
-	    %% for prefix matching, so we emulate the encoding, but without the ending.
+	    %% sext-encoding terminates with padding and an end byte.
+	    %% This won't work for prefix matching, so we emulate the
+	    %% encoding, but without the ending.
 	    Enc = << 18, (<< <<1:1, B1:8>> || <<B1>> <= X >>)/bitstring >>,
 	    Sz = bit_size(Enc) div 8,
 	    <<P:Sz/binary, _/bitstring>> = Enc,

@@ -13,12 +13,13 @@
 -export([open/2, close/1]).
 -export([add_table/3, delete_table/2, list_tables/1,
 	 get_attr/4, get_attrs/3, delete/3]).
--export([put/3, push/4, put_attr/5, put_attrs/4, get/3, pop/3, prel_pop/3, extract/3,
+-export([put/3, push/4, put_attr/5, put_attrs/4, get/3, index_get/4,
+	 pop/3, prel_pop/3, extract/3,
 	 list_queue/3, list_queue/6, is_queue_empty/3,
 	 first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
--export([info/2, get_schema_mod/2]).
+-export([info/2, get_schema_mod/2, dump_tables/1]).
 
 %% for testing
 -export([prefix_match/5]).
@@ -33,6 +34,58 @@ get_schema_mod(_, M) ->
 info(#db{ref = Db}, ref) -> Db;
 info(#db{encoding = Enc}, encoding) -> Enc;
 info(#db{}, _) -> undefined.
+
+dump_tables(#db{ref = Ref} = Db) ->
+    Tabs = sqlite3:list_tables(Ref),
+    lists:flatmap(
+      fun(T) ->
+	      dump_table(Ref, T, Db)
+      end, Tabs).
+
+dump_table(Ref, T, Db) ->
+    case sqlite3:sql_exec(Ref, ["SELECT * FROM [", T, "];"]) of
+	[{columns, Cols},
+	 {rows, Rows}] ->
+	    case type(Db, T) of
+		set ->
+		    [format_row(T, Cols, R) || R <- Rows];
+		TType when TType==fifo; TType==lifo;
+			   element(1, TType) == fifo;
+			   element(1, TType) == lifo ->
+		    [format_q_row(T, TType, encoding(Db, T), Cols, R) ||
+			R <- Rows]
+	    end;
+	Other ->
+	    [{error, Other}]
+    end.
+
+format_row(T, ["key","value"], R) ->
+    {obj, T, decode_r(R)};
+format_row(T, ["key", "attrs", "value"], R) ->
+    {obj, T, decode_r(R)};
+format_row(T, ["ix", "key"], {{blob,Bi}, {blob,Bk}}) ->
+    {Ix, Rest} = sext:decode_next(Bi),
+    Kix = sext:decode(Rest),
+    {index, T, Ix, Kix, kvdb_lib:try_decode(Bk)}.
+
+format_q_row(T, Type, Enc, ["key","value","active"], {{blob,Bk},
+						      {blob,Bv},A}) ->
+    {Q,Ko} = kvdb_lib:split_queue_key(Enc, Type, Bk),
+    {q_obj, T, Q, Bk, {Ko, dec(value, Bv, Enc)}, active_to_status(A)};
+format_q_row(T, Type, Enc, ["key","attrs","value","active"], {{blob,Bk},
+							      {blob,Ba},
+							      {blob,Bv},A}) ->
+    {Q,Ko} = kvdb_lib:split_queue_key(Enc, Type, Bk),
+    {q_obj, T, Q, Bk, {Ko, dec(attrs, Ba, Enc), dec(value, Bv, Enc)},
+     active_to_status(A)}.
+
+active_to_status(0) -> inactive;
+active_to_status(1) -> active;
+active_to_status(2) -> blocking.
+
+decode_r(R) ->
+    list_to_tuple(lists:map(fun({blob, X}) -> kvdb_lib:try_decode(X) end,
+			    tuple_to_list(R))).
 
 open(Db0, Options) ->
     Db = make_atom_name(Db0),
@@ -93,14 +146,23 @@ add_table(#db{ref = Ref, encoding = Enc} = Db, Table, Opts) ->
 		      end,
 	    case sqlite3:create_table(Ref, Table, Columns) of
 		ok ->
-		    schema_write(Db, {{table, Table}, TabR}),
-		    schema_write(Db, {{Table, type}, TabR#table.type}),
-		    schema_write(Db, {{Table, encoding}, TabR#table.encoding}),
+		    TabR1 = maybe_create_index_table(Ref, Table, TabR),
+		    schema_write(Db, {{table, Table}, TabR1}),
+		    schema_write(Db, {{Table, type}, TabR1#table.type}),
+		    schema_write(Db, {{Table, index}, TabR1#table.index}),
+		    schema_write(Db, {{Table, encoding}, TabR1#table.encoding}),
 		    ok;
 		Error ->
 		    Error
 	    end
     end.
+
+maybe_create_index_table(_Ref, _Table, #table{index = []} = TabR) ->
+    TabR;
+maybe_create_index_table(Ref, Table, #table{index = [_|_] = Ix} = TabR) ->
+    IxTab = <<"[", Table/binary, "-index]">>,
+    sqlite3:create_table(Ref, IxTab, [{ix, blob, primary_key}, {key, blob}]),
+    TabR#table{index = {IxTab, Ix}}.
 
 
 list_tables(#db{metadata = ETS}) ->
@@ -111,10 +173,16 @@ delete_table(#db{ref = Ref} = Db, Table) ->
     case schema_lookup(Db, {table, Table}, undefined) of
 	undefined ->
 	    ok;
-	#table{} ->
+	#table{index = Index} ->
 	    sqlite3:drop_table(Ref, Table),
 	    schema_delete(Db, {table, Table}),
 	    schema_delete(Db, {Table, encoding}),
+	    case Index of
+		{IxTab, _} ->
+		    sqlite3:drop_table(Ref, IxTab);
+		_ ->
+		    ok
+	    end,
 	    ok
     end.
 
@@ -129,13 +197,40 @@ put(#db{ref = Ref} = Db, Table, {Key, Value}) ->
     end;
 put(#db{ref = Ref} = Db, Table, {Key, Attrs, Value}) ->
     Enc = encoding(Db, Table),
-    case insert_or_replace(Ref, Table, [{key, {blob, enc(key, Key, Enc)}},
-					{attrs, {blob, enc(attrs, Attrs, Enc)}},
-					{value, {blob, enc(value, Value, Enc)}}]) of
-	ok ->
-	    ok;
-	{error,_} = Error ->
-	    Error
+    EncKey = enc(key, Key, Enc),
+    InsertSQLData = [{key, {blob, EncKey}},
+		     {attrs, {blob, enc(attrs, Attrs, Enc)}},
+		     {value, {blob, enc(value, Value, Enc)}}],
+    case index(Db, Table) of
+	[] ->
+	    case insert_or_replace(Ref, Table, InsertSQLData) of
+		ok ->
+		    ok;
+		{error,_} = Error ->
+		    Error
+	    end;
+	{IxTable, Ix} ->
+	    OldAttrs = case get(Db, Table, Key) of
+			   {ok, {_, OldAs, _}} -> OldAs;
+			   {error, _} -> []
+		       end,
+	    OldIxVals = kvdb_lib:index_vals(Ix, OldAttrs),
+	    NewIxVals = kvdb_lib:index_vals(Ix, Attrs),
+	    DelIxVals = [{I, Key} || I <- OldIxVals -- NewIxVals],
+	    PutIxVals = [{I, Key} || I <- NewIxVals -- OldIxVals],
+	    KeySext = sext:encode(Key),
+	    sqlite3:sql_exec_script(
+	      Ref,
+	      ["BEGIN;",
+	       [sqlite3_lib:delete_sql(IxTable, "ix", {blob, <<(sext:encode(I))/binary,
+							       KeySext/binary>>}) ||
+		   I <- DelIxVals],
+	       [insert_or_replace_sql(IxTable, [{ix, {blob, <<(sext:encode(I))/binary,
+							      KeySext/binary>>}},
+						{key, {blob, EncKey}}]) ||
+		   I <- PutIxVals],
+	       insert_or_replace_sql(Table, InsertSQLData),
+	       "COMMIT;"])
     end.
 
 push(#db{ref = Ref} = Db, Table, Q, {Key, Value}) ->
@@ -172,6 +267,9 @@ push(#db{ref = Ref} = Db, Table, Q, {Key, Attrs, Value}) ->
 	    {error, badarg}
     end.
 
+index(#db{} = Db, Table) ->
+    schema_lookup(Db, {Table, index}, []).
+
 encoding(#db{encoding = Enc} = Db, Table) ->
     schema_lookup(Db, {Table, encoding}, Enc).
 
@@ -196,6 +294,42 @@ insert_or_replace_sql(Table, Data) ->
      ") values (",
      sqlite3_lib:write_value_sql(Values), ");"
     ].
+
+index_get(#db{ref = Ref} = Db, Table, IxName, IxVal) ->
+    case index(Db, Table) of
+	{IxTable, Ix} ->
+	    Enc = encoding(Db, Table),
+	    case lists:member(IxName, Ix) orelse
+		lists:keymember(IxName, 1, Ix) of
+		true ->
+		    Pfx = sext:prefix({{IxName, IxVal}, '_'}),
+		    Sz = byte_size(Pfx) -1,
+		    <<P:Sz/binary, Last>> = Pfx,
+		    PfxB = <<P/binary, (Last+1):8>>,
+		    PrefixA = sqlite3_lib:value_to_sql({blob, Pfx}),
+		    PrefixB = sqlite3_lib:value_to_sql({blob, PfxB}),
+		    SQL = ["SELECT t.key, t.attrs, t.value FROM ",
+			   Table, " AS t, ", IxTable, " AS i WHERE ",
+			   "i.ix BETWEEN ", PrefixA, " AND ", PrefixB,
+			   " AND t.key == i.key;"],
+		    case sqlite3:sql_exec(Ref, SQL) of
+			[{columns, ["key","attrs","value"]},
+			 {rows, Rows}] ->
+			    lists:map(
+			      fun({{blob,Bk}, {blob,Ba}, {blob,Bv}}) ->
+				      {dec(key, Bk, Enc),
+				       dec(attrs, Ba, Enc),
+				       dec(value, Bv, Enc)}
+			      end, Rows);
+			_ ->
+			    []
+		    end;
+		false ->
+		    {error, invalid_index}
+	    end;
+	_ ->
+	    {error, no_index}
+    end.
 
 
 get(#db{ref = Ref} = Db, Table, Key) ->
@@ -231,25 +365,27 @@ prel_pop(Db, Table, Q) ->
 	    error(illegal);
 	T ->
 	    Remove = fun(Obj, Enc) ->
-			     mark_queue_object(Db, Table, Enc, Obj, inactive)
+			     mark_queue_object(Db, Table, Enc, Obj, blocking)
 		     end,
 	    do_pop(Db, Table, T, Q, Remove, true)
     end.
 
 mark_queue_object(#db{ref = Ref}, Table, Enc, Obj, St) when St==inactive;
+							    St==blocking;
 							    St==active ->
     ActiveCol = case St of
+		    inactive -> {active, 0};
 		    active   -> {active, 1};
-		    inactive -> {active, 0}
+		    blocking -> {active, 2}
 		end,
-    insert_or_replace(Ref, Table, cols(Obj, Enc) ++ [ActiveCol]).
+    insert_or_replace(Ref, Table, mark_cols(Obj, Enc) ++ [ActiveCol]).
 
-cols({K,As,V}, Enc) ->
-    [{key, {blob, enc(key, K, Enc)}},
+mark_cols({K,As,V}, Enc) ->
+    [{key, {blob, K}},
      {attrs, {blob, enc(attrs, As, Enc)}},
      {value, {blob, enc(value, V, Enc)}}];
-cols({K,V}, Enc) ->
-    [{key, {blob, enc(key, K, Enc)}},
+mark_cols({K,V}, Enc) ->
+    [{key, {blob, K}},
      {value, {blob, enc(value, V, Enc)}}].
 
 
@@ -257,15 +393,17 @@ do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
     Enc = encoding(Db, Table),
     QPfx = kvdb_lib:queue_prefix(Enc, Q),
     EncQPfx = kvdb_lib:enc_prefix(key, QPfx, Enc),
+    Fltr = fun(inactive, _, _) -> skip;
+	      (_, Kr, O) ->
+		   {keep, {Kr,O}}
+	   end,
     case case Type of
 	     _ when Type==fifo; element(2, Type) == fifo ->
 		 prefix_match(Db, Table, EncQPfx, QPfx, Enc,
-			      fun(_,Kr,O) -> {keep,{Kr,O}} end,
-			      false, 2, asc);
+			      Fltr, true, 2, asc);
 	     _ when Type==lifo; element(2, Type) == lifo ->
 		 prefix_match(Db, Table, EncQPfx, QPfx, Enc,
-			      fun(_,Kr,O) -> {keep,{Kr,O}} end,
-			      false, 2, desc);
+			      Fltr, true, 2, desc);
 	     _ -> error(illegal)
 	 end of
 	{[{RawKey,Obj}|More], _} ->
@@ -277,6 +415,8 @@ do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
 	    end;
 	{[], _} ->
 	    done;
+	blocked ->
+	    blocked;
 	{error, _} = Error ->
 	    Error
     end.
@@ -300,8 +440,12 @@ extract(#db{} = Db, Table, Key) ->
     end.
 
 is_queue_empty(Db, Table, Q) ->
-    case list_queue(Db, Table, Q, 1) of
+    case list_queue(Db, Table, Q, fun(inactive,_,_) -> skip;
+				     (_, _, O) -> {keep,O}
+				  end, true, 1) of
 	{[_], _} ->
+	    false;
+	blocked ->
 	    false;
 	_ ->
 	    true
@@ -311,11 +455,13 @@ list_queue(Db, Table, Q) ->
     list_queue(Db, Table, Q, infinity).
 
 list_queue(Db, Table, Q, Limit) ->
+    %% HeedBlock set to false by default. Note that we don't pass on the
+    %% status flag by default. Is this a useful combination?
     list_queue(Db, Table, Q, fun(_,_,O) -> {keep,O} end, false, Limit).
 
-list_queue(Db, Table, Q, Fltr, Inactive, Limit) when Limit > 0 ->
+list_queue(Db, Table, Q, Fltr, HeedBlock, Limit) when Limit > 0 ->
     Type = type(Db, Table),
-    list_queue(Db, Table, Q, Fltr, Inactive,
+    list_queue(Db, Table, Q, Fltr, HeedBlock,
 	       case Type of
 		   fifo -> asc;
 		   lifo -> desc;
@@ -324,12 +470,12 @@ list_queue(Db, Table, Q, Fltr, Inactive, Limit) when Limit > 0 ->
 		   _ -> error(illegal)
 	       end, Limit).
 
-list_queue(Db, Table, Q, Fltr, Inactive, Order, Limit)
+list_queue(Db, Table, Q, Fltr, HeedBlock, Order, Limit)
   when Order==asc; Order==desc ->
     Enc = encoding(Db, Table),
     QPfx = kvdb_lib:queue_prefix(Enc, Q),
     EncQPfx = kvdb_lib:enc_prefix(key, QPfx, Enc),
-    prefix_match(Db, Table, EncQPfx, QPfx, Enc, Fltr, Inactive, Limit, Order);
+    prefix_match(Db, Table, EncQPfx, QPfx, Enc, Fltr, HeedBlock, Limit, Order);
 list_queue(_, _, _, _, _, _, 0) ->
     [].
 
@@ -439,26 +585,26 @@ prefix_match(Db, Table, Prefix, Limit, Dir) ->
 		 fun(_,_,O) -> {keep,O} end, false, Limit, Dir).
 
 prefix_match(#db{ref = Ref} = Db, Table, EncPrefix, Prefix,
-	     Enc, Fltr, Inactive, Limit, Dir)
+	     Enc, Fltr, HeedBlock, Limit, Dir)
   when (is_integer(Limit) orelse Limit==infinity) ->
     DirS = case Dir of
 	       asc  -> "ASC";
 	       desc -> "DESC"
 	   end,
-    AndActive = case {Inactive, type(Db, Table)} of
+    AndActive = case {HeedBlock, type(Db, Table)} of
 		    {_, set} -> "";
-		    {true,_} -> "";
-		    _ -> " AND active == 1"
+		    {true,_} -> " AND active >= 1";
+		    _ -> ""
 		end,
     Type = type(Db, Table),
-    SQL = ["SELECT ", sel_cols(Enc,Type,Inactive), " FROM ", Table,
+    SQL = ["SELECT ", sel_cols(Enc,Type), " FROM ", Table,
 	   " WHERE key >= ?", AndActive,
 	   " ORDER BY key ", DirS],
     {ok, Handle} = sqlite3:prepare(Ref, SQL),
     ok = sqlite3:bind(Ref, Handle, [{blob, EncPrefix}]),
     SH = track_resource(Ref, Handle),
     prefix_match_([], Dir, Ref, SH, Table, EncPrefix, Prefix, AndActive,
-		  Enc, Fltr, Inactive, Type, Limit, Limit, []).
+		  Enc, Fltr, HeedBlock, Type, Limit, Limit, []).
 
 track_resource(Ref,Handle) ->
     %% spawn a resource monitor, since a lingering prepare statement may lock the
@@ -475,7 +621,7 @@ finalize(Ref, {Pid, _Trk, Handle}) ->
     sqlite3:finalize(Ref, Handle).
 
 prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0,
-	      AndActive, Enc, Fltr, Inactive, Type, 0, Limit0, Acc) ->
+	      AndActive, Enc, Fltr, HeedBlock, Type, 0, Limit0, Acc) ->
     finalize(Ref, Handle),
     Cont = if Prev == []; Limit0 == 0 -> fun() -> done end;
 	      true ->
@@ -485,29 +631,30 @@ prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0,
 				    sqlite3:prepare(
 				      Ref,
 				      ["SELECT ",
-				       sel_cols(Enc,Type,Inactive),
+				       sel_cols(Enc,Type),
 				       " FROM ", Table,
 				       " WHERE key > ?", AndActive,
 				       " ORDER BY key ASC"]),
-				ok = sqlite3:bind(Ref, NewHandle, [{blob, Prev}]),
+				ok = sqlite3:bind(Ref, NewHandle,
+						  [{blob, Prev}]),
 				track_resource(Ref, NewHandle);
 			    desc ->
 				{ok, NewHandle} =
 				    sqlite3:prepare(
 				      Ref,
 				      ["SELECT ",
-				       sel_cols(Enc,Type,Inactive),
+				       sel_cols(Enc,Type),
 				       " FROM ", Table,
 				       " WHERE key >= ? AND key < ?", AndActive,
 				       " ORDER BY key DESC"]),
-				ok = sqlite3:bind(Ref, NewHandle, [{blob, Pfx},
-								   {blob, Prev}]),
+				ok = sqlite3:bind(Ref, NewHandle,
+						  [{blob, Pfx}, {blob, Prev}]),
 				track_resource(Ref, NewHandle)
 			end,
 		   fun() ->
 			   prefix_match_(
 			     Prev, Dir, Ref, SH, Table, Pfx, Pfx0, AndActive,
-			     Enc, Fltr, Inactive, Type, Limit0, Limit0, [])
+			     Enc, Fltr, HeedBlock, Type, Limit0, Limit0, [])
 		   end
 	   end,
     {lists:reverse(Acc), Cont};
@@ -516,7 +663,7 @@ prefix_match_(Prev, Dir, Ref, Handle, Table, Pfx, Pfx0,
     %% 					       Limit0, Limit0, [])
     %% 			 end};
 prefix_match_(_Prev, Dir, Ref, {_, _, Handle} = SH, Table,
-	      Pfx, Pfx0, AndActive, Enc, Fltr, Inactive, Type,
+	      Pfx, Pfx0, AndActive, Enc, Fltr, HeedBlock, Type,
 	      Limit, Limit0, Acc) ->
     case sqlite3:next(Ref, Handle) of
 	done ->
@@ -527,37 +674,48 @@ prefix_match_(_Prev, Dir, Ref, {_, _, Handle} = SH, Table,
 	    case is_prefix(Pfx, K, Pfx0, Enc) of
 		true ->
 		    Status = obj_status(Other),
-		    Obj = decode_obj(Other, Enc),
-		    AbsKey = element(1, Obj),
-		    Obj1 = case Type of
-			       set -> Obj;
-			       _ ->
-				   {_,Kx} =
-				       kvdb_lib:split_queue_key(
-					 Enc, Type, AbsKey),
-				   setelement(1,Obj, Kx)
-			   end,
-		    {Cont,Acc1} = case Fltr(Status, AbsKey, Obj1) of
-				      {keep, X} -> {true, [X|Acc]};
-				      {stop, X} -> {false, [X|Acc]};
-				      stop      -> {false, Acc};
-				      skip      -> {true, Acc}
-			   end,
-		    case Cont of
-			true ->
-			    prefix_match_(
-			      K, Dir, Ref, SH, Table,
-			      Pfx, Pfx0, AndActive, Enc, Fltr,
-			      Inactive, Type, decr(Limit), Limit0, Acc1);
-			false ->
-			    finalize(Ref, SH),
-			    {lists:reverse(Acc1), fun() -> done end}
+		    if HeedBlock, Status == blocking ->
+			    if Acc == [] ->
+				    blocked;
+			       true ->
+				    {lists:reverse(Acc),
+				     fun() -> blocked end}
+			    end;
+		       true ->
+			    Obj = decode_obj(Other, Enc),
+			    AbsKey = element(1, Obj),
+			    Obj1 = case Type of
+				       set -> Obj;
+				       _ ->
+					   {_,Kx} =
+					       kvdb_lib:split_queue_key(
+						 Enc, Type, AbsKey),
+					   setelement(1,Obj, Kx)
+				   end,
+			    {Cont,Acc1} = case Fltr(Status, AbsKey, Obj1) of
+					      {keep, X} -> {true, [X|Acc]};
+					      {stop, X} -> {false, [X|Acc]};
+					      stop      -> {false, Acc};
+					      skip      -> {true, Acc}
+					  end,
+			    case Cont of
+				true ->
+				    prefix_match_(
+				      K, Dir, Ref, SH, Table,
+				      Pfx, Pfx0, AndActive, Enc, Fltr,
+				      HeedBlock, Type, decr(Limit),
+				      Limit0, Acc1);
+				false ->
+				    finalize(Ref, SH),
+				    {lists:reverse(Acc1), fun() -> done end}
+			    end
 		    end;
 		false ->
 		    if Dir == desc, K > Pfx ->
 			    prefix_match_(K, Dir, Ref, SH, Table,
-					  Pfx, Pfx0, AndActive, Enc, Fltr,
-					  Inactive, Type, Limit, Limit0, Acc);
+					  Pfx, Pfx0, AndActive, Enc,
+					  Fltr, HeedBlock, Type, Limit,
+					  Limit0, Acc);
 		       true ->
 			    finalize(Ref, SH),
 			    {lists:reverse(Acc), fun() -> done end}
@@ -574,17 +732,21 @@ is_prefix(Pfx, Key, Prefix0, Enc) ->
 	    false
     end.
 
-decode_obj({{blob,K},{blob,V}, A}, Enc) when A==0; A==1 ->
+decode_obj({{blob,K},{blob,V}, A}, Enc) when A==0; A==1; A==2 ->
     {dec(key,K,Enc), dec(value,V,Enc)};
 decode_obj({{blob,K},{blob,V}}, Enc) ->
     {dec(key,K,Enc), dec(value,V,Enc)};
-decode_obj({{blob,K},{blob,As},{blob,V}, A}, Enc) when A==0; A==1 ->
+decode_obj({{blob,K},{blob,As},{blob,V}, A}, Enc) when A==0; A==1; A==2 ->
     {dec(key,K,Enc), dec(attrs, As, Enc), dec(value,V,Enc)};
 decode_obj({{blob,K},{blob,As},{blob,V}}, Enc) ->
     {dec(key,K,Enc), dec(attrs, As, Enc), dec(value,V,Enc)}.
 
 obj_status({{blob,_}, {blob,_}, 0}) -> inactive;
+obj_status({{blob,_}, {blob,_}, 1}) -> active;
+obj_status({{blob,_}, {blob,_}, 2}) -> blocking;
 obj_status({{blob,_}, {blob,_}, {blob,_}, 0}) -> inactive;
+obj_status({{blob,_}, {blob,_}, {blob,_}, 1}) -> active;
+obj_status({{blob,_}, {blob,_}, {blob,_}, 2}) -> blocking;
 obj_status(_) -> active.
 
 decr(infinity) ->
@@ -646,12 +808,10 @@ sel_cols({_,_,_}) ->
 sel_cols(_) ->
     "key, value".
 
-sel_cols({_,_,_},set,     _) -> "key, attrs, value";
-sel_cols({_,_,_},  _, false) -> "key, attrs, value";
-sel_cols({_,_,_},  _, true ) -> "key, attrs, value, active";
-sel_cols(_,        _, true ) -> "key, value, active";
-sel_cols(_,      set,     _) -> "key, value";
-sel_cols(_,        _, false) -> "key, value".
+sel_cols({_,_,_},set) -> "key, attrs, value";
+sel_cols({_,_,_},  _) -> "key, attrs, value, active";
+sel_cols(_,      set) -> "key, value";
+sel_cols(_,        _) -> "key, value, active".
 
 
 
@@ -684,6 +844,12 @@ check_options([{encoding, E}|Tl], Db, Rec) ->
     Rec1 = Rec#table{encoding = E},
     kvdb_lib:check_valid_encoding(E),
     check_options(Tl, Db, Rec1);
+check_options([{index, Ix}|Tl], Db, Rec) ->
+    case kvdb_lib:valid_indexes(Ix) of
+	ok -> check_options(Tl, Db, Rec#table{index = Ix});
+	{error, Bad} ->
+	    error({invalid_index, Bad})
+    end;
 check_options([], _, Rec) ->
     Rec.
 

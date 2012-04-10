@@ -1,8 +1,7 @@
 -module(kvdb_schema).
 
 -export([
-	 validate/3, validate_attr/3,
-	 on_update/4, encode/3, decode/3, encode_attr/3
+	 validate/3, validate_attr/3, on_update/4
 	]).
 -export([write/2, read/1, read/2]).
 
@@ -13,11 +12,7 @@
 behaviour_info(callbacks) ->
     [{validate, 3},
      {validate_attr, 3},
-     {on_update, 4},
-     {encode, 3},
-     {decode, 3},
-     {encode_attr, 3},
-     {decode_attr, 3}];
+     {on_update, 4}];
 behaviour_info(_) ->
     undefined.
 
@@ -30,15 +25,6 @@ validate_attr(_Db, _Type, Attr) ->
 
 on_update(_Op, _Db, _Table, _Obj) ->
     ok.
-
-encode(_Db, _Type, Obj) ->
-    Obj.
-
-encode_attr(_Db, _Type, Attr) ->
-    Attr.
-
-decode(_Db, _Type, Obj) ->
-    Obj.
 
 write(Db, Schema) ->
     [kvdb:put(Db, ?SCHEMA_TABLE, X) || X <- Schema],

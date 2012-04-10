@@ -14,7 +14,7 @@
 -export([start/0, open_db/2, info/2]).
 -export([open/2, close/1, db/1, start_session/2]).
 -export([add_table/2, add_table/3, delete_table/2, list_tables/1]).
--export([put/3, put_attr/5, put_attrs/4, get/3,
+-export([put/3, put_attr/5, put_attrs/4, get/3, index_get/4,
 	 push/3, push/4, pop/2, pop/3, prel_pop/2, prel_pop/3,
 	 extract/3, list_queue/3, list_queue/6, is_queue_empty/3,
 	 first_queue/2, next_queue/3,
@@ -22,12 +22,14 @@
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
 -export([select/3, select/4]).
+-export([dump_tables/1]).
 
 %% direct API towards an active kvdb instance
 -export([do_put/3,
 	 do_push/3,
 	 do_push/4,
 	 do_get/3,
+	 do_index_get/4,
 	 do_pop/2,
 	 do_pop/3,
 	 do_prel_pop/2,
@@ -51,7 +53,8 @@
 	 do_last/2,
 	 do_prefix_match/4,
 	 do_select/4,
-	 do_info/2]).
+	 do_info/2,
+	 do_dump_tables/1]).
 
 -export([behaviour_info/1]).
 
@@ -63,9 +66,7 @@
 	 terminate/2,
 	 code_change/3]).
 
-%% -import(kvdb_schema, [validate/3, validate_attr/3,
-%% 		      encode/3, encode_attr/3,
-%% 		      decode/3, on_update/4]).
+%% -import(kvdb_schema, [validate/3, validate_attr/3, on_update/4]).
 -import(kvdb_lib, [table_name/1]).
 
 -include("kvdb.hrl").
@@ -98,6 +99,7 @@ test() ->
 behaviour_info(callbacks) ->
     [
      {info, 2},
+     {dump_tables, 1},
      {get_schema_mod, 2},
      {open,2},
      {close,1},
@@ -105,6 +107,7 @@ behaviour_info(callbacks) ->
      {delete_table,2},
      {put,3},
      {get,3},
+     {index_get, 4},
      {push,4},
      {pop,3},
      {extract,3},
@@ -154,6 +157,21 @@ info(Name, Item) ->
 do_info(#kvdb_ref{mod = DbMod, db = Db}, Item) ->
     DbMod:info(Db, Item).
 
+-spec dump_tables(db_name()) -> list().
+%% @doc Returns the contents of the database as a list of objects
+%%
+%% This function is mainly for debugging, and should not be called on a large database.
+%%
+%% The exact format of the list may vary from backend to backend.
+%% @end
+dump_tables(Name) ->
+    ?KVDB_CATCH(do_dump_tables(db(Name)), [Name]).
+
+-spec do_dump_tables(db_ref()) -> list().
+
+do_dump_tables(#kvdb_ref{mod = DbMod, db = Db}) ->
+    DbMod:dump_tables(Db).
+
 -spec open(db_name(), Options::[{atom(),term()}]) ->
 		  {ok,db_ref()} | {error,term()}.
 
@@ -180,33 +198,99 @@ close(Name) ->
     ?KVDB_CATCH(call(Name, close), [Name]).
 
 -spec db(db_name() | db_ref()) -> db_ref().
+%% @doc Returns a low-level handle for accessing the data directly via the do_ functions.
+%%
+%% Note that not all functions are safe to use concurrently from different processes.
+%% When accessing a database via Name, update functions are serialized so that database
+%% corruption won't occur.
+%% @end
 db(#kvdb_ref{} = Db) ->
     Db;
 db(Name) ->
     call(Name, db).
 
+-spec add_table(db_name(), table()) -> ok.
+%% @equiv add_table(Name, Table, [{type, set}])
+%%
 add_table(Name, Table) ->
     add_table(Name, Table, [{type, set}]).
 
+-spec add_table(db_name(), table(), options()) -> ok.
+%% @doc Add a table to the database
+%%
+%% This function assumes that the table doesn't already exist in the database.
+%% Valid options are:
+%%
+%% - `{type, set | fifo | lifo | {keyed, fifo | lifo}'<br/>
+%% This defines the type of the table. `set' signifies an ordered-set table.
+%% `fifo' and `lifo' are queue table types, accessed using the functions
+%% {@link push/3}, {@link pop/2}, {@link prel_pop/2}, {@link extract/3},
+%% {@link delete/3}.
+%%
+%% `{keyed, fifo | lifo}' are also a form of queued table type, where items
+%% are sorted by object key first, and then in FIFO or LIFO insertion order.
+%% This can be used for e.g. priority- or timer queues.
+%%
+%% - `{encoding, encoding()}'<br/>
+%%   `encoding() :: enc() | {enc(), enc()} | {enc(), enc(), enc()}'<br/>
+%%   `enc() :: raw | sext | term'<br/>
+%% Specifies how the object, or parts of the object, should be encoded.
+%%
+%% <ul>
+%% <li>`raw' assumes that the data is of type binary; no extra encoding is
+%% performed.</li>
+%% <li>`term' uses `term_to_binary/1' encoding. This is generally not useful
+%% for the key component, as sort order is not preserved, but is a good
+%% generic choice for the value component.</li>
+%% <li>`sext' uses sext-encoding
+%% (<a href="http://github.com/uwiger/sext">github.com/uwiger/sext</a>), which
+%% preserves the inherent sort order of erlang terms. Note that `sext'-encoding
+%% is a bit more costly than term-encoding, both in time and space.</li>
+%% </ul>
+%% When the short forms, `sext', `raw' or `term' are used, they imply a
+%% `{Key, Value}' structure. For a `{Key, Attrs, Value}' structure, use the
+%% 3-tuple form, e.g. `{sext, sext, term}'. (The leveldb backend ignores the
+%% encoding instruction for attrs, and encodes each attribute key with `sext'
+%% encoding and each attribute value with `term' encoding).
+%%
+%% - `{index, [index_expr()]}'<br/>
+%% `index_expr() :: atom() | {_Name::any(), each|words, _Attr::atom()}'<br/>
+%% Attributes can be indexed, by naming the attribute names to include.
+%% If only the attribute name is given, the attribute value is used as the index
+%% value. If a tuple {IxName, Op, Attr} is given, the attribute value is
+%% processed to yield a list of index values. Supported operations are:<br/>
+%% <ul>
+%% <li>`each' - the attribute value is a list; each list item becomes and index
+%% value.</li>
+%% <li>`words' - the attribute value is a string (list) or binary; each word
+%% in the text becomes an index value.</li>
+%% </ul>
+%% @end
 add_table(Name, Table, Opts) when is_list(Opts) ->
     ?KVDB_CATCH(call(Name, {add_table, Table, Opts}), [Name, Table, Opts]).
 
 -spec do_add_table(Db::db_ref(), Table::table(), Opts::list()) ->
 			  ok | {error, any()}.
 
+%% @doc Low-level equivalent to `add_table/3'. See {@link add_table/3}
+%% @end
 do_add_table(#kvdb_ref{mod = DbMod, db = Db}, Table0, Opts) ->
     Table = kvdb_lib:valid_table_name(Table0),
     DbMod:add_table(Db, Table, Opts).
 
 -spec do_delete_table(Db::db_ref(), Table::table()) ->
 			     ok | {error, any()}.
-
+%% @doc low-level equivalent to `delete_table/2'. See {@link delete_table/2}
+%% @end
 do_delete_table(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
     Table = table_name(Table0),
     DbMod:delete_table(Db, Table).
 
+%% @doc Delete `Table' from the database
+%% @end
 delete_table(Name, Table) ->
     ?KVDB_CATCH(call(Name, {delete_table, Table}), [Name, Table]).
+
 
 list_tables(#kvdb_ref{mod = DbMod, db = Db}) ->
     DbMod:list_tables(Db);
@@ -227,8 +311,7 @@ do_put(#kvdb_ref{} = DbRef, Table0, {K,As,V}) when is_list(As) ->
 
 do_put_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Obj) ->
     case DbMod:put(Db, Table,
-		   Schema:validate(DbRef, put,
-				   Actual = Schema:encode(DbRef, obj, Obj))) of
+		   Actual = Schema:validate(DbRef, put, Obj)) of
 	ok ->
 	    Schema:on_update(put, DbRef, Table, Actual),
 	    ok;
@@ -248,8 +331,7 @@ do_put_attr(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
 	    Table0, Key, AttrN, Value)
   when is_atom(AttrN) ->
     Table = table_name(Table0),
-    Attr = Schema:validate_attr(DbRef, Key,
-				Schema:encode_attr(Db, Key, {AttrN, Value})),
+    Attr = Schema:validate_attr(DbRef, Key, {AttrN, Value}),
     case DbMod:put_attr(Db, Table, Key, Attr) of
 	{ok, Actual} ->
 	    Schema:on_update(put_attr, DbRef, Table, {Key, Attr}),
@@ -279,12 +361,12 @@ put_attrs(Name, Table, Key, As) when is_list(As) ->
 -spec do_get(Db::db_ref(), Table::table(), Key::binary()) ->
 		    {ok, binary()} | {error,any()}.
 
-do_get(#kvdb_ref{mod = DbMod, db = Db, schema = Schema}, Table0, Key) ->
+do_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
     Table = table_name(Table0),
     case DbMod:get(Db, Table, Key) of
 	{ok, Obj} ->
-	    {ok, Schema:decode(Db, Table, Obj)};
-	Other ->
+	    {ok, Obj};
+	{error, _} = Other ->
 	    Other
     end.
 
@@ -294,6 +376,23 @@ do_get(#kvdb_ref{mod = DbMod, db = Db, schema = Schema}, Table0, Key) ->
 get(Name, Table, Key) ->
     #kvdb_ref{} = Ref = call(Name, db),
     ?KVDB_CATCH(do_get(Ref, Table, Key), [Name, Table, Key]).
+
+-spec do_index_get(db_ref(), table(), _IxName::any(), _IxVal::any()) ->
+			  [object()].
+
+do_index_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
+    Table = table_name(Table0),
+    case DbMod:index_get(Db, Table, IxName, IxVal) of
+	Res when is_list(Res) -> Res
+    end.
+
+-spec index_get(db_name(), table(), _IxName::any(), _IxVal::any()) ->
+		       [object()].
+
+index_get(Name, Table, IxName, IxVal) ->
+    #kvdb_ref{} = Ref = call(Name, db),
+    ?KVDB_CATCH(do_index_get(Ref, Table, IxName, IxVal),
+		[Name, Table, IxName, IxVal]).
 
 -spec do_push(Db::db_ref(), Table::table(), Obj::object()) ->
 		     {ok, ActualKey::any()} | {error, any()}.
@@ -313,8 +412,7 @@ do_push(#kvdb_ref{} = DbRef, Table0, Q, {K,As,V}) when is_list(As) ->
 do_push_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
 	 Table, Q, Obj) ->
     case DbMod:push(Db, Table, Q,
-		    Schema:validate(DbRef, put,
-				    Actual = Schema:encode(DbRef, obj, Obj))) of
+		    Actual = Schema:validate(DbRef, put, Obj)) of
 	{ok, ActualKey} ->
 	    Schema:on_update({push,Q}, DbRef, Table, Actual),
 	    {ok, ActualKey};
@@ -340,16 +438,19 @@ do_pop(Db, Table) ->
     do_pop(Db, Table, <<>>).
 
 -spec do_pop(Db::db_ref(), Table::table(), queue_name()) ->
-		    {ok, object()} | done | {error,any()}.
+		    {ok, object()} |
+		    done |
+		    blocked |
+		    {error,any()}.
 
 do_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Q) ->
     Table = table_name(Table0),
     case DbMod:pop(Db, Table, Q) of
 	{ok, Obj, IsEmpty} ->
 	    Schema:on_update({pop,Q,IsEmpty}, DbRef, Table, Obj),
-	    {ok, Schema:decode(Db, Table, Obj)};
-	done ->
-	    done
+	    {ok, Obj};
+	blocked -> blocked;
+	done    -> done
     end.
 
 -spec pop(db_name(), Table::table()) ->
@@ -358,18 +459,27 @@ pop(Name, Table) ->
     pop(Name, Table, <<>>).
 
 -spec pop(db_name(), Table::table(), queue_name()) ->
-		 {ok, object()} | done | {error,any()}.
+		 {ok, object()} |
+		 done |
+		 blocked |
+		 {error,any()}.
 pop(Name, Table, Q) ->
     ?KVDB_CATCH(call(Name, {pop, Table, Q}), [Name, Table, Q]).
 
 -spec do_prel_pop(Db::db_ref(), Table::table()) ->
-			 {ok, object(), binary()} | done | {error,any()}.
+			 {ok, object(), binary()} |
+			 done |
+			 blocked |
+			 {error,any()}.
 
 do_prel_pop(Db, Table) ->
     do_prel_pop(Db, Table, <<>>).
 
 -spec do_prel_pop(Db::db_ref(), Table::table(), queue_name()) ->
-			 {ok, object(), binary()} | done | {error,any()}.
+			 {ok, object(), binary()} |
+			 done |
+			 blocked |
+			 {error,any()}.
 
 do_prel_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
 	    Table0, Q) ->
@@ -377,15 +487,15 @@ do_prel_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
     case DbMod:prel_pop(Db, Table, Q) of
 	{ok, Obj, RealKey, IsEmpty} ->
 	    Schema:on_update({pop,Q,IsEmpty}, DbRef, Table, Obj),
-	    {ok, Schema:decode(Db, Table, Obj), RealKey};
-	done ->
-	    done
+	    {ok, Obj, RealKey};
+	blocked -> blocked;
+	done    -> done
     end.
 
 -spec prel_pop(db_name(), Table::table()) ->
 		      {ok, object(), binary()} | done | {error,any()}.
 prel_pop(Name, Table) ->
-    pop(Name, Table, <<>>).
+    prel_pop(Name, Table, <<>>).
 
 -spec prel_pop(db_name(), Table::table(), queue_name()) ->
 		      {ok, object(), binary()} | done | {error,any()}.

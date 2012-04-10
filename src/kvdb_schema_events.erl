@@ -10,11 +10,7 @@
 %% kvdb_schema callbacks
 -export([validate/3,
 	 validate_attr/3,
-	 on_update/4,
-	 encode/3,
-	 decode/3,
-	 encode_attr/3,
-	 decode_attr/3]).
+	 on_update/4]).
 
 notify_when_not_empty(#kvdb_ref{name = DBN} = Db, Table0, Q) ->
     Table = kvdb_lib:table_name(Table0),
@@ -28,7 +24,8 @@ notify_all_queues(#kvdb_ref{name = DBN}, Table0) ->
     gproc_ps:subscribe(l, Evt).
 
 cancel_notify_all_queues(#kvdb_ref{name = DBN}, Table0) ->
-    gproc_ps:unsubscribe(l, {kvdb, DBN, kvdb_lib:table_name(Table0), queue_status}).
+    gproc_ps:unsubscribe(l, {kvdb, DBN, kvdb_lib:table_name(Table0),
+			     queue_status}).
 
 validate(_, _, Obj) ->
     Obj.
@@ -45,24 +42,14 @@ on_update({push,Q}, DB, Table, _) ->
 on_update(_, _, _, _) ->
     ok.
 
-encode(_, _, Obj) ->
-    Obj.
-
-decode(_, _, Obj) ->
-    Obj.
-
-encode_attr(_, _, A) ->
-    A.
-
-decode_attr(_, _, A) ->
-    A.
-
-
-notify_queue_status(#kvdb_ref{name = DBN, db = #db{metadata = Ets}}, Table, Q, Status) ->
+notify_queue_status(#kvdb_ref{name = DBN, db = #db{metadata = Ets}},
+		    Table, Q, Status) ->
     case set_status(Ets, Table, Q, Status) of
 	changed ->
-	    _ = gproc_ps:publish(l, {kvdb, DBN, Table, queue_status}, {Q, Status}),
-	    _ = gproc_ps:tell_singles(l, {kvdb, DBN, Table, Q, queue_status}, Status),
+	    _ = gproc_ps:publish(l, {kvdb, DBN, Table, queue_status},
+				 {Q, Status}),
+	    _ = gproc_ps:tell_singles(l, {kvdb, DBN, Table, Q, queue_status},
+				      Status),
 	    ok;
 	same ->
 	    ok
