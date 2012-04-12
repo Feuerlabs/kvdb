@@ -21,7 +21,7 @@
 
 valid_table_name(Table0) ->
     Table = table_name(Table0),
-    case [C || <<C:8>> <= Table, lists:member(C, "-=?+.,:;*/")] of
+    case [C || <<C:8>> <= Table, lists:member(C, "-=?+.,:;^*/")] of
 	[_|_] ->
 	    error({illegal_table_name, Table0});
 	[] ->
@@ -47,7 +47,7 @@ index_vals([{IxN, words, A}|T], Attrs) ->
     case lists:keyfind(A, 1, Attrs) of
 	{_, S} when is_list(S); is_binary(S) ->
 	    lists:usort(
-	      [{IxN,X} || X <- re:split(S, "[().,-:;\\[\\]{}\\s]+")])
+	      [{IxN,X} || X <- re:split(S, "[()\\.,\\-:;\\[\\]{}\\s]+")])
 		++ index_vals(T, Attrs);
 	_ ->
 	    index_vals(T, Attrs)
@@ -173,12 +173,13 @@ split_queue_key(Enc, Key) ->
 
 split_queue_key(Enc, T, Key) when Enc == raw; element(1, Enc) == raw ->
     split_raw_queue_key(T, Key);
-split_queue_key(Enc, {keyed,_}, {Q, Key, _TS})
-  when Enc == sext; element(1, Enc) == sext ->
-    {Q, Key};
-split_queue_key(Enc, _, {Q, _TS, Key})
-  when Enc == sext; element(1, Enc) == sext ->
-    {Q, Key}.
+split_queue_key(Enc, T, Key) when Enc == sext; element(1, Enc) == sext ->
+    case {T, Key} of
+	{{keyed,_}, {Q, K, _TS}} ->
+	    {Q, K};
+	{_, {Q, _TS, K}} ->
+	    {Q, K}
+    end.
 
 timestamp() ->
     timestamp(erlang:now()).

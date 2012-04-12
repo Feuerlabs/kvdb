@@ -11,7 +11,8 @@
 
 -export([open/2, close/1]).
 -export([add_table/3, delete_table/2, list_tables/1]).
--export([put/3, push/4, get/3, index_get/4, pop/3, prel_pop/3, extract/3, delete/3,
+-export([put/3, push/4, get/3, get_attrs/4, index_get/4,
+	 pop/3, prel_pop/3, extract/3, delete/3,
 	 list_queue/3, list_queue/6, is_queue_empty/3]).
 -export([first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3, prefix_match/3, prefix_match/4]).
@@ -35,22 +36,32 @@ dump_tables_({ok, K, V}, I, Db) ->
     Obj = case Type of
 	      obj ->
 		  [T, Key] = binary:split(K, <<":">>),
-		  Enc = encoding(Db, T),
-		  case type(Db, T) of
-		      set ->
-			  {obj, T, kvdb_lib:try_decode(Key),
-			   kvdb_lib:try_decode(V)};
-		      TType when TType == fifo; TType == lifo,
-				 element(1, TType) == fifo;
-				 element(1, TType) == lifo ->
-			  {Kr,Ko} = kvdb_lib:split_queue_key(Enc, TType, Key),
-			  <<F:8, Val/binary>> = V,
-			  St = case F of
-				   $* -> blocking;
-				   $+ -> active;
-				   $- -> inactive
-			       end,
-			  {q_obj, T, Kr, {Ko, kvdb_lib:try_decode(Val)}, St}
+		  case Key of
+		      <<>> ->
+			  {tab_obj, T, kvdb_lib:try_decode(V)};
+		      _ ->
+			  Enc = encoding(Db, T),
+			  case type(Db, T) of
+			      set ->
+				  {obj, T, kvdb_lib:try_decode(Key),
+				   kvdb_lib:try_decode(V)};
+			      TType when TType == fifo; TType == lifo,
+					 element(1, TType) == fifo;
+					 element(1, TType) == lifo ->
+				  io:fwrite("split_queue_key(~p, ~p, ~p)~n",
+					    [Enc, TType, Key]),
+				  {Q,Ko} = kvdb_lib:split_queue_key(
+					      Enc, TType, Key),
+				  <<F:8, Val/binary>> = V,
+				  St = case F of
+					   $* -> blocking;
+					   $+ -> active;
+					   $- -> inactive
+				       end,
+				  Kr = dec(key, Key, Enc),
+				  {q_obj, T, Q, Kr,
+				   {Ko, kvdb_lib:try_decode(Val)}, St}
+			  end
 		  end;
 	      attr ->
 		  [T, AKey] = binary:split(K, <<"=">>),
@@ -178,38 +189,49 @@ delete_table_({error,invalid_iterator}, _, _, _, _) ->
 
 put(#db{ref = Ref} = Db, Table, {K, V}) ->
     %% Frequently used case, therefore optimized. No indexing on {K,V} tuples
-    Enc = encoding(Db, Table),
-    Key = enc(key, K, Enc),
-    Val = enc(value, V, Enc),
-    eleveldb:put(Ref, make_table_key(Table, Key), Val, []);
+    case type(Db, Table) of
+	set ->
+	    Enc = encoding(Db, Table),
+	    Key = enc(key, K, Enc),
+	    Val = enc(value, V, Enc),
+	    eleveldb:put(Ref, make_table_key(Table, Key), Val, []);
+	T ->
+	    {error, illegal}
+    end;
 put(#db{ref = Ref} = Db, Table, {K, Attrs, V}) ->
-    Enc = encoding(Db, Table),
-    Ix = index(Db, Table),
-    Key = enc(key, K, Enc),
-    Val = enc(value, V, Enc),
-    OldAttrs = get_attrs(Db, Table, K),
-    IxOps = case Ix of
-		[_|_] ->
-		    OldIxVals = kvdb_lib:index_vals(Ix, OldAttrs),
-		    NewIxVals = kvdb_lib:index_vals(Ix, Attrs),
-		    [{delete, ix_key(Table, I, K)} ||
-			I <- OldIxVals -- NewIxVals]
-			++ [{put, ix_key(Table, I, K), <<>>} ||
-			       I <- NewIxVals -- OldIxVals];
-		_ ->
-		    []
-	    end,
-    DelAttrs = attrs_to_delete(
-		 Table, K,
-		 [{A,Va} ||
-		     {A,Va} <- OldAttrs, not lists:keymember(A, 1, Attrs)]),
-    PutAttrs = attrs_to_put(Table, K, Attrs),
-    case eleveldb:write(Ref, [{put, make_table_key(Table, Key), Val}|
-			      DelAttrs ++ PutAttrs ++ IxOps], []) of
-	ok ->
-	    ok;
-	Other ->
-	    Other
+    case type(Db, Table) of
+	set ->
+	    Enc = encoding(Db, Table),
+	    Ix = index(Db, Table),
+	    Key = enc(key, K, Enc),
+	    Val = enc(value, V, Enc),
+	    OldAttrs = get_attrs(Db, Table, K, all),
+	    IxOps = case Ix of
+			[_|_] ->
+			    OldIxVals = kvdb_lib:index_vals(Ix, OldAttrs),
+			    NewIxVals = kvdb_lib:index_vals(Ix, Attrs),
+			    [{delete, ix_key(Table, I, K)} ||
+				I <- OldIxVals -- NewIxVals]
+				++ [{put, ix_key(Table, I, K), <<>>} ||
+				       I <- NewIxVals -- OldIxVals];
+			_ ->
+			    []
+		    end,
+	    DelAttrs = attrs_to_delete(
+			 Table, K,
+			 [{A,Va} ||
+			     {A,Va} <- OldAttrs,
+			     not lists:keymember(A, 1, Attrs)]),
+	    PutAttrs = attrs_to_put(Table, K, Attrs),
+	    case eleveldb:write(Ref, [{put, make_table_key(Table, Key), Val}|
+				      DelAttrs ++ PutAttrs ++ IxOps], []) of
+		ok ->
+		    ok;
+		Other ->
+		    Other
+	    end;
+	_ ->
+	    {error, illegal}
     end.
 
 ix_key(Table, I, K) ->
@@ -594,34 +616,43 @@ table_queue_prefix(Table, Q, Enc) when Enc == sext; element(1, Enc) == sext ->
     make_table_key(Table, sext:prefix({Q,'_','_'})).
 
 
-get(#db{ref = Ref} = Db, Table, Key) ->
-    Enc = encoding(Db, Table),
+get(Db, Table, Key) ->
+    get(Db, Table, Key, encoding(Db, Table), type(Db, Table)).
+
+get(#db{ref = Ref} = Db, Table, Key, Enc, Type) ->
     EncKey = enc(key, Key, Enc),
-    case eleveldb:get(Ref, make_table_key(Table, EncKey), []) of
-	{ok, V} ->
+    case {Type, eleveldb:get(Ref, make_table_key(Table, EncKey), [])} of
+	{set, {ok, V}} ->
 	    {ok, decode_obj_v(Db, Enc, Table, Key, V)};
-	not_found ->
+	{_, {ok, <<F:8, V/binary>>}} when F==$*; F==$+; F==$- ->
+	    {ok, decode_obj_v(Db, Enc, Table, Key, V)};
+	{_, not_found} ->
 	    {error, not_found};
-	{error, _} = Error ->
+	{_, {error, _}} = Error ->
 	    Error
     end.
 
 index_get(#db{ref = Ref} = Db, Table, IxName, IxVal) ->
+    Enc = encoding(Db, Table),
+    Type = type(Db, Table),
     IxPat = make_key(Table, $?, sext:encode({IxName, IxVal})),
     with_iterator(
       Ref,
       fun(I) ->
-	      get_by_ix_(prefix_move(I, IxPat, IxPat), I, IxPat, Db, Table)
+	      get_by_ix_(prefix_move(I, IxPat, IxPat), I, IxPat, Db,
+			 Table, Enc, Type)
       end).
 
-get_by_ix_({ok, K, _}, I, Prefix, Db, Table) ->
-    case get(Db, Table, sext:decode(K)) of
+get_by_ix_({ok, K, _}, I, Prefix, Db, Table, Enc, Type) ->
+    case get(Db, Table, sext:decode(K), Enc, Type) of
 	{ok, Obj} ->
-	    [Obj | get_by_ix_(prefix_move(I, Prefix, next), I, Prefix, Db, Table)];
+	    [Obj | get_by_ix_(prefix_move(I, Prefix, next), I,
+			      Prefix, Db, Table, Enc, Type)];
 	{error,_} ->
-	    get_by_ix_(prefix_move(I, Prefix, next), I, Prefix, Db, Table)
+	    get_by_ix_(prefix_move(I, Prefix, next), I, Prefix,
+		       Db, Table, Enc, Type)
     end;
-get_by_ix_(done, _, _, _, _) ->
+get_by_ix_(done, _, _, _, _, _, _) ->
     [].
 
 
@@ -629,7 +660,7 @@ q_get(#db{ref = Ref} = Db, Table, Key) ->
     Enc = encoding(Db, Table),
     EncKey = enc(key, Key, Enc),
     case eleveldb:get(Ref, make_table_key(Table, EncKey), []) of
-	{ok, <<St:8, V/binary>>} when St==$-; St==$+ ->
+	{ok, <<St:8, V/binary>>} when St==$*; St==$-; St==$+ ->
 	    {ok, decode_obj_v(Db, Enc, Table, Key, V)};
 	not_found ->
 	    {error, not_found};
@@ -647,7 +678,7 @@ delete(#db{ref = Ref} = Db, Table, Key) ->
     {IxOps, As} =
 	case Enc of
 	    {_, _, _} ->
-		Attrs = get_attrs(Db, Table, Key),
+		Attrs = get_attrs(Db, Table, Key, all),
 		IxOps_ = case Ix of
 			     [_|_] -> [{delete, ix_key(Table, I, Key)} ||
 					  I <- kvdb_lib:index_vals(Ix, Attrs)];
@@ -659,14 +690,6 @@ delete(#db{ref = Ref} = Db, Table, Key) ->
 	end,
     eleveldb:write(Ref, IxOps ++ [{delete, make_table_key(Table, EncKey)} | As], []).
 
-
-%% put_attrs(#db{ref = Ref} = Db, Table, EncKey, Attrs) ->
-%%     case encoding(Db, Table) of
-%% 	{_, _, _} ->
-%% 	    eleveldb:write(Ref, attrs_to_put(Table, EncKey, Attrs), []);
-%% 	_ ->
-%% 	    error(badarg)
-%%     end.
 
 attrs_to_put(_, _, []) -> [];
 attrs_to_put(_, _, none) -> [];  % still needed?
@@ -699,7 +722,7 @@ attrs_to_delete(Table, Key, Attrs) ->
 %%     exit(nyi).
 
 
-get_attrs(#db{ref = Ref} = Db, Table, Key) ->
+get_attrs(#db{ref = Ref} = Db, Table, Key, As) ->
     case encoding(Db, Table) of
 	{_, _, _} ->
 	    EncKey = sext:encode(Key),
@@ -708,16 +731,22 @@ get_attrs(#db{ref = Ref} = Db, Table, Key) ->
 	      Ref,
 	      fun(I) ->
 		      get_attrs_(prefix_move(I, TableKey, TableKey),
-				 I, TableKey)
+				 I, TableKey, As)
 	      end);
 	_ ->
 	    error(badarg)
     end.
 
-get_attrs_({ok, K, V}, I, Prefix) ->
-    [{sext:decode(K), binary_to_term(V)}|
-     get_attrs_(prefix_move(I, Prefix, next), I, Prefix)];
-get_attrs_(done, _, _) ->
+get_attrs_({ok, K, V}, I, Prefix, As) ->
+    Key = sext:decode(K),
+    case As == all orelse lists:member(Key, As) of
+	true ->
+	    [{Key, binary_to_term(V)}|
+	     get_attrs_(prefix_move(I, Prefix, next), I, Prefix, As)];
+	false ->
+	    get_attrs_(prefix_move(I, Prefix, next), I, Prefix, As)
+    end;
+get_attrs_(done, _, _, _) ->
    [].
 
 %% delete_attrs(#db{ref = Ref} = Db, Table, Key) ->
@@ -977,7 +1006,7 @@ decode_obj_v(Db, Enc, Table, Key, V) ->
     Value = dec(value, V, Enc),
     case Enc of
 	{_, _, _} ->
-	    Attrs = get_attrs(Db, Table, Key),
+	    Attrs = get_attrs(Db, Table, Key, all),
 	    {Key, Attrs, Value};
 	_ ->
 	    {Key, Value}

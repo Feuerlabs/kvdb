@@ -12,8 +12,11 @@
 
 -export([open/2, close/1]).
 -export([add_table/3, delete_table/2, list_tables/1,
-	 get_attr/4, get_attrs/3, delete/3]).
--export([put/3, push/4, put_attr/5, put_attrs/4, get/3, index_get/4,
+	 get_attrs/4,
+	 delete/3]).
+-export([put/3, push/4,
+	 %% put_attrs/4,
+	 get/3, index_get/4,
 	 pop/3, prel_pop/3, extract/3,
 	 list_queue/3, list_queue/6, is_queue_empty/3,
 	 first_queue/2, next_queue/3]).
@@ -186,16 +189,23 @@ delete_table(#db{ref = Ref} = Db, Table) ->
 	    ok
     end.
 
-put(#db{ref = Ref} = Db, Table, {Key, Value}) ->
+put(Db, Table, Obj) ->
+    case type(Db, Table) of
+	set -> put_(Db, Table, Obj);
+	_ -> {error, illegal}
+    end.
+
+put_(#db{ref = Ref} = Db, Table, {Key, Value}) ->
     Enc = encoding(Db, Table),
-    case insert_or_replace(Ref, Table, [{key, {blob, enc(key, Key, Enc)}},
-					{value, {blob, enc(value, Value, Enc)}}]) of
+    case insert_or_replace(Ref, Table,
+			   [{key, {blob, enc(key, Key, Enc)}},
+			    {value, {blob, enc(value, Value, Enc)}}]) of
 	ok ->
 	    ok;
 	{error, _} = Error ->
 	    Error
     end;
-put(#db{ref = Ref} = Db, Table, {Key, Attrs, Value}) ->
+put_(#db{ref = Ref} = Db, Table, {Key, Attrs, Value}) ->
     Enc = encoding(Db, Table),
     EncKey = enc(key, Key, Enc),
     InsertSQLData = [{key, {blob, EncKey}},
@@ -219,18 +229,27 @@ put(#db{ref = Ref} = Db, Table, {Key, Attrs, Value}) ->
 	    DelIxVals = [{I, Key} || I <- OldIxVals -- NewIxVals],
 	    PutIxVals = [{I, Key} || I <- NewIxVals -- OldIxVals],
 	    KeySext = sext:encode(Key),
-	    sqlite3:sql_exec_script(
-	      Ref,
-	      ["BEGIN;",
-	       [sqlite3_lib:delete_sql(IxTable, "ix", {blob, <<(sext:encode(I))/binary,
-							       KeySext/binary>>}) ||
-		   I <- DelIxVals],
-	       [insert_or_replace_sql(IxTable, [{ix, {blob, <<(sext:encode(I))/binary,
-							      KeySext/binary>>}},
-						{key, {blob, EncKey}}]) ||
-		   I <- PutIxVals],
-	       insert_or_replace_sql(Table, InsertSQLData),
-	       "COMMIT;"])
+	    Results =
+		sqlite3:sql_exec_script(
+		  Ref,
+		  ["BEGIN;",
+		   [sqlite3_lib:delete_sql(IxTable, "ix",
+					   {blob, <<(sext:encode(I))/binary,
+						    KeySext/binary>>}) ||
+		       I <- DelIxVals],
+		   [insert_or_replace_sql(IxTable,
+					  [{ix, {blob, <<(sext:encode(I))/binary,
+							 KeySext/binary>>}},
+					   {key, {blob, EncKey}}]) ||
+		       I <- PutIxVals],
+		   insert_or_replace_sql(Table, InsertSQLData),
+		   "COMMIT;"]),
+	    Bad = fun({rowid,_}) -> false;
+		     (ok) -> false;
+		     (_) -> true
+		  end,
+	    [] = [X || X <- Results, Bad(X)],
+	    ok
     end.
 
 push(#db{ref = Ref} = Db, Table, Q, {Key, Value}) ->
@@ -381,11 +400,11 @@ mark_queue_object(#db{ref = Ref}, Table, Enc, Obj, St) when St==inactive;
     insert_or_replace(Ref, Table, mark_cols(Obj, Enc) ++ [ActiveCol]).
 
 mark_cols({K,As,V}, Enc) ->
-    [{key, {blob, K}},
+    [{key, {blob, enc(key, K, Enc)}},
      {attrs, {blob, enc(attrs, As, Enc)}},
      {value, {blob, enc(value, V, Enc)}}];
 mark_cols({K,V}, Enc) ->
-    [{key, {blob, K}},
+    [{key, {blob, enc(key, K, Enc)}},
      {value, {blob, enc(value, V, Enc)}}].
 
 
@@ -513,59 +532,23 @@ next_queue(Db, Table, Q) ->
 	    done
     end.
 
-get_attrs(#db{ref = Ref} = Db, Table, Key) ->
+get_attrs(#db{ref = Ref} = Db, Table, Key, As) ->
     Enc = encoding(Db, Table),
     SQL = ["SELECT (attrs) FROM ", Table,
 	   " WHERE key == ?"],
     case sqlite3:sql_exec(Ref, SQL, [{blob, enc(key, Key, Enc)}]) of
 	[{columns,_},{rows,[{{blob,Attrs}}]}] ->
-	    {ok, dec(attrs, Attrs, Enc)};
+	    {ok, select_attrs(As, dec(attrs, Attrs, Enc))};
 	_Other ->
 	    {error, not_found}
     end.
 
-put_attr(#db{} = Db, Table, Key, Attr, Value) ->
-    case encoding(Db, Table) of
-	{_, _, _} ->
-	    case get(Db, Table, Key) of
-		{ok, {K,As0,V}} ->
-		    As1 = lists:keysort(1, lists:keystore(Attr, 1, As0, {Attr, Value})),
-		    put(Db, Table, {K,As1,V});
-		_ ->
-		    {error, not_found}
-	    end;
-	_ ->
-	    {error, illegal}
-    end.
+select_attrs(all, Attrs) ->
+    Attrs;
+select_attrs(As, Attrs) ->
+    [{K,V} || {K,V} <- Attrs,
+	      lists:member(K, As)].
 
-
-
-put_attrs(#db{} = Db, Table, Key, Attrs) when is_list(Attrs) ->
-    case encoding(Db, Table) of
-	{_, _, _} ->
-	    case get(Db, Table, Key) of
-		{ok, {K,_,V}} ->
-		    put(Db, Table, {K,Attrs,V});
-		_ ->
-		    {error, not_found}
-	    end;
-	_ ->
-	    {error, illegal}
-    end.
-
-
-get_attr(Db, Table, Key, Attr) ->
-    case get_attrs(Db, Table, Key) of
-	{ok, As} ->
-	    case lists:keysearch(Attr, 1, As) of
-		false ->
-		    {error, not_found};
-		{value, {_, Value}} ->
-		    {ok, Value}
-	    end;
-	Error ->
-	    Error
-    end.
 
 delete(#db{ref = Ref} = Db, Table, Key) ->
     Enc = encoding(Db, Table),

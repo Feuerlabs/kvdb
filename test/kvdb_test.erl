@@ -15,15 +15,15 @@
 %% for testing only
 -export([test_tree/0]).
 
-
 -define(match(X, A, B), ?assertMatch({X,A}, {X,B})).
 
 -define(CATCH(E),
 	try (E)
 	catch
 	    error:Err ->
-		io:fwrite(user, "~w/~w: ERROR: ~p~n    ~p~n", [?MODULE,?LINE,Err,
-							       erlang:get_stacktrace()]),
+		io:fwrite(user, "~w/~w: ERROR: ~p~n    ~p~n",
+			  [?MODULE,?LINE,Err,
+			   erlang:get_stacktrace()]),
 		{'EXIT', Err}
 	end).
 
@@ -34,30 +34,19 @@ basic_test_() ->
     {setup,
      fun() ->
 	     ?debugVal(application:start(gproc)),
-	     %% dbg:tracer(),
-	     %% dbg:tp(kvdb,x),
-	     %% dbg:ctp(kvdb,handle_call),
-	     %% dbg:tp(sqlite3,x),
-	     %% dbg:ctp(sqlite3,handle_call),
-	     %% dbg:ctp(kvdb,handle_call),
-	     %% dbg:tpl(kvdb_leveldb,x),
-	     %% dbg:tpl(kvdb_test,x),
-	     %% dbg:tpl(kvdb_leveldb, prefix_match_,x),
-	     %% dbg:tp(kvdb_lib,is_prefix,x),
-	     %% dbg:tp(binary,match,x),
-	     %% dbg:tpl(kvdb_sqlite3,x),
-	     %% dbg:tp(eleveldb,x),
-	     %% dbg:tp(gproc,x),
-	     %% dbg:p(all,[c]),
 	     ?debugVal(application:start(kvdb)),
 	     ok
      end,
      fun(_) ->
 	     ?debugVal(application:stop(kvdb)),
-	     ?debugVal(application:stop(gproc))
+	     ?debugVal(application:stop(gproc)),
+	     ?debugVal([catch delete_db_file(Name,Backend) ||
+			   {Name, _, Backend} <- dbs()])
      end,
      [{foreachx,
-       fun({Db, Enc, Backend}) -> ?debugVal(catch create_db(Db, Enc, Backend)) end,
+       fun({Db, Enc, Backend}) ->
+	       ?debugVal(catch create_db(Db, Enc, Backend))
+       end,
        [{{Db,E,B}, fun({Db1,_,_},_) ->
 			   [
 			    ?_test(?debugVal(fill_db(Db1)))
@@ -68,23 +57,31 @@ basic_test_() ->
 			    , ?_test(?debugVal(queue(Db1)))
 			    , ?_test(?debugVal(subqueues(Db1)))
 			    , ?_test(?debugVal(first_next_queue(Db1)))
+			    , ?_test(?debugVal(prel_pop(Db1)))
+			    , ?_test(?debugVal(each_index(Db1)))
+			    , ?_test(?debugVal(word_index(Db1)))
 			   ]
 		   end} ||
-	   {Db,E,B} <- [
-			{s1,sext,sqlite3},
-			{s2,raw,sqlite3},
-			{l1,sext,leveldb},
-			{l2,raw,leveldb}]]
+	   {Db,E,B} <- dbs()]
       }]}.
 
+dbs() ->
+    [
+     {s1,sext,sqlite3},
+     {s2,raw,sqlite3},
+     {l1,sext,leveldb},
+     {l2,raw,leveldb}
+    ].
+
 create_db(Name, Encoding, Backend) ->
-    F = "test" ++ atom_to_list(Name),
-    File = db_file(F, Backend),
-    ok = delete_db_file(F, Backend),
-    {ok,Db} = kvdb:open(Name, [{file,File},{backend,Backend},{encoding,Encoding}]),
+    File = db_file(Name, Backend),
+    ok = delete_db_file(Name, Backend),
+    {ok,Db} = kvdb:open(Name, [{file,File},{backend,Backend},
+			       {encoding,Encoding}]),
     kvdb:add_table(Db, type),
     kvdb:add_table(Db, value),
     Name.
+
 
 fill_db(Db) ->
     Types = types(),
@@ -300,7 +297,7 @@ first_next_queue(Db, Type, Enc) ->
 	 end,
     ?match(M, ok, kvdb:add_table(Db, T, [{type, Type},{encoding, Enc}])),
     [First, Second, Third, Fourth] = lists:sort(Qs),
-    PushResults =
+    _PushResults =
 	[kvdb:push(Db, T, Q, Obj)
 	 || Q <- lists:delete(Third, Qs),
 	    Obj <- [{<<"1">>,<<"a">>},
@@ -316,6 +313,112 @@ first_next_queue(Db, Type, Enc) ->
     ?match(M, done, kvdb:next_queue(Db, T, Fourth)),
     ?match(M, ok, catch kvdb:delete_table(Db, T)),
     ok.
+
+prel_pop(Db) ->
+    M = {_,Type,Enc,T} = {Db,fifo,sext,qp_fifo_sext},
+    ?match(M, ok, kvdb:add_table(Db, T, [{type,Type},{encoding,Enc}])),
+    Q = qp,
+    _PushResults =
+	[kvdb:push(Db, T, Q, Obj)
+	 || Obj <- [{1,a},
+		    {2,b}]],
+    PopRes = kvdb:prel_pop(Db, T, Q),
+    ?match(M, {ok, {1,a}, _}, PopRes),
+    {ok, _, Key} = PopRes,
+    ?match(M, {ok, {_,_}}, catch kvdb:get(Db, T, Key)),
+    ?match(M, blocked, kvdb:pop(Db, T, Q)),
+    ?match(M, blocked, kvdb:prel_pop(Db, T, Q)),
+    ?match(M, ok, kvdb:delete(Db, T, Key)),
+    ?match(M, {ok, {2,b}}, kvdb:pop(Db, T, Q)),
+    ?match(M, ok, catch kvdb:delete_table(Db, T)),
+    ok.
+
+indexing(Db) ->
+    [indexing_(X) || X <- [{Db, set, {sext,term,sext}},
+			   {Db, set, {sext,sext,sext}}]].
+
+indexing_({Db,Type,Enc}) ->
+    T = tabname(<<"ix">>, ?LINE, Db, Type, Enc),
+    M = {Db,Type,Enc,T},
+    ?match(M, ok, kvdb:add_table(Db, T, [{type,Type},{encoding,Enc},
+					 {index, [a,
+						  {"b",each,b},
+						  {{c},words,c}]}])),
+    ?match(M, ok, kvdb:put(Db, T, {1,[{a,11}],a})),
+    ?match(M, [{1,[{a,11}],a}], kvdb:index_get(Db, T, a, 11)),
+    ?match(M, ok, kvdb:put(Db, T, {2,[{a,11}],b})),
+    ?match(M, [{1,[{a,11}],a},
+	       {2,[{a,11}],b}], kvdb:index_get(Db, T, a, 11)),
+    ?match(M, ok, catch kvdb:delete_table(Db, T)),
+    ok.
+
+each_index(Db) ->
+    T = tabname(<<"ix_each">>, ?LINE, Db, Type = set, Enc = {sext,sext,sext}),
+    M = {Db,Type,Enc,T},
+    ?match(M, ok, kvdb:add_table(Db, T, [{type,Type},{encoding,Enc},
+					 {index, [a,
+						  {"b",each,b},
+						  {{c},words,c}]}])),
+    ?match(M, ok, kvdb:put(Db, T, {1,[{b,[x,y,z]}],a})),
+    ?match(M, [{1,[{b,[x,y,z]}],a}], kvdb:index_get(Db, T, "b", x)),
+    ?match(M, [{1,[{b,[x,y,z]}],a}], kvdb:index_get(Db, T, "b", y)),
+    ?match(M, [{1,[{b,[x,y,z]}],a}], kvdb:index_get(Db, T, "b", z)),
+    ?match(M, ok, kvdb:put(Db, T, {1,[{b,[x,y]}],a})),
+    ?match(M, [{1,[{b,[x,y]}],a}], kvdb:index_get(Db, T, "b", x)),
+    ?match(M, [{1,[{b,[x,y]}],a}], kvdb:index_get(Db, T, "b", y)),
+    ?match(M, [], kvdb:index_get(Db, T, "b", z)),
+    ?match(M, ok, kvdb:put(Db, T, {2,[{b,[y,z]}],b})),
+    ?match(M, [{1,[{b,[x,y]}],a}], kvdb:index_get(Db, T, "b", x)),
+    ?match(M, [{1,[{b,[x,y]}],a},
+	       {2,[{b,[y,z]}],b}], kvdb:index_get(Db, T, "b", y)),
+    ?match(M, [{2,[{b,[y,z]}],b}], kvdb:index_get(Db, T, "b", z)),
+    ?match(M, ok, catch kvdb:delete_table(Db, T)),
+    ok.
+
+word_index(Db) ->
+    T = tabname(<<"ix_words">>, ?LINE, Db, Type = set, Enc = {sext,sext,sext}),
+    M = {Db,Type,Enc,T},
+    ?match(M, ok, kvdb:add_table(Db, T, [{type,Type},{encoding,Enc},
+					 {index, [a,
+						  {"b",each,b},
+						  {{c},words,c}]}])),
+    Txt1 = <<"a b c 123">>,
+    Txt2 = <<"c 123">>,
+    ?match(M, ok, kvdb:put(Db, T, {1,[{c,Txt1}],a})),
+    ?match(M, [{1,[{c,Txt1}],a}], kvdb:index_get(Db, T, {c}, <<"a">>)),
+    ?match(M, [{1,[{c,Txt1}],a}], kvdb:index_get(Db, T, {c}, <<"b">>)),
+    ?match(M, [{1,[{c,Txt1}],a}], kvdb:index_get(Db, T, {c}, <<"123">>)),
+    ?match(M, ok, kvdb:put(Db, T, {1,[{c, Txt2}],a})),
+    ?match(M, [{1,[{c,Txt2}],a}], kvdb:index_get(Db, T, {c}, <<"c">>)),
+    ?match(M, [], kvdb:index_get(Db, T, {c}, <<"a">>)),
+    ?match(M, ok, kvdb:put(Db, T, {2,[{c,Txt1}],b})),
+    ?match(M, [{2,[{c,Txt1}],b}], kvdb:index_get(Db, T, {c}, <<"a">>)),
+    ?match(M, [{1,[{c,Txt2}],a},
+	       {2,[{c,Txt1}],b}], kvdb:index_get(Db, T, {c}, <<"c">>)),
+    ?match(M, ok, catch kvdb:delete_table(Db, T)),
+    ok.
+
+tabname(Pfx, L, Db,Type,Enc) ->
+    <<Pfx/binary, "_", (list_to_binary(integer_to_list(L)))/binary, "_",
+      (atom_to_binary(Db, latin1))/binary, "_",
+      (type_bin(Type))/binary, "_", (enc_bin(Enc))/binary>>.
+
+type_bin({keyed,T}) ->
+    <<"keyed_", (atom_to_binary(T, latin1))/binary>>;
+type_bin(T) when is_atom(T) ->
+    atom_to_binary(T, latin1).
+
+enc_bin({A,B,C}) ->
+    <<(atom_to_binary(A,latin1))/binary, "_",
+      (atom_to_binary(B,latin1))/binary, "_",
+      (atom_to_binary(C,latin1))/binary>>;
+enc_bin({A,B}) ->
+    <<(atom_to_binary(A,latin1))/binary, "_",
+      (atom_to_binary(B,latin1))/binary>>;
+enc_bin(E) ->
+    atom_to_binary(E, latin1).
+
+
 
 %% with_trace(false, F)-> F();
 %% with_trace(true, F) ->
@@ -514,8 +617,9 @@ delete_db_dir_files(Dir, [File|Files]) ->
 
 
 
-db_file(Name, Backend) ->
+db_file(Name0, Backend) ->
     Dir = code:lib_dir(kvdb),
+    Name = if is_atom(Name0) -> atom_to_list(Name0); true -> Name0 end,
     FileName = Name ++ "_" ++ atom_to_list(Backend) ++ ".db",
     filename:join([Dir, "test", FileName]).
 
