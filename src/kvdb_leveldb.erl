@@ -143,9 +143,9 @@ add_table(#db{encoding = Enc} = Db, Table, Opts) ->
 	    case do_add_table(Db, Table, Opts) of
 		ok ->
 		    schema_write(Db, {{table, Table}, TabR}),
-		    schema_write(Db, {{Table, encoding}, TabR#table.encoding}),
-		    schema_write(Db, {{Table, type}, TabR#table.type}),
-		    schema_write(Db, {{Table, index}, TabR#table.index}),
+		    schema_write(Db, {{a, Table, encoding}, TabR#table.encoding}),
+		    schema_write(Db, {{a, Table, type}, TabR#table.type}),
+		    schema_write(Db, {{a, Table, index}, TabR#table.index}),
 		    ok;
 		Error ->
 		    Error
@@ -1022,13 +1022,13 @@ with_iterator(Db, F) ->
 
 
 type(Db, Table) ->
-    schema_lookup(Db, {Table, type}, set).
+    schema_lookup(Db, {a, Table, type}, set).
 
 encoding(#db{encoding = Enc} = Db, Table) ->
-    schema_lookup(Db, {Table, encoding}, Enc).
+    schema_lookup(Db, {a, Table, encoding}, Enc).
 
 index(#db{} = Db, Table) ->
-    schema_lookup(Db, {Table, index}, []).
+    schema_lookup(Db, {a, Table, index}, []).
 
 check_options([{type, T}|Tl], Db, Rec)
   when T==set; T==fifo; T==lifo; T=={keyed,fifo}; T=={keyed,lifo} ->
@@ -1060,8 +1060,8 @@ ensure_schema(#db{ref = Ref} = Db, Opts) ->
 	    Tab = #table{name = ?SCHEMA_TABLE, encoding = sext,
 			 columns = [key,value]},
 	    schema_write(Db1, {{table, ?SCHEMA_TABLE}, Tab}),
-	    schema_write(Db1, {{?SCHEMA_TABLE, encoding}, sext}),
-	    schema_write(Db1, {{?SCHEMA_TABLE, type}, set}),
+	    schema_write(Db1, {{a, ?SCHEMA_TABLE, encoding}, sext}),
+	    schema_write(Db1, {{a, ?SCHEMA_TABLE, type}, set}),
 	    schema_write(Db1, {schema_mod, proplists:get_value(schema, Opts, kvdb_schema)}),
 	    Db1
     end.
@@ -1078,7 +1078,7 @@ schema_write(#db{metadata = ETS} = Db, Item) ->
     ets:insert(ETS, Item),
     put(Db, ?SCHEMA_TABLE, Item).
 
-schema_lookup(_, {?SCHEMA_TABLE, Attr}, Default) ->
+schema_lookup(_, {a, ?SCHEMA_TABLE, Attr}, Default) ->
     case Attr of
 	type -> set;
 	encoding -> sext;

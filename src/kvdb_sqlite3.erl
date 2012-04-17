@@ -151,9 +151,9 @@ add_table(#db{ref = Ref, encoding = Enc} = Db, Table, Opts) ->
 		ok ->
 		    TabR1 = maybe_create_index_table(Ref, Table, TabR),
 		    schema_write(Db, {{table, Table}, TabR1}),
-		    schema_write(Db, {{Table, type}, TabR1#table.type}),
-		    schema_write(Db, {{Table, index}, TabR1#table.index}),
-		    schema_write(Db, {{Table, encoding}, TabR1#table.encoding}),
+		    schema_write(Db, {{a,Table, type}, TabR1#table.type}),
+		    schema_write(Db, {{a,Table, index}, TabR1#table.index}),
+		    schema_write(Db, {{a,Table, encoding}, TabR1#table.encoding}),
 		    ok;
 		Error ->
 		    Error
@@ -287,13 +287,13 @@ push(#db{ref = Ref} = Db, Table, Q, {Key, Attrs, Value}) ->
     end.
 
 index(#db{} = Db, Table) ->
-    schema_lookup(Db, {Table, index}, []).
+    schema_lookup(Db, {a, Table, index}, []).
 
 encoding(#db{encoding = Enc} = Db, Table) ->
-    schema_lookup(Db, {Table, encoding}, Enc).
+    schema_lookup(Db, {a, Table, encoding}, Enc).
 
 type(Db, Table) ->
-    schema_lookup(Db, {Table, type}, set).
+    schema_lookup(Db, {a, Table, type}, set).
 
 insert_or_replace(Db, Table, Data) ->
     SQL = insert_or_replace_sql(Table, Data),
@@ -845,7 +845,7 @@ ensure_schema(#db{ref = Ref} = Db) ->
 	    sqlite3:create_table(Ref, ?SCHEMA_TABLE, Columns),
 	    Tab = #table{name = ?SCHEMA_TABLE, encoding = sext, columns = [key,value]},
 	    schema_write(Db1, {{table, ?SCHEMA_TABLE}, Tab}),
-	    schema_write(Db1, {{?SCHEMA_TABLE, encoding}, sext}),
+	    schema_write(Db1, {{a, ?SCHEMA_TABLE, encoding}, sext}),
 	    Db1;
 	true ->
 	    [ets:insert(ETS, X) || X <- whole_table(Ref, ?SCHEMA_TABLE, sext)],
@@ -879,7 +879,7 @@ schema_write(#db{metadata = ETS} = Db, Item) ->
     ets:insert(ETS, Item),
     put(Db, ?SCHEMA_TABLE, Item).
 
-schema_lookup(_, {?SCHEMA_TABLE,Attr}, Default) ->
+schema_lookup(_, {a, ?SCHEMA_TABLE,Attr}, Default) ->
     case Attr of
 	type -> set;
 	encoding -> sext;
