@@ -20,6 +20,7 @@
 
 -export([read/1,
 	 write/1,
+	 update_counter/2,
 	 delete/1,
 	 delete_all/1,
 	 read_tree/1,
@@ -98,6 +99,9 @@ write({K, As, Data} = Obj) when is_binary(K), is_list(As), is_binary(Data) ->
 	{error, _} = Error ->
 	    Error
     end.
+
+update_counter(K, Incr) when is_binary(K), is_integer(Incr) ->
+    kvdb:update_counter(instance_(), data, K, Incr).
 
 delete(K) when is_binary(K) ->
     kvdb:delete(instance_(), data, K).

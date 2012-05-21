@@ -14,7 +14,7 @@
 -export([add_table/3, delete_table/2, list_tables/1,
 	 get_attrs/4,
 	 delete/3]).
--export([put/3, push/4,
+-export([put/3, push/4, update_counter/4,
 	 %% put_attrs/4,
 	 get/3, index_get/4,
 	 pop/3, prel_pop/3, extract/3,
@@ -250,6 +250,34 @@ put_(#db{ref = Ref} = Db, Table, {Key, Attrs, Value}) ->
 		  end,
 	    [] = [X || X <- Results, Bad(X)],
 	    ok
+    end.
+
+update_counter(#db{} = Db, Table, K, Incr) ->
+    %% Ouch! This is problematic. Since we support different encodings that
+    %% sqlite doesn't know about, it's hard to do this atomically in SQL.
+    case type(Db, Table) of
+	set ->
+	    case get(Db, Table, K) of
+		{ok, Obj} ->
+		    Sz = size(Obj),
+		    V = element(Sz, Obj),
+		    NewV = if is_binary(V) ->
+				   VSz = bit_size(V),
+				   <<I:VSz/integer>> = V,
+				   <<(I+Incr):VSz/integer>>;
+			      is_integer(V) ->
+				   V+Incr;
+			      true ->
+				   error(illegal)
+			   end,
+		    NewObj = setelement(Sz, Obj, NewV),
+		    ok = put(Db, Table, NewObj),
+		    NewV;
+		E ->
+		    E
+	    end;
+	_ ->
+	    error(illegal)
     end.
 
 push(#db{ref = Ref} = Db, Table, Q, {Key, Value}) ->

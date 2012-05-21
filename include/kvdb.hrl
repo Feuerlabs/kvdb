@@ -27,3 +27,4 @@
 		    {basic_encoding(), basic_encoding(), basic_encoding()}.
 
 -type object() :: {key(), value()} | {key(), attrs(), value()}.
+-type increment() :: integer().

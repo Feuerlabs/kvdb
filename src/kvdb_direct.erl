@@ -39,6 +39,7 @@
 	 get/3,
 	 get_attrs/4,
 	 index_get/4,
+	 update_counter/4,
 	 pop/2,
 	 pop/3,
 	 prel_pop/2,
@@ -121,8 +122,8 @@ put_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Obj) ->
 	    Error
     end.
 
--spec get(Db::db_ref(), Table::table(), Key::binary()) ->
-		    {ok, binary()} | {error,any()}.
+-spec get(Db::db_ref(), Table::table(), Key::any()) ->
+		    {ok, object()} | {error,any()}.
 %% @doc Low-level equivalent of {@link get/3}
 %% @end
 get(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
@@ -147,6 +148,12 @@ index_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
     case DbMod:index_get(Db, Table, IxName, IxVal) of
 	Res when is_list(Res) -> Res
     end.
+
+-spec update_counter(Db::db_ref(), Table::table(), Key::binary(),
+		     Incr::increment()) -> integer().
+update_counter(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, Incr) ->
+    Table = table_name(Table0),
+    DbMod:update_counter(Db, Table, Key, Incr).
 
 -spec push(Db::db_ref(), Table::table(), Obj::object()) ->
 		     {ok, ActualKey::any()} | {error, any()}.

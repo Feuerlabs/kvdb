@@ -47,6 +47,7 @@
 %% standard KV database operations
 -export([put/3,
 	 get/3,
+	 update_counter/4,
 	 index_get/4,
 	 get_attrs/4,
 	 delete/3]).
@@ -129,6 +130,7 @@ behaviour_info(callbacks) ->
      {get,3},
      {get_attrs,4},
      {index_get,4},
+     {update_counter,4},
      {push,4},
      {pop,3},
      {extract,3},
@@ -350,6 +352,10 @@ index_get(Name, Table, IxName, IxVal) ->
     ?KVDB_CATCH(kvdb_direct:index_get(Ref, Table, IxName, IxVal),
 		[Name, Table, IxName, IxVal]).
 
+update_counter(Name, Table, Key, Incr) ->
+    #kvdb_ref{} = Ref = call(Name, db),
+    ?KVDB_CATCH(kvdb_direct:update_counter(Ref, Table, Key, Incr),
+		[Name, Table, Key, Incr]).
 
 -spec push(db_name(), table(), object()) ->
 		 {ok, _ActualKey::any()} | {error, any()}.
@@ -624,10 +630,11 @@ terminate(_Reason, #st{db = Db}) ->
 code_change(_FromVsn, St, _Extra) ->
     {ok, St}.
 
-mod(mnesia) -> kvdb_mnesia;
+mod(mnesia ) -> kvdb_mnesia;
 mod(leveldb) -> kvdb_leveldb;
 mod(sqlite3) -> kvdb_sqlite3;
-mod(sqlite) -> kvdb_sqlite3;
+mod(sqlite ) -> kvdb_sqlite3;
+mod(ets    ) -> kvdb_ets;
 mod(M) ->
     case is_behaviour(M) of
 	true ->

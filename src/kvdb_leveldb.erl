@@ -11,7 +11,7 @@
 
 -export([open/2, close/1]).
 -export([add_table/3, delete_table/2, list_tables/1]).
--export([put/3, push/4, get/3, get_attrs/4, index_get/4,
+-export([put/3, push/4, get/3, get_attrs/4, index_get/4, update_counter/4,
 	 pop/3, prel_pop/3, extract/3, delete/3,
 	 list_queue/3, list_queue/6, is_queue_empty/3]).
 -export([first_queue/2, next_queue/3]).
@@ -195,7 +195,7 @@ put(#db{ref = Ref} = Db, Table, {K, V}) ->
 	    Key = enc(key, K, Enc),
 	    Val = enc(value, V, Enc),
 	    eleveldb:put(Ref, make_table_key(Table, Key), Val, []);
-	T ->
+	_ ->
 	    {error, illegal}
     end;
 put(#db{ref = Ref} = Db, Table, {K, Attrs, V}) ->
@@ -236,6 +236,37 @@ put(#db{ref = Ref} = Db, Table, {K, Attrs, V}) ->
 
 ix_key(Table, I, K) ->
     make_key(Table, $?, <<(sext:encode(I))/binary, (sext:encode(K))/binary>>).
+
+
+update_counter(#db{ref = Ref} = Db, Table, K, Incr) when is_integer(Incr) ->
+    case type(Db, Table) of
+	set ->
+	    Enc = encoding(Db, Table),
+	    Key = enc(key, K, Enc),
+	    case eleveldb:get(Ref, TabKey = make_table_key(Table, Key),
+			      [{cache, true}]) of
+		{ok, V} ->
+		    NewV =
+			case dec(value, V, Enc) of
+			    I when is_integer(I) ->
+				NewI = I + Incr,
+				enc(value, NewI, Enc);
+			    B when is_binary(B) ->
+				Sz = bit_size(B),
+				<<I:Sz/integer>> = B,
+				NewI = I + Incr,
+				enc(value, <<NewI:Sz/integer>>, Enc);
+			    _ ->
+				error(illegal)
+			end,
+		    ok = eleveldb:put(Ref, TabKey, NewV, []),
+		    dec(value, NewV, Enc);
+		_ ->
+		    error(not_found)
+	    end;
+	_ ->
+	    error(illegal)
+    end.
 
 
 push(#db{ref = Ref} = Db, Table, Q, Obj) ->
