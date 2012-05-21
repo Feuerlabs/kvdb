@@ -35,7 +35,9 @@
 	 last_tree/0,
 	 next_tree/1,
 	 make_tree/1,
-	 flatten_tree/1]).
+	 flatten_tree/1,
+	 split_key/1,
+	 join_key/1]).
 
 -export([open/1, open/2, close/0, options/1]).
 
@@ -139,7 +141,7 @@ first_tree() ->
 last_tree() ->
     case last() of
 	{ok, {K,_,_}} ->
-	    Top = hd(split_key_part(K)),
+	    Top = hd(split_key(K)),
 	    read_tree(Top);
 	done ->
 	    []
@@ -154,13 +156,15 @@ next_tree(K) ->
     end.
 
 next_at_level(K) ->
-    Len = length(split_key_part(K)),
+    Len = length(split_key(K)),
     Sz = byte_size(K),
     case next(<< K:Sz/binary, $+ >>) of
 	{ok, {Next,_,_}} ->
-	    case length(split_key_part(Next)) of
+	    case length(SplitNext = split_key(Next)) of
 		Len ->
 		    {ok, Next};
+		L when L > Len ->
+		    {ok, join_key(lists:sublist(SplitNext, 1, Len))};
 		_ ->
 		    done
 	    end;
@@ -183,13 +187,31 @@ read_tree(Prefix) ->
 %% @end
 %%
 make_tree(Objs) ->
-    make_tree_([split_key(O) || O <- Objs]).
+    make_tree_([split_key_part(O) || O <- Objs]).
 
-split_key({K,A,V}) ->
-    {split_key_part(K), A, V}.
+split_key_part({K,A,V}) ->
+    {split_key(K), A, V}.
 
-split_key_part(K) when is_binary(K) ->
+-spec split_key(binary()) -> [binary()].
+%% @doc Splits a `kvdb_conf` key into a list of key parts
+%%
+%% Example: `split_key(<<"a*b*c">>) -> [<<"a">>,<<"b">>,<<"c">>].`
+%% @end
+%%
+split_key(K) when is_binary(K) ->
     re:split(K, "\\*", [{return,binary}]).
+
+-spec join_key([binary()]) -> binary().
+%% @doc Creates a kvdb_conf key out of a list of key parts
+%%
+%% (See {@link split_key/1}).
+%%
+%% Example: `join_key([<<"a">>, <<"b">>, <<"c">>]) -> <<"a*b*c">>`
+%% @end
+%%
+join_key([H|T]) ->
+    Rest = << <<"*", B/binary>> || <<B/binary>> <- T >>,
+    << H/binary, Rest/binary >>.
 
 make_tree_([]) ->
     [];
