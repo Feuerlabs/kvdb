@@ -49,6 +49,7 @@
 	 get/3,
 	 update_counter/4,
 	 index_get/4,
+	 index_keys/4,
 	 get_attrs/4,
 	 delete/3]).
 %% traversal and search functions
@@ -130,6 +131,7 @@ behaviour_info(callbacks) ->
      {get,3},
      {get_attrs,4},
      {index_get,4},
+     {index_keys,4},
      {update_counter,4},
      {push,4},
      {pop,3},
@@ -341,15 +343,27 @@ get(Name, Table, Key) ->
 
 
 -spec index_get(db_name(), table(), _IxName::any(), _IxVal::any()) ->
-		       [object()] | {error, any()}.
+		       [object()].
 %% @doc Perform an index lookup on the named index of Table
 %%
 %% This function returns a list of objects referenced by the index value, or
-%% an `{error, Reason}' tuple, if there is no such index for the Table.
+%% raises an exception, if there is no such index for the Table.
 %% @end
 index_get(Name, Table, IxName, IxVal) ->
     #kvdb_ref{} = Ref = call(Name, db),
     ?KVDB_CATCH(kvdb_direct:index_get(Ref, Table, IxName, IxVal),
+		[Name, Table, IxName, IxVal]).
+
+-spec index_keys(db_name(), table(), _IxName::any(), _IxVal::any()) ->
+		       [key()].
+%% @doc Perform an index lookup on the named index of Table, return matchin keys
+%%
+%% This function returns a list of keys referenced by the index value, or
+%% raises an exception, if there is no such index for the Table.
+%% @end
+index_keys(Name, Table, IxName, IxVal) ->
+    #kvdb_ref{} = Ref = call(Name, db),
+    ?KVDB_CATCH(kvdb_direct:index_keys(Ref, Table, IxName, IxVal),
 		[Name, Table, IxName, IxVal]).
 
 update_counter(Name, Table, Key, Incr) ->

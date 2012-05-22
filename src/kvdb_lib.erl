@@ -37,22 +37,25 @@ table_name(Table) when is_list(Table) ->
 
 
 index_vals([H|T], Attrs) when is_atom(H) ->
-    case lists:keyfind(H, 1, Attrs) of
+    ix_val_(H, Attrs, T);
+index_vals([{H,value}|T], Attrs) when is_atom(H) ->
+    ix_val_(H, Attrs, T);
+index_vals([{IxN, words, A}|T], Attrs) -> ix_words_(IxN, A, Attrs, T);
+index_vals([{A, words}     |T], Attrs) -> ix_words_(A  , A, Attrs, T);
+index_vals([{IxN, each, A} |T], Attrs) -> ix_each_(IxN, A, Attrs, T);
+index_vals([{A, each}      |T], Attrs) -> ix_each_(A  , A, Attrs, T);
+index_vals([], _) ->
+    [].
+
+ix_val_(A, Attrs, T) ->
+    case lists:keyfind(A, 1, Attrs) of
 	{_,_} = Found ->
 	    [Found | index_vals(T, Attrs)];
 	false ->
 	    index_vals(T, Attrs)
-    end;
-index_vals([{IxN, words, A}|T], Attrs) ->
-    case lists:keyfind(A, 1, Attrs) of
-	{_, S} when is_list(S); is_binary(S) ->
-	    lists:usort(
-	      [{IxN,X} || X <- re:split(S, "[()\\.,\\-:;\\[\\]{}\\s]+")])
-		++ index_vals(T, Attrs);
-	_ ->
-	    index_vals(T, Attrs)
-    end;
-index_vals([{IxN, each, A}|T], Attrs) ->
+    end.
+
+ix_each_(IxN, A, Attrs, T) ->
     case lists:keyfind(A, 1, Attrs) of
 	{_, L} when is_list(L) ->
 	    %% We could check if the list contains duplicates, but strictly
@@ -60,13 +63,25 @@ index_vals([{IxN, each, A}|T], Attrs) ->
 	    [{IxN,X} || X <- L] ++ index_vals(T, Attrs);
 	_ ->
 	    index_vals(T, Attrs)
-    end;
-index_vals([], _) ->
-    [].
+    end.
+
+ix_words_(IxN, A, Attrs, T) ->
+    case lists:keyfind(A, 1, Attrs) of
+	{_, S} when is_list(S); is_binary(S) ->
+	    lists:usort(
+	      [{IxN,X} || X <- re:split(S, "[()\\.,\\-:;\\[\\]{}\\s]+")])
+		++ index_vals(T, Attrs);
+	_ ->
+	    index_vals(T, Attrs)
+    end.
+
 
 valid_indexes(Ix) ->
     case lists:foldr(
 	   fun(A, Acc) when is_atom(A) -> Acc;
+	      ({A, each} , Acc) when is_atom(A) -> Acc;
+	      ({A, value}, Acc) when is_atom(A) -> Acc;
+	      ({A, words}, Acc) when is_atom(A) -> Acc;
 	      ({_N, each, A}, Acc) when is_atom(A) -> Acc;
 	      ({_N, words, A}, Acc) when is_atom(A) -> Acc;
 	      (Other, Acc) -> [Other|Acc]

@@ -39,6 +39,7 @@
 	 get/3,
 	 get_attrs/4,
 	 index_get/4,
+	 index_keys/4,
 	 update_counter/4,
 	 pop/2,
 	 pop/3,
@@ -146,6 +147,14 @@ get_attrs(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, As) ->
 index_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
     Table = table_name(Table0),
     case DbMod:index_get(Db, Table, IxName, IxVal) of
+	Res when is_list(Res) -> Res
+    end.
+
+%% @doc Low-level equivalent of {@link index_keys/4}
+%% @end
+index_keys(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
+    Table = table_name(Table0),
+    case DbMod:index_keys(Db, Table, IxName, IxVal) of
 	Res when is_list(Res) -> Res
     end.
 

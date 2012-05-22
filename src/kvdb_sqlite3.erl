@@ -16,7 +16,7 @@
 	 delete/3]).
 -export([put/3, push/4, update_counter/4,
 	 %% put_attrs/4,
-	 get/3, index_get/4,
+	 get/3, index_get/4, index_keys/4,
 	 pop/3, prel_pop/3, extract/3,
 	 list_queue/3, list_queue/6, is_queue_empty/3,
 	 first_queue/2, next_queue/3]).
@@ -378,6 +378,41 @@ index_get(#db{ref = Ref} = Db, Table, IxName, IxVal) ->
 	    {error, no_index}
     end.
 
+%% Copy-pasted from index_get() and slightly changed. Should be refactored
+%%
+index_keys(#db{ref = Ref} = Db, Table, IxName, IxVal) ->
+    case index(Db, Table) of
+	{IxTable, Ix} ->
+	    Enc = encoding(Db, Table),
+	    case lists:member(IxName, Ix) orelse
+		lists:keymember(IxName, 1, Ix) of
+		true ->
+		    Pfx = sext:prefix({{IxName, IxVal}, '_'}),
+		    Sz = byte_size(Pfx) -1,
+		    <<P:Sz/binary, Last>> = Pfx,
+		    PfxB = <<P/binary, (Last+1):8>>,
+		    PrefixA = sqlite3_lib:value_to_sql({blob, Pfx}),
+		    PrefixB = sqlite3_lib:value_to_sql({blob, PfxB}),
+		    SQL = ["SELECT t.key FROM ",
+			   Table, " AS t, ", IxTable, " AS i WHERE ",
+			   "i.ix BETWEEN ", PrefixA, " AND ", PrefixB,
+			   " AND t.key == i.key;"],
+		    case sqlite3:sql_exec(Ref, SQL) of
+			[{columns, ["key"]},
+			 {rows, Rows}] ->
+			    lists:map(
+			      fun({{blob,Bk}}) ->
+				      dec(key, Bk, Enc)
+			      end, Rows);
+			_ ->
+			    []
+		    end;
+		false ->
+		    {error, invalid_index}
+	    end;
+	_ ->
+	    {error, no_index}
+    end.
 
 get(#db{ref = Ref} = Db, Table, Key) ->
     Enc = encoding(Db, Table),

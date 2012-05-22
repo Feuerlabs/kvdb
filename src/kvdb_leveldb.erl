@@ -11,8 +11,8 @@
 
 -export([open/2, close/1]).
 -export([add_table/3, delete_table/2, list_tables/1]).
--export([put/3, push/4, get/3, get_attrs/4, index_get/4, update_counter/4,
-	 pop/3, prel_pop/3, extract/3, delete/3,
+-export([put/3, push/4, get/3, get_attrs/4, index_get/4, index_keys/4,
+	 update_counter/4, pop/3, prel_pop/3, extract/3, delete/3,
 	 list_queue/3, list_queue/6, is_queue_empty/3]).
 -export([first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3, prefix_match/3, prefix_match/4]).
@@ -48,8 +48,8 @@ dump_tables_({ok, K, V}, I, Db) ->
 			      TType when TType == fifo; TType == lifo,
 					 element(1, TType) == fifo;
 					 element(1, TType) == lifo ->
-				  io:fwrite("split_queue_key(~p, ~p, ~p)~n",
-					    [Enc, TType, Key]),
+				  %% io:fwrite("split_queue_key(~p, ~p, ~p)~n",
+				  %% 	    [Enc, TType, Key]),
 				  {Q,Ko} = kvdb_lib:split_queue_key(
 					      Enc, TType, Key),
 				  <<F:8, Val/binary>> = V,
@@ -65,26 +65,35 @@ dump_tables_({ok, K, V}, I, Db) ->
 		  end;
 	      attr ->
 		  [T, AKey] = binary:split(K, <<"=">>),
-		  io:fwrite("attr: T=~p; AKey=~p~n", [T, AKey]),
+		  %% io:fwrite("attr: T=~p; AKey=~p~n", [T, AKey]),
 		  {OKey, Rest} = sext:decode_next(AKey),
 		  Attr = sext:decode(Rest),
 		  {attr, T, OKey, Attr, binary_to_term(V)};
 	      index ->
 		  [T, IKey] = binary:split(K, <<"?">>),
 		  {Ix, Rest} = sext:decode_next(IKey),
+		  %% io:fwrite("index: T=~p; Ix =~p; Rest =~p~n", [T,Ix,Rest]),
 		  {index, T, Ix, sext:decode(Rest), V};
 	      unknown ->
 		  {unknown, K, V}
 	  end,
     [Obj | dump_tables_(eleveldb:iterator_move(I, next), I, Db)];
 dump_tables_({error, _}, _, _) ->
-    [].
+    [];
+dump_tables_(Other, _, _) ->
+    io:fwrite("dump_tables_(~p, _, _)~n", [Other]).
+
 
 bin_match([], _) -> unknown;
-bin_match([{C, Type}|T], B) ->
-    case binary:match(B, << C:8 >>) of
-	nomatch -> bin_match(T, B);
-	{_,_}   -> Type
+bin_match(Ts, B) ->
+    Cs = << << "\\", C:8 >> || {C,_} <- Ts >>,
+    Pat = << "[", Cs/binary, "]" >>,
+    case re:run(B, Pat, [{capture, first, list}]) of
+	{match, [[C]]} ->
+	    {_,T} = lists:keyfind(C,1,Ts),
+	    T;
+	_ ->
+	    unknown
     end.
 
 get_schema_mod(Db, Default) ->
@@ -165,26 +174,29 @@ delete_table(#db{ref = Ref} = Db, Table) ->
 	undefined ->
 	    ok;
 	#table{} ->
-	    T = make_table_key(Table, <<>>),
+	    Kt = make_table_key(Table, <<>>),
+	    Ka = make_key(Table, $=, <<>>),
+	    Ki = make_key(Table, $?, <<>>),
 	    with_iterator(
 	      Ref,
 	      fun(I) ->
-		      delete_table_(eleveldb:iterator_move(I, T), I, T, byte_size(T), Ref)
+		      delete_table_(eleveldb:iterator_move(I, Kt),
+				    I, Kt,Ka,Ki, byte_size(Kt), Ref)
 	      end),
 	    schema_delete(Db, {table, Table}),
 	    schema_delete(Db, {Table, encoding}),
 	    ok
     end.
 
-delete_table_({ok, K, _V}, I, T, Sz, Ref) ->
+delete_table_({ok, K, _V}, I, Kt,Ka,Ki, Sz, Ref) ->
     case K of
-	<<T:Sz/binary, _/binary>> ->
+	<<X:Sz/binary, _/binary>> when X==Kt; X==Ka; X==Ki ->
 	    eleveldb:delete(Ref, K, []),
-	    delete_table_(eleveldb:iterator_move(I, next), I, T, Sz, Ref);
+	    delete_table_(eleveldb:iterator_move(I, next), I, Kt,Ka,Ki, Sz, Ref);
 	_ ->
 	    ok
     end;
-delete_table_({error,invalid_iterator}, _, _, _, _) ->
+delete_table_({error,invalid_iterator}, _, _, _, _, _, _) ->
     ok.
 
 put(#db{ref = Ref} = Db, Table, {K, V}) ->
@@ -236,7 +248,6 @@ put(#db{ref = Ref} = Db, Table, {K, Attrs, V}) ->
 
 ix_key(Table, I, K) ->
     make_key(Table, $?, <<(sext:encode(I))/binary, (sext:encode(K))/binary>>).
-
 
 update_counter(#db{ref = Ref} = Db, Table, K, Incr) when is_integer(Incr) ->
     case type(Db, Table) of
@@ -671,19 +682,34 @@ index_get(#db{ref = Ref} = Db, Table, IxName, IxVal) ->
       Ref,
       fun(I) ->
 	      get_by_ix_(prefix_move(I, IxPat, IxPat), I, IxPat, Db,
-			 Table, Enc, Type)
+			 Table, Enc, Type, obj)
       end).
 
-get_by_ix_({ok, K, _}, I, Prefix, Db, Table, Enc, Type) ->
+index_keys(#db{ref = Ref} = Db, Table, IxName, IxVal) ->
+    Enc = encoding(Db, Table),
+    Type = type(Db, Table),
+    IxPat = make_key(Table, $?, sext:encode({IxName, IxVal})),
+    with_iterator(
+      Ref,
+      fun(I) ->
+	      get_by_ix_(prefix_move(I, IxPat, IxPat), I, IxPat, Db,
+			 Table, Enc, Type, key)
+      end).
+
+get_by_ix_({ok, K, _}, I, Prefix, Db, Table, Enc, Type, Acc) ->
     case get(Db, Table, sext:decode(K), Enc, Type) of
 	{ok, Obj} ->
-	    [Obj | get_by_ix_(prefix_move(I, Prefix, next), I,
-			      Prefix, Db, Table, Enc, Type)];
+	    Keep = case Acc of
+		       obj -> Obj;
+		       key -> element(1, Obj)
+		   end,
+	    [Keep | get_by_ix_(prefix_move(I, Prefix, next), I,
+			       Prefix, Db, Table, Enc, Type, Acc)];
 	{error,_} ->
 	    get_by_ix_(prefix_move(I, Prefix, next), I, Prefix,
-		       Db, Table, Enc, Type)
+		       Db, Table, Enc, Type, Acc)
     end;
-get_by_ix_(done, _, _, _, _, _, _) ->
+get_by_ix_(done, _, _, _, _, _, _, _) ->
     [].
 
 
