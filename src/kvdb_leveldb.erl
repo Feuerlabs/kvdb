@@ -861,7 +861,7 @@ prefix_match(#db{ref = Ref} = Db, Table, Prefix, Limit)
 			  {ok, <<TablePrefix:TabPfxSz/binary>>, _} ->
 			      prefix_match_(I, next, Db, Table, MatchKey, TablePrefix,
 					    Prefix, Enc, Limit, Limit, []);
-			  {error, _} ->
+			  _ ->
 			      done
 		      end;
 		 true ->
