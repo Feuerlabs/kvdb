@@ -224,8 +224,10 @@ put_(#db{ref = Ref} = Db, Table, {Key, Attrs, Value}) ->
 			   {ok, {_, OldAs, _}} -> OldAs;
 			   {error, _} -> []
 		       end,
-	    OldIxVals = kvdb_lib:index_vals(Ix, OldAttrs),
-	    NewIxVals = kvdb_lib:index_vals(Ix, Attrs),
+	    OldIxVals = kvdb_lib:index_vals(
+			  Ix, Key, OldAttrs,
+			  fun() -> get_value(Db, Table, Key) end),
+	    NewIxVals = kvdb_lib:index_vals(Ix, Key, Attrs, fun() -> Value end),
 	    DelIxVals = [{I, Key} || I <- OldIxVals -- NewIxVals],
 	    PutIxVals = [{I, Key} || I <- NewIxVals -- OldIxVals],
 	    KeySext = sext:encode(Key),
@@ -431,6 +433,17 @@ get(#db{ref = Ref} = Db, Table, Key) ->
 	    {error,not_found}
     end.
 
+%% Used by the indexing function (only if it requires the value part)
+get_value(Db, Table, Key) ->
+    case get(Db, Table, Key) of
+	{ok, {_, _, V}} ->
+	    V;
+	{ok, {_, V}} ->
+	    V;
+	{error, _} ->
+	    throw(no_value)
+    end.
+
 pop(Db, Table, Q) ->
     case type(Db, Table) of
 	set -> error(illegal);
@@ -612,7 +625,7 @@ select_attrs(As, Attrs) ->
     [{K,V} || {K,V} <- Attrs,
 	      lists:member(K, As)].
 
-
+%% FIXME!! Must clear out indexes.
 delete(#db{ref = Ref} = Db, Table, Key) ->
     Enc = encoding(Db, Table),
     sqlite3:delete(Ref, Table, {key,{blob, enc(key, Key, Enc)}}).

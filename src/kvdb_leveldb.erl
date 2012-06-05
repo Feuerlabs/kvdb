@@ -220,8 +220,13 @@ put(#db{ref = Ref} = Db, Table, {K, Attrs, V}) ->
 	    OldAttrs = get_attrs(Db, Table, K, all),
 	    IxOps = case Ix of
 			[_|_] ->
-			    OldIxVals = kvdb_lib:index_vals(Ix, OldAttrs),
-			    NewIxVals = kvdb_lib:index_vals(Ix, Attrs),
+			    OldIxVals = kvdb_lib:index_vals(
+					  Ix, K, OldAttrs,
+					  fun() ->
+						  get_value(Db, Table, K)
+					  end),
+			    NewIxVals = kvdb_lib:index_vals(Ix, K, Attrs,
+							    fun() -> V end),
 			    [{delete, ix_key(Table, I, K)} ||
 				I <- OldIxVals -- NewIxVals]
 				++ [{put, ix_key(Table, I, K), <<>>} ||
@@ -674,6 +679,17 @@ get(#db{ref = Ref} = Db, Table, Key, Enc, Type) ->
 	    Error
     end.
 
+%% used during indexing (only if index function requires the value)
+get_value(Db, Table, K) ->
+    case get(Db, Table, K) of
+	{ok, {_, _, V}} ->
+	    V;
+	{ok, {_, V}} ->
+	    V;
+	{error, not_found} ->
+	    throw(no_value)
+    end.
+
 index_get(#db{ref = Ref} = Db, Table, IxName, IxVal) ->
     Enc = encoding(Db, Table),
     Type = type(Db, Table),
@@ -738,7 +754,12 @@ delete(#db{ref = Ref} = Db, Table, Key) ->
 		Attrs = get_attrs(Db, Table, Key, all),
 		IxOps_ = case Ix of
 			     [_|_] -> [{delete, ix_key(Table, I, Key)} ||
-					  I <- kvdb_lib:index_vals(Ix, Attrs)];
+					  I <- kvdb_lib:index_vals(
+						 Ix, Key, Attrs,
+						 fun() ->
+							 get_value(Db, Table,
+								   Key)
+						 end)];
 			     _ -> []
 			 end,
 		{IxOps_, attrs_to_delete(Table, Key, Attrs)};

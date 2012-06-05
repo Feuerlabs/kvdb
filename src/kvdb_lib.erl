@@ -1,7 +1,7 @@
 -module(kvdb_lib).
 -export([table_name/1,
 	 valid_table_name/1,
-	 index_vals/2,
+	 index_vals/4,
 	 valid_indexes/1,
 	 enc/3,
 	 dec/3,
@@ -36,59 +36,123 @@ table_name(Table) when is_list(Table) ->
     list_to_binary(Table).
 
 
-index_vals([H|T], Attrs) when is_atom(H) ->
-    ix_val_(H, Attrs, T);
-index_vals([{H,value}|T], Attrs) when is_atom(H) ->
-    ix_val_(H, Attrs, T);
-index_vals([{IxN, words, A}|T], Attrs) -> ix_words_(IxN, A, Attrs, T);
-index_vals([{A, words}     |T], Attrs) -> ix_words_(A  , A, Attrs, T);
-index_vals([{IxN, each, A} |T], Attrs) -> ix_each_(IxN, A, Attrs, T);
-index_vals([{A, each}      |T], Attrs) -> ix_each_(A  , A, Attrs, T);
-index_vals([], _) ->
+index_vals(Ixs, K, Attrs, ValF) ->
+    %% Pre-fetch value, if needed, so we only fetch it once.
+    %% If value doesn't exist, we must re-throw when asked for.
+    Val = case needs_value(Ixs) of
+	      true ->
+		  try begin
+			  V = ValF(),
+			  fun() -> V end
+		      end
+		  catch
+		      throw:_ -> fun() -> throw(no_value) end
+		  end;
+	      false ->
+		  []
+	  end,
+    index_vals_(Ixs, K, Attrs, Val).
+
+needs_value([{_, _, {value}}|_]) -> true;
+needs_value([_|T]) -> needs_value(T);
+needs_value([]) ->  false.
+
+index_vals_([H|T], K, Attrs, Val) when is_atom(H) ->
+    ix_val_(H, H, K, Attrs, Val, T);
+index_vals_([{H,value}      |T], K,As,V) -> ix_val_(H,H, K, As, V, T);
+index_vals_([{IxN,value,A}  |T], K,As,V) -> ix_val_(IxN,A, K, As, V, T);
+index_vals_([{IxN, words, A}|T], K,As,V) -> ix_words_(IxN, A, K,As,V, T);
+index_vals_([{A, words}     |T], K,As,V) -> ix_words_(A  , A, K,As,V, T);
+index_vals_([{IxN, each, A} |T], K,As,V) -> ix_each_(IxN, A, K,As,V, T);
+index_vals_([{A, each}      |T], K,As,V) -> ix_each_(A  , A, K,As,V, T);
+index_vals_([], _,_,_) ->
     [].
 
-ix_val_(A, Attrs, T) ->
+ix_val_(N,{value}, K, Attrs, Val, T) ->
+    try Val() of
+	V ->
+	    [{N,V} | index_vals_(T, K, Attrs, Val)]
+    catch
+	throw:_ -> index_vals_(T, K, Attrs, Val)
+    end;
+ix_val_(N,{M,F}, K, Attrs, Val, T) ->
+    try M:F(K, Attrs, Val()) of V ->
+	    [{N,V} | index_vals_(T, K, Attrs, Val)]
+    catch
+	throw:_ -> index_vals_(T, K, Attrs, Val);
+	error:_ -> index_vals_(T, K, Attrs, Val)
+    end;
+ix_val_(N,A, K, Attrs, Val, T) ->
     case lists:keyfind(A, 1, Attrs) of
-	{_,_} = Found ->
-	    [Found | index_vals(T, Attrs)];
+	{_,V}  ->
+	    [{N,V} | index_vals_(T, K, Attrs, Val)];
 	false ->
-	    index_vals(T, Attrs)
+	    index_vals_(T, K, Attrs, Val)
     end.
 
-ix_each_(IxN, A, Attrs, T) ->
-    case lists:keyfind(A, 1, Attrs) of
+ix_each_(IxN, A, K, Attrs, Val, T) ->
+    case get_ix_val_(A, K, Attrs, Val) of
 	{_, L} when is_list(L) ->
 	    %% We could check if the list contains duplicates, but strictly
 	    %% speaking, it should resolve itself when we store the values.
-	    [{IxN,X} || X <- L] ++ index_vals(T, Attrs);
+	    [{IxN,X} || X <- L] ++ index_vals_(T, K, Attrs, Val);
 	_ ->
-	    index_vals(T, Attrs)
+	    index_vals_(T, K, Attrs, Val)
     end.
 
-ix_words_(IxN, A, Attrs, T) ->
-    case lists:keyfind(A, 1, Attrs) of
+ix_words_(IxN, A, K, Attrs, Val, T) ->
+    case get_ix_val_(A, K, Attrs, Val) of
 	{_, S} when is_list(S); is_binary(S) ->
-	    lists:usort(
-	      [{IxN,X} || X <- re:split(S, "[()\\.,\\-:;\\[\\]{}\\s]+")])
-		++ index_vals(T, Attrs);
+	    try lists:usort(
+		  [{IxN,X} || X <- re:split(S, "[()\\.,\\-:;\\[\\]{}\\s]+")])
+		     ++ index_vals_(T, K, Attrs, Val)
+	    catch
+		error:_ ->
+		    index_vals_(T, K, Attrs, Val)
+	    end;
 	_ ->
-	    index_vals(T, Attrs)
+	    index_vals_(T, K, Attrs, Val)
+    end.
+
+get_ix_val_({value}, _, _, V) ->
+    if_val_(V, fun(Val) -> {value, Val} end);
+get_ix_val_({M,F}, K, As, V) ->
+    try {hook, M:F({K, As, V()})}
+    catch
+	throw:_ -> false;
+	error:_ -> false
+    end;
+get_ix_val_(A, _, As, _) -> lists:keyfind(A, 1, As).
+
+if_val_(V, F) ->
+    try V() of Val ->
+	    F(Val)
+    catch
+	throw:_ -> false
     end.
 
 
 valid_indexes(Ix) ->
     case lists:foldr(
 	   fun(A, Acc) when is_atom(A) -> Acc;
-	      ({A, each} , Acc) when is_atom(A) -> Acc;
+	      ({value}, Acc) -> Acc;
+	      ({A, each}=X , Acc) -> if_valid_ix_ref(A, X, Acc);
 	      ({A, value}, Acc) when is_atom(A) -> Acc;
-	      ({A, words}, Acc) when is_atom(A) -> Acc;
-	      ({_N, each, A}, Acc) when is_atom(A) -> Acc;
-	      ({_N, words, A}, Acc) when is_atom(A) -> Acc;
+	      ({{value}, value}, Acc) -> Acc;
+	      ({A, words}=X, Acc) -> if_valid_ix_ref(A, X, Acc);
+	      ({_N, value, A}=X, Acc)  -> if_valid_ix_ref(A, X, Acc);
+	      ({_N, each, A}=X, Acc)  -> if_valid_ix_ref(A, X, Acc);
+	      ({_N, words, A}=X, Acc) -> if_valid_ix_ref(A, X, Acc);
 	      (Other, Acc) -> [Other|Acc]
 	   end, [], Ix) of
 	[]  -> ok;
 	Bad -> {error, Bad}
     end.
+
+if_valid_ix_ref({value} , _, Acc) -> Acc;
+if_valid_ix_ref({M,F}   , _, Acc) when is_atom(M), is_atom(F) -> Acc;
+if_valid_ix_ref(A       , _, Acc) when is_atom(A) -> Acc;
+if_valid_ix_ref(_, X, Acc) -> [X|Acc].
 
 enc(_, X, raw ) -> X;
 enc(_, X, term) -> term_to_binary(X);

@@ -287,7 +287,11 @@ add_table(Name, Table) ->
 %% encoding and each attribute value with `term' encoding).
 %%
 %% - `{index, [index_expr()]}'<br/>
-%% `index_expr() :: atom() | {_Name::any(), each|words, _Attr::atom()}'<br/>
+%% `index_expr() :: atom() |
+%%                  {index_ref(), value|each|words} |
+%%                  {_Name::any(), value|each|words, _Attr::index_ref()}
+%%  index_ref() :: atom() | {value} | {M:atom(), F::atom()}'
+%%
 %% Attributes can be indexed, by naming the attribute names to include.
 %% If only the attribute name is given, the attribute value is used as the index
 %% value. If a tuple {IxName, Op, Attr} is given, the attribute value is
@@ -297,7 +301,15 @@ add_table(Name, Table) ->
 %% value.</li>
 %% <li>`words' - the attribute value is a string (list) or binary; each word
 %% in the text becomes an index value.</li>
+%% <li>`value' - the attribute value is taken as-is</li>
 %% </ul>
+%%
+%% An index reference can either be the attribute name (an atom), or
+%% the tuple `{value}', meaning the actual value part of the object,
+%% or `{M, F}', identifying a callback function, which will be called as
+%% `M:F({Key, Attrs, Value}) -> IndexBase'. The type of `IndexBase' should
+%% suit the specified operation: it can be anything for `value', should be
+%% a list for `each', and a string or binary for `words'.
 %% @end
 add_table(Name, Table, Opts) when is_list(Opts) ->
     ?KVDB_CATCH(call(Name, {add_table, Table, Opts}), [Name, Table, Opts]).
