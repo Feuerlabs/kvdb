@@ -5,10 +5,6 @@
 * [Function Details](#functions)
 
 
-
-
-
-
 __Behaviours:__ [`supervisor`](supervisor.md).<a name="index"></a>
 
 ##Function Index##
@@ -26,8 +22,6 @@ __Behaviours:__ [`supervisor`](supervisor.md).<a name="index"></a>
 ###childspec/1##
 
 
-
-
 `childspec(X1) -> any()`
 
 <a name="init-1"></a>
@@ -35,15 +29,11 @@ __Behaviours:__ [`supervisor`](supervisor.md).<a name="index"></a>
 ###init/1##
 
 
-
-
 `init(X1) -> any()`
 
 <a name="start_link-0"></a>
 
 ###start_link/0##
-
-
 
 
 `start_link() -> any()`

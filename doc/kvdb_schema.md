@@ -5,10 +5,6 @@
 * [Function Details](#functions)
 
 
-
-
-
-
 __This module defines the `kvdb_schema` behaviour.__
 <br></br>
  Required callback functions: `validate/3`, `validate_attr/3`, `on_update/4`.<a name="index"></a>
@@ -28,15 +24,11 @@ __This module defines the `kvdb_schema` behaviour.__
 ###behaviour_info/1##
 
 
-
-
 `behaviour_info(X1) -> any()`
 
 <a name="on_update-4"></a>
 
 ###on_update/4##
-
-
 
 
 `on_update(Op, Db, Table, Obj) -> any()`
@@ -46,15 +38,11 @@ __This module defines the `kvdb_schema` behaviour.__
 ###read/1##
 
 
-
-
 `read(Db) -> any()`
 
 <a name="read-2"></a>
 
 ###read/2##
-
-
 
 
 `read(Db, Item) -> any()`
@@ -64,8 +52,6 @@ __This module defines the `kvdb_schema` behaviour.__
 ###validate/3##
 
 
-
-
 `validate(Db, Type, Obj) -> any()`
 
 <a name="validate_attr-3"></a>
@@ -73,15 +59,11 @@ __This module defines the `kvdb_schema` behaviour.__
 ###validate_attr/3##
 
 
-
-
 `validate_attr(Db, Type, Attr) -> any()`
 
 <a name="write-2"></a>
 
 ###write/2##
-
-
 
 
 `write(Db, Schema) -> any()`

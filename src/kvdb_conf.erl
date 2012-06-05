@@ -266,7 +266,7 @@ split_key_part({K,A,V}) ->
 -spec split_key(binary()) -> [binary()].
 %% @doc Splits a `kvdb_conf` key into a list of key parts
 %%
-%% Example: `split_key(<<"a*b*c">>) -> [<<"a">>,<<"b">>,<<"c">>].`
+%% Example: `split_key(<<"a*b*c">>) -> [<<"a">>,<<"b">>,<<"c">>].'
 %% @end
 %%
 split_key(K) when is_binary(K) ->
@@ -277,7 +277,7 @@ split_key(K) when is_binary(K) ->
 %%
 %% (See {@link split_key/1}).
 %%
-%% Example: `join_key([<<"a">>, <<"b">>, <<"c">>]) -> <<"a*b*c">>`
+%% Example: `join_key([<<"a">>, <<"b">>, <<"c">>]) -> <<"a*b*c">>'
 %% @end
 %%
 join_key([H|T]) ->

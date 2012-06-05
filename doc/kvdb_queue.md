@@ -5,8 +5,6 @@
 * [Function Details](#functions)
 
 
-
-
 <a name="index"></a>
 
 ##Function Index##
@@ -24,15 +22,11 @@
 ###clear_queue/3##
 
 
-
-
 `clear_queue(Db, Table, Q) -> any()`
 
 <a name="delete-3"></a>
 
 ###delete/3##
-
-
 
 
 `delete(Db, Table, Key) -> any()`
@@ -42,15 +36,11 @@
 ###extract/3##
 
 
-
-
 `extract(Db, Table, Key) -> any()`
 
 <a name="first-2"></a>
 
 ###first/2##
-
-
 
 
 `first(Db, Table) -> any()`
@@ -60,15 +50,11 @@
 ###is_empty/3##
 
 
-
-
 `is_empty(Db, Table, Q) -> any()`
 
 <a name="list-3"></a>
 
 ###list/3##
-
-
 
 
 `list(Db, Table, Q) -> any()`
@@ -78,15 +64,11 @@
 ###list/6##
 
 
-
-
 `list(Db, Tab, Q, Fltr, HeedBlock, Limit) -> any()`
 
 <a name="list_full-3"></a>
 
 ###list_full/3##
-
-
 
 
 `list_full(Db, Tab, Q) -> any()`
@@ -96,15 +78,11 @@
 ###next/3##
 
 
-
-
 `next(Db, Table, PrevQ) -> any()`
 
 <a name="pop-2"></a>
 
 ###pop/2##
-
-
 
 
 `pop(Db, Table) -> any()`
@@ -114,15 +92,11 @@
 ###pop/3##
 
 
-
-
 `pop(Db, Table, Q) -> any()`
 
 <a name="prel_pop-2"></a>
 
 ###prel_pop/2##
-
-
 
 
 `prel_pop(Db, Table) -> any()`
@@ -132,8 +106,6 @@
 ###prel_pop/3##
 
 
-
-
 `prel_pop(Db, Table, Q) -> any()`
 
 <a name="push-2"></a>
@@ -141,15 +113,11 @@
 ###push/2##
 
 
-
-
 `push(Db, Table) -> any()`
 
 <a name="push-3"></a>
 
 ###push/3##
-
-
 
 
 `push(Db, Table, Q) -> any()`

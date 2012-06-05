@@ -9,38 +9,32 @@
 
 ETS backend to kvdb.
 
-
-
-Copyright (c) (C) 2011, Tony Rogvall
+Copyright (c) (C) 2011-12, Feuerlabs, Inc
 
 __Behaviours:__ [`kvdb`](kvdb.md).
 
-__Authors:__ Tony Rogvall ([`tony@rogvall.se`](mailto:tony@rogvall.se)).<a name="index"></a>
+__Authors:__ Tony Rogvall ([`tony@rogvall.se`](mailto:tony@rogvall.se)), Ulf Wiger ([`ulf@feuerlabs.com`](mailto:ulf@feuerlabs.com)).<a name="index"></a>
 
 ##Function Index##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_table-2">add_table/2</a></td><td></td></tr><tr><td valign="top"><a href="#close-1">close/1</a></td><td></td></tr><tr><td valign="top"><a href="#delete-3">delete/3</a></td><td></td></tr><tr><td valign="top"><a href="#delete_table-2">delete_table/2</a></td><td></td></tr><tr><td valign="top"><a href="#first-2">first/2</a></td><td></td></tr><tr><td valign="top"><a href="#get-3">get/3</a></td><td></td></tr><tr><td valign="top"><a href="#iterator-2">iterator/2</a></td><td></td></tr><tr><td valign="top"><a href="#iterator_close-2">iterator_close/2</a></td><td></td></tr><tr><td valign="top"><a href="#last-2">last/2</a></td><td></td></tr><tr><td valign="top"><a href="#next-2">next/2</a></td><td></td></tr><tr><td valign="top"><a href="#open-2">open/2</a></td><td></td></tr><tr><td valign="top"><a href="#prev-2">prev/2</a></td><td></td></tr><tr><td valign="top"><a href="#put-4">put/4</a></td><td></td></tr></table>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_table-3">add_table/3</a></td><td></td></tr><tr><td valign="top"><a href="#close-1">close/1</a></td><td></td></tr><tr><td valign="top"><a href="#delete-3">delete/3</a></td><td></td></tr><tr><td valign="top"><a href="#delete_table-2">delete_table/2</a></td><td></td></tr><tr><td valign="top"><a href="#first-2">first/2</a></td><td></td></tr><tr><td valign="top"><a href="#get-3">get/3</a></td><td></td></tr><tr><td valign="top"><a href="#get_schema_mod-2">get_schema_mod/2</a></td><td></td></tr><tr><td valign="top"><a href="#last-2">last/2</a></td><td></td></tr><tr><td valign="top"><a href="#list_tables-1">list_tables/1</a></td><td></td></tr><tr><td valign="top"><a href="#next-3">next/3</a></td><td></td></tr><tr><td valign="top"><a href="#open-2">open/2</a></td><td></td></tr><tr><td valign="top"><a href="#pop-3">pop/3</a></td><td></td></tr><tr><td valign="top"><a href="#prel_pop-3">prel_pop/3</a></td><td></td></tr><tr><td valign="top"><a href="#prev-3">prev/3</a></td><td></td></tr><tr><td valign="top"><a href="#push-4">push/4</a></td><td></td></tr><tr><td valign="top"><a href="#put-3">put/3</a></td><td></td></tr></table>
 
 
 <a name="functions"></a>
 
 ##Function Details##
 
-<a name="add_table-2"></a>
+<a name="add_table-3"></a>
 
-###add_table/2##
-
-
+###add_table/3##
 
 
-`add_table(Db, Table) -> any()`
+`add_table(Db, Table, Opts) -> any()`
 
 <a name="close-1"></a>
 
 ###close/1##
-
-
 
 
 `close(Db) -> any()`
@@ -50,15 +44,11 @@ __Authors:__ Tony Rogvall ([`tony@rogvall.se`](mailto:tony@rogvall.se)).<a name=
 ###delete/3##
 
 
-
-
 `delete(Db, Table, Key) -> any()`
 
 <a name="delete_table-2"></a>
 
 ###delete_table/2##
-
-
 
 
 `delete_table(Db, Table) -> any()`
@@ -68,79 +58,82 @@ __Authors:__ Tony Rogvall ([`tony@rogvall.se`](mailto:tony@rogvall.se)).<a name=
 ###first/2##
 
 
-
-
-`first(Db, Iter) -> any()`
+`first(Db, Table) -> any()`
 
 <a name="get-3"></a>
 
 ###get/3##
 
 
-
-
 `get(Db, Table, Key) -> any()`
 
-<a name="iterator-2"></a>
+<a name="get_schema_mod-2"></a>
 
-###iterator/2##
-
-
+###get_schema_mod/2##
 
 
-`iterator(Db, Table) -> any()`
-
-<a name="iterator_close-2"></a>
-
-###iterator_close/2##
-
-
-
-
-`iterator_close(Db, Iter) -> any()`
+`get_schema_mod(Db, Default) -> any()`
 
 <a name="last-2"></a>
 
 ###last/2##
 
 
+`last(Db, Table) -> any()`
+
+<a name="list_tables-1"></a>
+
+###list_tables/1##
 
 
-`last(Db, Iter) -> any()`
+`list_tables(Db) -> any()`
 
-<a name="next-2"></a>
+<a name="next-3"></a>
 
-###next/2##
-
-
+###next/3##
 
 
-`next(Db, Iter) -> any()`
+`next(Db, Table, RelKey) -> any()`
 
 <a name="open-2"></a>
 
 ###open/2##
 
 
+`open(DbName0, Options) -> any()`
+
+<a name="pop-3"></a>
+
+###pop/3##
 
 
-`open(Db, Options) -> any()`
+`pop(Db, Table, Q) -> any()`
 
-<a name="prev-2"></a>
+<a name="prel_pop-3"></a>
 
-###prev/2##
-
-
+###prel_pop/3##
 
 
-`prev(Db, Iter) -> any()`
+`prel_pop(Db, Table, Q) -> any()`
 
-<a name="put-4"></a>
+<a name="prev-3"></a>
 
-###put/4##
-
-
+###prev/3##
 
 
-`put(Db, Table, Key, Value) -> any()`
+`prev(Db, Table, Rel) -> any()`
+
+<a name="push-4"></a>
+
+###push/4##
+
+
+`push(Db, Table, Q, Obj) -> any()`
+
+<a name="put-3"></a>
+
+###put/3##
+
+
+`put(Db, Table, Obj) -> any()`
 

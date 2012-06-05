@@ -7,7 +7,7 @@
 * [Function Details](#functions)
 
 
-  
+
 API to store NETCONF-style config data in kvdb.
 
 <a name="description"></a>
@@ -17,7 +17,7 @@ API to store NETCONF-style config data in kvdb.
 
 
 
-identifiers are stored as a structured key (binary)  
+identifiers are stored as a structured key (binary)
 delimited by:
 
 
@@ -27,8 +27,8 @@ Example:
 
 
 
-{"system", []}  
-{"system*services", []}  
+{"system", []}
+{"system*services", []}
 {"system*services*ssh", []}
 
 Netconf identifiers can consist of alphanumerics, '-', '_' or '.'. The '*' as delimiter
@@ -91,27 +91,46 @@ but smaller than any identifier character.
 ##Function Index##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#all-0">all/0</a></td><td></td></tr><tr><td valign="top"><a href="#close-0">close/0</a></td><td></td></tr><tr><td valign="top"><a href="#delete-1">delete/1</a></td><td></td></tr><tr><td valign="top"><a href="#delete_all-1">delete_all/1</a></td><td></td></tr><tr><td valign="top"><a href="#first-0">first/0</a></td><td></td></tr><tr><td valign="top"><a href="#first_tree-0">first_tree/0</a></td><td></td></tr><tr><td valign="top"><a href="#flatten_tree-1">flatten_tree/1</a></td><td>Converts a configuration tree into an ordered list of configuration objects.</td></tr><tr><td valign="top"><a href="#last-0">last/0</a></td><td></td></tr><tr><td valign="top"><a href="#last_tree-0">last_tree/0</a></td><td></td></tr><tr><td valign="top"><a href="#make_tree-1">make_tree/1</a></td><td>Converts an ordered list of configuration objects into a configuration tree.</td></tr><tr><td valign="top"><a href="#next-1">next/1</a></td><td></td></tr><tr><td valign="top"><a href="#next_at_level-1">next_at_level/1</a></td><td></td></tr><tr><td valign="top"><a href="#next_tree-1">next_tree/1</a></td><td></td></tr><tr><td valign="top"><a href="#open-1">open/1</a></td><td></td></tr><tr><td valign="top"><a href="#open-2">open/2</a></td><td></td></tr><tr><td valign="top"><a href="#options-1">options/1</a></td><td></td></tr><tr><td valign="top"><a href="#prev-1">prev/1</a></td><td></td></tr><tr><td valign="top"><a href="#read-1">read/1</a></td><td>Reads a configuration object from the database.</td></tr><tr><td valign="top"><a href="#read_tree-1">read_tree/1</a></td><td>Read a configuration (sub-)tree matching Prefix.</td></tr><tr><td valign="top"><a href="#store_tree-1">store_tree/1</a></td><td>Store a configuration tree in the database.</td></tr><tr><td valign="top"><a href="#write-1">write/1</a></td><td>Writes a configuration object into the database.</td></tr></table>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_table-1">add_table/1</a></td><td></td></tr><tr><td valign="top"><a href="#add_table-2">add_table/2</a></td><td></td></tr><tr><td valign="top"><a href="#all-0">all/0</a></td><td></td></tr><tr><td valign="top"><a href="#all-1">all/1</a></td><td></td></tr><tr><td valign="top"><a href="#close-0">close/0</a></td><td></td></tr><tr><td valign="top"><a href="#delete-1">delete/1</a></td><td></td></tr><tr><td valign="top"><a href="#delete-2">delete/2</a></td><td></td></tr><tr><td valign="top"><a href="#delete_all-1">delete_all/1</a></td><td></td></tr><tr><td valign="top"><a href="#delete_all-2">delete_all/2</a></td><td></td></tr><tr><td valign="top"><a href="#first-0">first/0</a></td><td></td></tr><tr><td valign="top"><a href="#first-1">first/1</a></td><td></td></tr><tr><td valign="top"><a href="#first_tree-0">first_tree/0</a></td><td></td></tr><tr><td valign="top"><a href="#first_tree-1">first_tree/1</a></td><td></td></tr><tr><td valign="top"><a href="#flatten_tree-1">flatten_tree/1</a></td><td>Converts a configuration tree into an ordered list of configuration objects.</td></tr><tr><td valign="top"><a href="#join_key-1">join_key/1</a></td><td>Creates a kvdb_conf key out of a list of key parts.</td></tr><tr><td valign="top"><a href="#last-0">last/0</a></td><td></td></tr><tr><td valign="top"><a href="#last-1">last/1</a></td><td></td></tr><tr><td valign="top"><a href="#last_tree-0">last_tree/0</a></td><td></td></tr><tr><td valign="top"><a href="#last_tree-1">last_tree/1</a></td><td></td></tr><tr><td valign="top"><a href="#make_tree-1">make_tree/1</a></td><td>Converts an ordered list of configuration objects into a configuration tree.</td></tr><tr><td valign="top"><a href="#next-1">next/1</a></td><td></td></tr><tr><td valign="top"><a href="#next-2">next/2</a></td><td></td></tr><tr><td valign="top"><a href="#next_at_level-1">next_at_level/1</a></td><td></td></tr><tr><td valign="top"><a href="#next_at_level-2">next_at_level/2</a></td><td></td></tr><tr><td valign="top"><a href="#next_tree-1">next_tree/1</a></td><td></td></tr><tr><td valign="top"><a href="#next_tree-2">next_tree/2</a></td><td></td></tr><tr><td valign="top"><a href="#open-1">open/1</a></td><td></td></tr><tr><td valign="top"><a href="#open-2">open/2</a></td><td></td></tr><tr><td valign="top"><a href="#options-1">options/1</a></td><td></td></tr><tr><td valign="top"><a href="#prev-1">prev/1</a></td><td></td></tr><tr><td valign="top"><a href="#prev-2">prev/2</a></td><td></td></tr><tr><td valign="top"><a href="#read-1">read/1</a></td><td>Reads a configuration object from the database.</td></tr><tr><td valign="top"><a href="#read-2">read/2</a></td><td></td></tr><tr><td valign="top"><a href="#read_tree-1">read_tree/1</a></td><td>Read a configuration (sub-)tree matching Prefix.</td></tr><tr><td valign="top"><a href="#read_tree-2">read_tree/2</a></td><td></td></tr><tr><td valign="top"><a href="#split_key-1">split_key/1</a></td><td>Splits a <code>kvdb_conf` key into a list of key parts
+
+Example: `split_key(<<"a*b*c">>) -> [<<"a">>,<<"b">>,<<"c">>].</code></td></tr><tr><td valign="top"><a href="#store_tree-1">store_tree/1</a></td><td>Store a configuration tree in the database.</td></tr><tr><td valign="top"><a href="#store_tree-2">store_tree/2</a></td><td></td></tr><tr><td valign="top"><a href="#update_counter-2">update_counter/2</a></td><td></td></tr><tr><td valign="top"><a href="#update_counter-3">update_counter/3</a></td><td></td></tr><tr><td valign="top"><a href="#write-1">write/1</a></td><td>Writes a configuration object into the database.</td></tr><tr><td valign="top"><a href="#write-2">write/2</a></td><td></td></tr></table>
 
 
 <a name="functions"></a>
 
 ##Function Details##
 
+<a name="add_table-1"></a>
+
+###add_table/1##
+
+
+`add_table(T) -> any()`
+
+<a name="add_table-2"></a>
+
+###add_table/2##
+
+
+`add_table(T, Opts) -> any()`
+
 <a name="all-0"></a>
 
 ###all/0##
 
 
-
-
 `all() -> any()`
+
+<a name="all-1"></a>
+
+###all/1##
+
+
+`all(Tab) -> any()`
 
 <a name="close-0"></a>
 
 ###close/0##
-
-
 
 
 `close() -> any()`
@@ -121,79 +140,118 @@ but smaller than any identifier character.
 ###delete/1##
 
 
-
-
 `delete(K) -> any()`
+
+<a name="delete-2"></a>
+
+###delete/2##
+
+
+`delete(Tab, K) -> any()`
 
 <a name="delete_all-1"></a>
 
 ###delete_all/1##
 
 
-
-
 `delete_all(Prefix) -> any()`
+
+<a name="delete_all-2"></a>
+
+###delete_all/2##
+
+
+`delete_all(Tab, Prefix) -> any()`
 
 <a name="first-0"></a>
 
 ###first/0##
 
 
-
-
 `first() -> any()`
+
+<a name="first-1"></a>
+
+###first/1##
+
+
+`first(Tab) -> any()`
 
 <a name="first_tree-0"></a>
 
 ###first_tree/0##
 
 
-
-
 `first_tree() -> any()`
+
+<a name="first_tree-1"></a>
+
+###first_tree/1##
+
+
+`first_tree(Tab) -> any()`
 
 <a name="flatten_tree-1"></a>
 
 ###flatten_tree/1##
 
 
-
-
 <pre>flatten_tree(Tree::<a href="#type-conf_tree">conf_tree()</a>) -> [<a href="#type-conf_obj">conf_obj()</a>]</pre>
+<br></br>
+
+
+Converts a configuration tree into an ordered list of configuration objects.<a name="join_key-1"></a>
+
+###join_key/1##
+
+
+<pre>join_key(T::[binary()]) -&gt; binary()</pre>
 <br></br>
 
 
 
 
-Converts a configuration tree into an ordered list of configuration objects.<a name="last-0"></a>
+Creates a kvdb_conf key out of a list of key parts
+
+
+
+(See [`split_key/1`](#split_key-1)).
+
+Example: `join_key([<<"a">>, <<"b">>, <<"c">>]) -> <<"a*b*c">>`<a name="last-0"></a>
 
 ###last/0##
 
 
-
-
 `last() -> any()`
+
+<a name="last-1"></a>
+
+###last/1##
+
+
+`last(Tab) -> any()`
 
 <a name="last_tree-0"></a>
 
 ###last_tree/0##
 
 
-
-
 `last_tree() -> any()`
+
+<a name="last_tree-1"></a>
+
+###last_tree/1##
+
+
+`last_tree(Tab) -> any()`
 
 <a name="make_tree-1"></a>
 
 ###make_tree/1##
 
 
-
-
 <pre>make_tree(Objs::[<a href="#type-conf_obj">conf_obj()</a>]) -> <a href="#type-conf_tree">conf_tree()</a></pre>
 <br></br>
-
-
 
 
 Converts an ordered list of configuration objects into a configuration tree.<a name="next-1"></a>
@@ -201,33 +259,46 @@ Converts an ordered list of configuration objects into a configuration tree.<a n
 ###next/1##
 
 
-
-
 `next(K) -> any()`
+
+<a name="next-2"></a>
+
+###next/2##
+
+
+`next(Tab, K) -> any()`
 
 <a name="next_at_level-1"></a>
 
 ###next_at_level/1##
 
 
-
-
 `next_at_level(K) -> any()`
+
+<a name="next_at_level-2"></a>
+
+###next_at_level/2##
+
+
+`next_at_level(Tab, K) -> any()`
 
 <a name="next_tree-1"></a>
 
 ###next_tree/1##
 
 
-
-
 `next_tree(K) -> any()`
+
+<a name="next_tree-2"></a>
+
+###next_tree/2##
+
+
+`next_tree(Tab, K) -> any()`
 
 <a name="open-1"></a>
 
 ###open/1##
-
-
 
 
 `open(File) -> any()`
@@ -237,15 +308,11 @@ Converts an ordered list of configuration objects into a configuration tree.<a n
 ###open/2##
 
 
-
-
 `open(File, Options) -> any()`
 
 <a name="options-1"></a>
 
 ###options/1##
-
-
 
 
 `options(File) -> any()`
@@ -255,15 +322,18 @@ Converts an ordered list of configuration objects into a configuration tree.<a n
 ###prev/1##
 
 
-
-
 `prev(K) -> any()`
+
+<a name="prev-2"></a>
+
+###prev/2##
+
+
+`prev(Tab, K) -> any()`
 
 <a name="read-1"></a>
 
 ###read/1##
-
-
 
 
 <pre>read(Key::<a href="#type-key">key()</a>) -> {ok, <a href="#type-conf_obj">conf_obj()</a>} | {error, any()}</pre>
@@ -272,16 +342,19 @@ Converts an ordered list of configuration objects into a configuration tree.<a n
 
 
 
-
-
 Reads a configuration object from the database
 
 The returned item is always the single node. See read_tree(Prefix) on how to read an
-entire tree structure.<a name="read_tree-1"></a>
+entire tree structure.<a name="read-2"></a>
+
+###read/2##
+
+
+`read(Tab, Key) -> any()`
+
+<a name="read_tree-1"></a>
 
 ###read_tree/1##
-
-
 
 
 <pre>read_tree(Prefix::binary()) -> <a href="#type-conf_tree">conf_tree()</a></pre>
@@ -290,16 +363,30 @@ entire tree structure.<a name="read_tree-1"></a>
 
 
 
-
-
 Read a configuration (sub-)tree matching Prefix.
 
 This function does a prefix match on the configuration database, and builds a tree
-from the result. The empty binary will result in the whole tree being built.<a name="store_tree-1"></a>
+from the result. The empty binary will result in the whole tree being built.<a name="read_tree-2"></a>
+
+###read_tree/2##
+
+
+`read_tree(Tab, Prefix) -> any()`
+
+<a name="split_key-1"></a>
+
+###split_key/1##
+
+
+<pre>split_key(K::binary()) -&gt; [binary()]</pre>
+<br></br>
+
+
+Splits a `kvdb_conf` key into a list of key parts
+
+Example: `split_key(<<"a*b*c">>) -> [<<"a">>,<<"b">>,<<"c">>].`<a name="store_tree-1"></a>
 
 ###store_tree/1##
-
-
 
 
 <pre>store_tree(Tree::<a href="#type-conf_tree">conf_tree()</a>) -> ok</pre>
@@ -308,16 +395,33 @@ from the result. The empty binary will result in the whole tree being built.<a n
 
 
 
-
-
 Store a configuration tree in the database.
 
 Each node in the tree will be stored as a separate object in the database.
+<a name="store_tree-2"></a>
+
+###store_tree/2##
+
+
+`store_tree(Tab, Tree) -> any()`
+
+<a name="update_counter-2"></a>
+
+###update_counter/2##
+
+
+`update_counter(K, Incr) -> any()`
+
+<a name="update_counter-3"></a>
+
+###update_counter/3##
+
+
+`update_counter(Tab, K, Incr) -> any()`
+
 <a name="write-1"></a>
 
 ###write/1##
-
-
 
 
 <pre>write(Obj::<a href="#type-conf_obj">conf_obj()</a>) -> ok</pre>
@@ -326,9 +430,13 @@ Each node in the tree will be stored as a separate object in the database.
 
 
 
-
-
 Writes a configuration object into the database.
 
 Each node or leaf in the tree is stored as a separate object, so updating or inserting
-a node or leaf in the tree is a very cheap operation.
+a node or leaf in the tree is a very cheap operation.<a name="write-2"></a>
+
+###write/2##
+
+
+`write(Tab, Obj) -> any()`
+
