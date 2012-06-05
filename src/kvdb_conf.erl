@@ -18,28 +18,45 @@
 
 -module(kvdb_conf).
 
--export([read/1,
-	 write/1,
-	 update_counter/2,
-	 delete/1,
-	 delete_all/1,
-	 read_tree/1,
-	 store_tree/1,
-	 all/0,
-	 first/0,
-	 last/0,
-	 next/1,
-	 prev/1,
-	 next_at_level/1,
-	 first_tree/0,
-	 last_tree/0,
-	 next_tree/1,
+-export([read/1,            %% (Key) -> read(data, Key)
+	 read/2,            %% (Tab, Key)
+	 write/1,           %% (Obj) -> write(data, Obj)
+	 write/2,           %% (Tab, Obj)
+	 update_counter/2,  %% (Key, Incr) -> update_counter(data, Key, Incr)
+	 update_counter/3,  %% (Tab, Key, Incr)
+	 delete/1,          %% (Key) -> delete(data, Key)
+	 delete/2,          %% (Tab, Key)
+	 delete_all/1,      %% (Prefix) -> delete_all(data, Prefix)
+	 delete_all/2,      %% (Tab, Prefix)
+	 read_tree/1,       %% (Key) -> (data, Key)
+	 read_tree/2,       %% (Tab, Key)
+	 store_tree/1,      %% (Tree) -> (data, Tree)
+	 store_tree/2,      %% (Tab, Tree)
+	 all/0,             %% () -> all(data)
+	 all/1,             %% (Tab)
+	 first/0,           %% () -> first(data)
+	 first/1,           %% (Tab)
+	 last/0,            %% () -> last(data)
+	 last/1,            %% (Tab)
+	 next/1,            %% (Key) -> next(data, Key)
+	 next/2,            %% (Tab, Key)
+	 prev/1,            %% (Key) -> next(data, Key)
+	 prev/2,            %% (Tab, Key)
+	 next_at_level/1,   %% (Key) -> next_at_level(data, Key)
+	 next_at_level/2,   %% (Tab, Key)
+	 first_tree/0,      %% () -> first_tree(data)
+	 first_tree/1,      %% (Tab)
+	 last_tree/0,       %% () -> last_tree(data)
+	 last_tree/1,       %% (Tab)
+	 next_tree/1,       %% (Key) -> next_tree(data, Key)
+	 next_tree/2,       %% (Tab, Key)
 	 make_tree/1,
 	 flatten_tree/1,
 	 split_key/1,
 	 join_key/1]).
 
--export([open/1, open/2, close/0, options/1]).
+-export([open/1, open/2, close/0, options/1,
+	 add_table/1, add_table/2]).
 
 
 -type key() :: binary().
@@ -75,6 +92,21 @@ options(File) ->
      {tables, [data]},
      {encoding, {raw,term,raw}}].
 
+add_table(T) ->
+    add_table(T, []).
+
+add_table(T, Opts) ->
+    %% Currently, we don't check options. The representation must be
+    %% {Key, Attrs, Value} for the kvdb_conf API to work.
+    Opts1 =
+	case lists:keyfind(encoding, 1, Opts) of
+	    false ->
+		[{encoding, {raw,term,raw}}|Opts];
+	    _ ->
+		Opts
+	end,
+    kvdb:add_table(instance_(), T, Opts1).
+
 close() ->
     kvdb:close(instance_()).
 
@@ -86,7 +118,10 @@ close() ->
 %% entire tree structure.
 %% @end
 read(Key) when is_binary(Key) ->
-    kvdb:get(instance_(), data, Key).
+    read(data, Key).
+
+read(Tab, Key) when is_binary(Key) ->
+    kvdb:get(instance_(), Tab, Key).
 
 -spec write(conf_obj()) -> ok.
 %% @doc Writes a configuration object into the database.
@@ -95,7 +130,11 @@ read(Key) when is_binary(Key) ->
 %% a node or leaf in the tree is a very cheap operation.
 %% @end
 write({K, As, Data} = Obj) when is_binary(K), is_list(As), is_binary(Data) ->
-    case kvdb:put(instance_(), data, Obj) of
+    write(data, Obj).
+
+write(Tab, {K, As, Data} = Obj) when
+      is_binary(K), is_list(As), is_binary(Data) ->
+    case kvdb:put(instance_(), Tab, Obj) of
 	ok ->
 	    ok;
 	{error, _} = Error ->
@@ -103,62 +142,91 @@ write({K, As, Data} = Obj) when is_binary(K), is_list(As), is_binary(Data) ->
     end.
 
 update_counter(K, Incr) when is_binary(K), is_integer(Incr) ->
-    kvdb:update_counter(instance_(), data, K, Incr).
+    update_counter(data, K, Incr).
+
+update_counter(Tab, K, Incr) when is_binary(K), is_integer(Incr) ->
+    kvdb:update_counter(instance_(), Tab, K, Incr).
 
 delete(K) when is_binary(K) ->
-    kvdb:delete(instance_(), data, K).
+    delete(data, K).
+
+delete(Tab, K) when is_binary(K) ->
+    kvdb:delete(instance_(), Tab, K).
 
 delete_all(Prefix) when is_binary(Prefix) ->
-    delete_all_(kvdb:prefix_match(instance_(), data, Prefix, 100)).
+    delete_all(data, Prefix).
 
-delete_all_({Objs, Cont}) ->
-    _ = [delete(K) || {K,_,_} <- Objs],
-    delete_all_(Cont());
-delete_all_(done) ->
+delete_all(Tab, Prefix) when is_binary(Prefix) ->
+    delete_all_(Tab, kvdb:prefix_match(instance_(), Tab, Prefix, 100)).
+
+delete_all_(Tab, {Objs, Cont}) ->
+    _ = [delete(Tab, K) || {K,_,_} <- Objs],
+    delete_all_(Tab, Cont());
+delete_all_(_Tab, done) ->
     ok.
 
 all() ->
-    all(kvdb:first(instance_(), data)).
+    all(data).
 
-all({ok, {K,_,_} = Obj}) ->
-    [Obj | all(kvdb:next(instance_(), data, K))];
-all(done) ->
+all(Tab) ->
+    all_(kvdb:first(instance_()), Tab).
+
+all_({ok, {K,_,_} = Obj}, Tab) ->
+    [Obj | all_(kvdb:next(instance_(), data, K), Tab)];
+all_(done, _) ->
     [].
 
-first() -> kvdb:first(instance_(), data).
-last () -> kvdb:last(instance_(), data).
-next(K) -> kvdb:next(instance_(), data, K).
-prev(K) -> kvdb:prev(instance_(), data, K).
+first() -> first(data).
+last () -> last(data).
+next(K) -> next(data, K).
+prev(K) -> prev(data, K).
+
+first(Tab) -> kvdb:first(instance_(), Tab).
+last (Tab) -> kvdb:last(instance_(), Tab).
+next(Tab, K) -> kvdb:next(instance_(), Tab, K).
+prev(Tab, K) -> kvdb:prev(instance_(), Tab, K).
 
 first_tree() ->
-    case first() of
+    first_tree(data).
+
+first_tree(Tab) ->
+    case first(Tab) of
 	{ok, {First, _, _}} ->
-	    read_tree(First);
+	    read_tree(Tab, First);
 	done ->
 	    []
     end.
 
 last_tree() ->
-    case last() of
+    last_tree(data).
+
+last_tree(Tab) ->
+    case last(Tab) of
 	{ok, {K,_,_}} ->
 	    Top = hd(split_key(K)),
-	    read_tree(Top);
+	    read_tree(Tab, Top);
 	done ->
 	    []
     end.
 
 next_tree(K) ->
-    case next_at_level(K) of
+    next_tree(data, K).
+
+next_tree(Tab, K) ->
+    case next_at_level(Tab, K) of
 	{ok, Next} ->
-	    read_tree(Next);
+	    read_tree(Tab, Next);
 	done ->
 	    []
     end.
 
 next_at_level(K) ->
+    next_at_level(data, K).
+
+next_at_level(Tab, K) ->
     Len = length(split_key(K)),
     Sz = byte_size(K),
-    case next(<< K:Sz/binary, $+ >>) of
+    case next(Tab, << K:Sz/binary, $+ >>) of
 	{ok, {Next,_,_}} ->
 	    case length(SplitNext = split_key(Next)) of
 		Len ->
@@ -179,7 +247,10 @@ next_at_level(K) ->
 %% from the result. The empty binary will result in the whole tree being built.
 %% @end
 read_tree(Prefix) ->
-    {Objs,_} = kvdb:prefix_match(instance_(), data, Prefix, infinity),
+    read_tree(data, Prefix).
+
+read_tree(Tab, Prefix) ->
+    {Objs,_} = kvdb:prefix_match(instance_(), Tab, Prefix, infinity),
     make_tree(Objs).
 
 -spec make_tree([conf_obj()]) -> conf_tree().
@@ -265,18 +336,21 @@ children(_, Rest, Acc) ->
 %% Each node in the tree will be stored as a separate object in the database.
 %%
 store_tree(Tree) when is_list(Tree) ->
-    [store_tree(T, <<>>) || T <- Tree],
+    store_tree(data, Tree).
+
+store_tree(Tab, Tree) when is_list(Tree) ->
+    [store_tree(Tab, T, <<>>) || T <- Tree],
     ok.
 
-store_tree({_, _, _} = Node, Parent) ->
-    store_node(Node, [], Parent);
-store_tree({K,V,D,C}, Parent) when is_list(C) ->
-    store_node({K,V,D}, C, Parent).
+store_tree(Tab, {_, _, _} = Node, Parent) ->
+    store_node(Tab, Node, [], Parent);
+store_tree(Tab, {K,V,D,C}, Parent) when is_list(C) ->
+    store_node(Tab, {K,V,D}, C, Parent).
 
-store_node({K, Attrs, Data}, Children, Parent) when is_binary(K) ->
+store_node(Tab, {K, Attrs, Data}, Children, Parent) when is_binary(K) ->
     Key = next_key(Parent, K),
-    write({Key, Attrs, Data}),
-    [store_tree(Child, Key) || Child <- Children].
+    write(Tab, {Key, Attrs, Data}),
+    [store_tree(Tab, Child, Key) || Child <- Children].
 
 
 next_key(<<>>, Key) ->
