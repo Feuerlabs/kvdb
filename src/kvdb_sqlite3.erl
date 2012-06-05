@@ -628,7 +628,36 @@ select_attrs(As, Attrs) ->
 %% FIXME!! Must clear out indexes.
 delete(#db{ref = Ref} = Db, Table, Key) ->
     Enc = encoding(Db, Table),
-    sqlite3:delete(Ref, Table, {key,{blob, enc(key, Key, Enc)}}).
+    case index(Db, Table) of
+	{IxTable, Ix} ->
+	    case get(Db, Table, Key) of
+		{ok, {_, As, V}} ->
+		    OldIxVals = kvdb_lib:index_vals(
+				  Ix, Key, As,
+				  fun() -> V end),
+		    DelIxVals = [{I,Key} || I <- OldIxVals],
+		    EncKey = enc(key, Key, Enc),
+		    Results =
+			sqlite3:sql_exec_script(
+			  Ref,
+			  ["BEGIN;",
+			   [sqlite3_lib:delete_sql(
+			      IxTable, "ix",
+			      {blob, <<(sext:encode(I))/binary,
+				       (sext:encode(Key))/binary>>}) ||
+			       I <- DelIxVals],
+			   sqlite3_lib:delete_sql(Table, "key",
+						  {blob, EncKey}),
+			   "COMMIT;"]),
+		    [] = [X || X <- Results, X =/= ok],
+		    ok;
+		_ ->
+		    sqlite3:delete(Ref, Table,
+				   {key,{blob, enc(key, Key, Enc)}})
+	    end;
+	[] ->
+	    sqlite3:delete(Ref, Table, {key,{blob, enc(key, Key, Enc)}})
+    end.
 
 
 prefix_match(Db, Table, Prefix) ->
