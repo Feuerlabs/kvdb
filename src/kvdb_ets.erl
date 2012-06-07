@@ -395,7 +395,8 @@ index_get(#db{ref = Ets} = Db, Table, IxName, IxVal) ->
 		true ->
 		    Keys =
 			ets:select(
-			  Ets, [{ {{'-ix',Table,{{IxName,IxVal},'$1'}}}, [], ['$1'] }]),
+			  Ets, [{ {{'-ix',Table,{{IxName,IxVal},'$1'}}},
+				  [], ['$1'] }]),
 		    lists:foldr(
 		      fun(K, Acc) ->
 			      case ets:lookup(Ets, {Table, 2, K}) of

@@ -23,6 +23,7 @@
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
 -export([info/2, get_schema_mod/2, dump_tables/1]).
+-export([is_table/2]).
 
 %% for testing
 -export([prefix_match/5]).
@@ -35,7 +36,20 @@ get_schema_mod(_, M) ->
     M.
 
 info(#db{ref = Db}, ref) -> Db;
+info(#db{} = Db, tables) -> list_tables(Db);
 info(#db{encoding = Enc}, encoding) -> Enc;
+info(#db{} = Db, {Tab, What}) ->
+    case is_table(Db, Tab) of
+	true ->
+	    case What of
+		encoding -> encoding(Db, Tab);
+		index    -> index   (Db, Tab);
+		type     -> type    (Db, Tab);
+		schema   -> schema  (Db, Tab)
+	    end;
+	false ->
+	    undefined
+    end;
 info(#db{}, _) -> undefined.
 
 dump_tables(#db{ref = Ref} = Db) ->
@@ -324,6 +338,9 @@ encoding(#db{encoding = Enc} = Db, Table) ->
 
 type(Db, Table) ->
     schema_lookup(Db, {a, Table, type}, set).
+
+schema(Db, Table) ->
+    schema_lookup(Db, {a, Table, schema}, []).
 
 insert_or_replace(Db, Table, Data) ->
     SQL = insert_or_replace_sql(Table, Data),
@@ -983,6 +1000,9 @@ whole_table(Ref, Table, Enc) ->
 schema_write(#db{metadata = ETS} = Db, Item) ->
     ets:insert(ETS, Item),
     put(Db, ?SCHEMA_TABLE, Item).
+
+is_table(#db{metadata = ETS}, Table) ->
+    ets:member(ETS, {table, Table}).
 
 schema_lookup(_, {a, ?SCHEMA_TABLE,Attr}, Default) ->
     case Attr of

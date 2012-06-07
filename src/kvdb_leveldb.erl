@@ -17,12 +17,37 @@
 -export([first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3, prefix_match/3, prefix_match/4]).
 -export([get_schema_mod/2]).
+-export([info/2, is_table/2]).
 
 -export([dump_tables/1]).
 
 -import(kvdb_lib, [dec/3, enc/3]).
 
 -include("kvdb.hrl").
+
+-define(if_table(Db, Tab, Expr), if_table(Db, Tab, fun() -> Expr end)).
+
+info(#db{} = Db, What) ->
+    case What of
+	tables   -> list_tables(Db);
+	encoding -> Db#db.encoding;
+	ref      -> Db#db.ref;
+	{Tab,encoding} -> ?if_table(Db, Tab, encoding(Db, Tab));
+	{Tab,index   } -> ?if_table(Db, Tab, index(Db, Tab));
+	{Tab,type    } -> ?if_table(Db, Tab, type(Db, Tab));
+	{Tab,schema  } -> ?if_table(Db, Tab, schema(Db, Tab));
+	_ -> undefined
+    end.
+
+is_table(#db{metadata = ETS}, Tab) ->
+    ets:member(ETS, {table, Tab}).
+
+if_table(Db, Tab, F) ->
+    case is_table(Db, Tab) of
+	true -> F();
+	false -> undefined
+    end.
+
 
 dump_tables(#db{ref = Ref} = Db) ->
     with_iterator(
@@ -1107,6 +1132,9 @@ encoding(#db{encoding = Enc} = Db, Table) ->
 
 index(#db{} = Db, Table) ->
     schema_lookup(Db, {a, Table, index}, []).
+
+schema(#db{} = Db, Table) ->
+    schema_lookup(Db, {a, Table, schema}, []).
 
 check_options([{type, T}|Tl], Db, Rec)
   when T==set; T==fifo; T==lifo; T=={keyed,fifo}; T=={keyed,lifo} ->

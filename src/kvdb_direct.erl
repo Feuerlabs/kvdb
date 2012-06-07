@@ -114,14 +114,18 @@ put(#kvdb_ref{} = DbRef, Table0, {K,As,V}) when is_list(As) ->
     put_(DbRef, Table, {K, fix_attrs(As), V}).
 
 put_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Obj) ->
-    case DbMod:put(Db, Table,
-		   Actual = Schema:validate(DbRef, put, Obj)) of
-	ok ->
-	    Schema:on_update(put, DbRef, Table, Actual),
-	    ok;
-	Error ->
-	    Error
-    end.
+    if_table(DbMod, Db, Table,
+	     fun() ->
+		     case DbMod:put(Db, Table,
+				    Actual =
+					Schema:validate(DbRef, put, Obj)) of
+			 ok ->
+			     Schema:on_update(put, DbRef, Table, Actual),
+			     ok;
+			 Error ->
+			     Error
+		     end
+	     end).
 
 -spec get(Db::db_ref(), Table::table(), Key::any()) ->
 		    {ok, object()} | {error,any()}.
@@ -162,7 +166,10 @@ index_keys(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
 		     Incr::increment()) -> integer().
 update_counter(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, Incr) ->
     Table = table_name(Table0),
-    DbMod:update_counter(Db, Table, Key, Incr).
+    if_table(DbMod, Db, Table,
+	     fun() ->
+		     DbMod:update_counter(Db, Table, Key, Incr)
+	     end).
 
 -spec push(Db::db_ref(), Table::table(), Obj::object()) ->
 		     {ok, ActualKey::any()} | {error, any()}.
@@ -184,14 +191,18 @@ push(#kvdb_ref{} = DbRef, Table0, Q, {K,As,V}) when is_list(As) ->
 
 push_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
 	 Table, Q, Obj) ->
-    case DbMod:push(Db, Table, Q,
-		    Actual = Schema:validate(DbRef, put, Obj)) of
-	{ok, ActualKey} ->
-	    Schema:on_update({push,Q}, DbRef, Table, Actual),
-	    {ok, ActualKey};
-	Error ->
-	    Error
-    end.
+    if_table(
+      DbMod, Db, Table,
+      fun() ->
+	      case DbMod:push(Db, Table, Q,
+			      Actual = Schema:validate(DbRef, put, Obj)) of
+		  {ok, ActualKey} ->
+		      Schema:on_update({push,Q}, DbRef, Table, Actual),
+		      {ok, ActualKey};
+		  Error ->
+		      Error
+	      end
+      end).
 
 -spec pop(db_ref(), table()) ->
 		    {ok, object()} | done | {error,any()}.
@@ -209,13 +220,17 @@ pop(Db, Table) ->
 %% @end
 pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Q) ->
     Table = table_name(Table0),
-    case DbMod:pop(Db, Table, Q) of
-	{ok, Obj, IsEmpty} ->
-	    Schema:on_update({pop,Q,IsEmpty}, DbRef, Table, Obj),
-	    {ok, Obj};
-	blocked -> blocked;
-	done    -> done
-    end.
+    if_table(
+      DbMod, Db, Table,
+      fun() ->
+	      case DbMod:pop(Db, Table, Q) of
+		  {ok, Obj, IsEmpty} ->
+		      Schema:on_update({pop,Q,IsEmpty}, DbRef, Table, Obj),
+		      {ok, Obj};
+		  blocked -> blocked;
+		  done    -> done
+	      end
+      end).
 
 -spec prel_pop(Db::db_ref(), Table::table()) ->
 			 {ok, object(), binary()} |
@@ -235,13 +250,17 @@ prel_pop(Db, Table) ->
 prel_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
 	    Table0, Q) ->
     Table = table_name(Table0),
-    case DbMod:prel_pop(Db, Table, Q) of
-	{ok, Obj, RealKey, IsEmpty} ->
-	    Schema:on_update({pop,Q,IsEmpty}, DbRef, Table, Obj),
-	    {ok, Obj, RealKey};
-	blocked -> blocked;
-	done    -> done
-    end.
+    if_table(
+      DbMod, Db, Table,
+      fun() ->
+	      case DbMod:prel_pop(Db, Table, Q) of
+		  {ok, Obj, RealKey, IsEmpty} ->
+		      Schema:on_update({pop,Q,IsEmpty}, DbRef, Table, Obj),
+		      {ok, Obj, RealKey};
+		  blocked -> blocked;
+		  done    -> done
+	      end
+      end).
 
 -spec extract(#kvdb_ref{}, Table::table(), Key::binary()) ->
 			{ok, object()} | {error,any()}.
@@ -294,7 +313,8 @@ next_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
 
 delete(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
     Table = table_name(Table0),
-    DbMod:delete(Db, Table, Key).
+    if_table(DbMod, Db, Table,
+	     fun() -> DbMod:delete(Db, Table, Key) end).
 
 -spec first(Db::db_ref(), Table::table()) ->
 		      {ok,Key::binary()} |
@@ -435,3 +455,11 @@ fix_attrs(As) ->
 			orddict:store(K, V, Acc)
 		end, orddict:new(), As).
 
+
+if_table(DbMod, Db, Table, F) ->
+    case DbMod:is_table(Db, Table) of
+	true ->
+	    F();
+	false ->
+	    error(no_such_table)
+    end.

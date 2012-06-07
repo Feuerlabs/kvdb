@@ -54,6 +54,7 @@ index_vals(Ixs, K, Attrs, ValF) ->
     index_vals_(Ixs, K, Attrs, Val).
 
 needs_value([{_, _, {value}}|_]) -> true;
+needs_value([{_, _, {_, _}}|_]) -> true;
 needs_value([_|T]) -> needs_value(T);
 needs_value([]) ->  false.
 
