@@ -19,7 +19,8 @@
 	 get/3, index_get/4, index_keys/4,
 	 pop/3, prel_pop/3, extract/3,
 	 list_queue/3, list_queue/6, is_queue_empty/3,
-	 first_queue/2, next_queue/3]).
+	 first_queue/2, next_queue/3,
+	 mark_queue_object/4]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
 -export([info/2, get_schema_mod/2, dump_tables/1]).
@@ -480,6 +481,21 @@ prel_pop(Db, Table, Q) ->
 			     mark_queue_object(Db, Table, Enc, Obj, blocking)
 		     end,
 	    do_pop(Db, Table, T, Q, Remove, true)
+    end.
+
+mark_queue_object(#db{} = Db, Table, AbsKey, St) when St==active;
+						      St==blocking;
+						      St==inactive ->
+    case get(Db, Table, AbsKey) of
+	{ok, Obj} ->
+	    Enc = encoding(Db, Table),
+	    Type = type(Db, Table),
+	    K = element(1, Obj),
+	    {Q, K1} = kvdb_lib:split_queue_key(Enc, Type, K),
+	    mark_queue_object(Db, Table, Enc, Obj, St),
+	    {ok, Q, setelement(1, Obj, K1)};
+	Error ->
+	    Error
     end.
 
 mark_queue_object(#db{ref = Ref}, Table, Enc, Obj, St) when St==inactive;

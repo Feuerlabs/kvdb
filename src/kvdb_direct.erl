@@ -46,6 +46,7 @@
 	 prel_pop/2,
 	 prel_pop/3,
 	 extract/3,
+	 mark_queue_object/4,
 	 list_queue/3,
 	 list_queue/6,
 	 list_tables/1,
@@ -265,8 +266,8 @@ prel_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
 -spec extract(#kvdb_ref{}, Table::table(), Key::binary()) ->
 			{ok, object()} | {error,any()}.
 extract(#kvdb_ref{mod = DbMod,
-		     db = Db,
-		     schema = Schema} = DbRef, Table0, Key) ->
+		  db = Db,
+		  schema = Schema} = DbRef, Table0, Key) ->
     Table = table_name(Table0),
     case DbMod:extract(Db, Table, Key) of
 	{ok, Obj, Q, IsEmpty} ->
@@ -276,6 +277,25 @@ extract(#kvdb_ref{mod = DbMod,
 	    Other
     end.
 
+-spec mark_queue_object(#kvdb_ref{}, Table::table(), Key::binary(),
+			St::active | blocking | inactive) ->
+			       ok | {error, any()}.
+mark_queue_object(#kvdb_ref{mod = DbMod,
+			    db = Db,
+			    schema = Schema} = DbRef, Table0, Key, St) when
+      St == active; St == blocking; St == inactive ->
+    Table = table_name(Table0),
+    case DbMod:mark_queue_object(Db, Table, Key, St) of
+	{ok, Q, Obj} ->
+	    IsEmpty = DbMod:is_empty(Db, Table, Q),
+	    if St == active ->
+		    Schema:on_update({push,Q,IsEmpty}, DbRef, Table, Obj);
+	       true ->
+		    queue_delete_event(DbRef, Table, Key)
+	    end;
+	Other ->
+	    Other
+    end.
 
 -spec list_queue(#kvdb_ref{}, Table::table(), Q::queue_name()) ->
 			   [object()] | {error,any()}.
@@ -311,10 +331,18 @@ next_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
 -spec delete(Db::db_ref(), Table::table(), Key::binary()) ->
 		       ok | {error, any()}.
 
-delete(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
+delete(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Key) ->
     Table = table_name(Table0),
     if_table(DbMod, Db, Table,
-	     fun() -> DbMod:delete(Db, Table, Key) end).
+	     fun() ->
+		     DbMod:delete(Db, Table, Key),
+		     case DbMod:info(Db, {Table,type}) of
+			 T when T==set ->
+			     Schema:on_update({delete,Key}, Db, Table, []);
+			 T ->
+			     queue_delete_event(DbRef, Table, T, Key)
+		     end
+	     end).
 
 -spec first(Db::db_ref(), Table::table()) ->
 		      {ok,Key::binary()} |
@@ -369,6 +397,19 @@ select(#kvdb_ref{mod = DbMod, db = Db}, Table0, MatchSpec, Limit) ->
     {Prefix, Conv} = ms2pfx(MatchSpec, Encoding),
     select_(DbMod:prefix_match(Db,Table,Prefix,Limit),
 	       Conv, MSC, [], Limit, Limit).
+
+
+queue_delete_event(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Key) ->
+    queue_delete_event(DbRef, Table, DbMod:info(Db, {Table, type}), Key).
+
+queue_delete_event(#kvdb_ref{schema = Schema,
+			     mod = DbMod,
+			     db = Db} = DbRef, Table, Type, Key) ->
+    Enc = DbMod:info(Db, {Table,encoding}),
+    {Q,_} = kvdb_lib:split_queue_key(Enc,Type,Key),
+    IsEmpty = DbMod:is_queue_empty(Db, Table, Q),
+    Schema:on_update({delete_queue_obj,Q,IsEmpty}, DbRef, Table, Key).
+
 
 %% We must create a prefix for the prefix_match().
 %% This is a problem if we have raw encoding on the key, since you cannot have
@@ -461,5 +502,5 @@ if_table(DbMod, Db, Table, F) ->
 	true ->
 	    F();
 	false ->
-	    error(no_such_table)
+	    error({no_such_table, Table})
     end.

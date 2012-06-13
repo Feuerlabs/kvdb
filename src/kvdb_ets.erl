@@ -12,10 +12,17 @@
 
 -export([open/2, close/1]).
 -export([add_table/3, delete_table/2, list_tables/1]).
--export([put/3, get/3, delete/3]).
--export([push/4, pop/3, prel_pop/3]).
+-export([put/3, get/3, delete/3, update_counter/4]).
+-export([push/4, pop/3, prel_pop/3, extract/3]).
+-export([list_queue/3, list_queue/6]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([get_schema_mod/2]).
+-export([info/2,
+	 is_table/2,
+	 dump_tables/1]).
+
+-export([int_read/2,
+	 int_write/2]).
 
 -include("kvdb.hrl").
 
@@ -24,11 +31,38 @@
 get_schema_mod(Db, Default) ->
     Default.
 
+-define(if_table(Db, Tab, Expr), if_table(Db, Tab, fun() -> Expr end)).
+
+info(#db{} = Db, What) ->
+    case What of
+	tables   -> list_tables(Db);
+	encoding -> Db#db.encoding;
+	ref      -> Db#db.ref;
+	{Tab,encoding} -> ?if_table(Db, Tab, encoding(Db, Tab));
+	{Tab,index   } -> ?if_table(Db, Tab, index(Db, Tab));
+	{Tab,type    } -> ?if_table(Db, Tab, type(Db, Tab));
+	{Tab,schema  } -> ?if_table(Db, Tab, schema(Db, Tab));
+	_ -> undefined
+    end.
+
+is_table(#db{ref = ETS}, Tab) ->
+    ets:member(ETS, schema_key({table, Tab})).
+
+if_table(Db, Tab, F) ->
+    case is_table(Db, Tab) of
+	true -> F();
+	false -> undefined
+    end.
+
+dump_tables(#db{ref = Ref}) ->
+    %% FIXME: improve later, e.g. doing decode when necessary
+    ets:tab2list(Ref).
+
 open(DbName0, Options) ->
     Enc = proplists:get_value(encoding, Options, raw),
     kvdb_lib:check_valid_encoding(Enc),
     DbName = make_atom_name(DbName0),
-    Ets = ets:new(DbName, [ordered_set]),
+    Ets = ets:new(DbName, [ordered_set,public]),
     Db = ensure_schema(#db{ref = Ets, encoding = Enc}),
     FileName = file_name(DbName, Options),
     FileMode  = file_mode(Options, _ReadOnly = true),
@@ -80,15 +114,27 @@ close(#db{ref = Ets} = Db) ->
 %% flush? to do a save?
 
 add_table(#db{ref = Ets} = Db, Table, Opts) ->
-    TabR = check_options(Opts, Db, #table{name = Table}),
+    TabR0 = check_options(Opts, Db, #table{name = Table}),
+    TabR =
+	case {lists:keyfind(type,1,Opts),
+	      lists:keyfind(encoding,1,Opts)} of
+	    {{_,T}, false} when T==fifo;
+				T==lifo;
+				element(1,T)==fifo;
+				element(1,T)==lifo ->
+		TabR0#table{encoding = {sext,sext,sext}};
+	    _ ->
+		TabR0
+	end,
     case schema_lookup(Db, {table, Table}, undefined) of
-	T when T =/= undefined ->
+	Tr when Tr =/= undefined ->
 	    ok;
 	undefined ->
 	    [schema_write(Db, {K,V}) ||
 		{K,V} <- [{{table,Table}, TabR},
 			  {{a,Table,type}, TabR#table.type},
-			  {{a,Table,index}, TabR#table.index}]],
+			  {{a,Table,index}, TabR#table.index},
+			  {{a,Table,encoding}, TabR#table.encoding}]],
 	    ok
     end.
 
@@ -110,6 +156,7 @@ schema_key({K1, K2, K3}) -> {'-schema', K1, K2, K3}.
 type(Db, Table) -> schema_lookup(Db, {a, Table, type}, undefined).
 index(Db, Table) -> schema_lookup(Db, {a, Table, index}, []).
 encoding(Db, Table) -> schema_lookup(Db, {a, Table, encoding}, raw).
+schema(Db, Table) -> schema_lookup(Db, {a, Table, schema}, []).
 save_mode(Db) -> schema_lookup(Db, save_mode, undefined).
 
 
@@ -172,6 +219,36 @@ put_(#db{ref = Ets} = Db, Table, {K, Value}) ->
     end.
 
 
+update_counter(#db{ref = Ets} = Db, Table, K, Incr) when is_integer(Incr) ->
+    case type(Db, Table) of
+	set ->
+	    case get(Db, Table, K) of
+		{ok, Obj} ->
+		    Sz = size(Obj),
+		    V = element(Sz, Obj),
+		    NewV =
+			if is_integer(V) ->
+				V + Incr;
+			   is_binary(V) ->
+				BSz = bit_size(V),
+				<<I:BSz/integer>> = V,
+				NewI = I + Incr,
+				<<NewI:Sz/integer>>;
+			   true ->
+				error(illegal)
+			end,
+		    NewObj = setelement(Sz, Obj, NewV),
+		    put(Db, Table, NewObj),
+		    NewV;
+		_ ->
+		    error(not_found)
+	    end;
+	_ ->
+	    error(illegal)
+    end.
+
+
+
 push(#db{ref = Ets} = Db, Table, Q, Obj) ->
     Type = type(Db, Table),
     Enc = encoding(Db, Table),
@@ -196,6 +273,7 @@ push(#db{ref = Ets} = Db, Table, Q, Obj) ->
        true ->
 	    {error, badarg}
     end.
+
 
 pop(Db, Table, Q) ->
     case type(Db, Table) of
@@ -351,13 +429,23 @@ list_queue(Limit, {Table,2,{{Q,1},_,_} = AbsKey} = K, Next, Ets, Table, T, Q,
 			  end,
 	    case Cont of
 		true ->
-		    list_queue(decr(Limit), Next(), Next, Ets, Table, T, Q, Fltr,
-			       HeedBlock, Limit0, Acc1);
+		    case decr(Limit) of
+			0 ->
+			    {lists:reverse(Acc1),
+			     fun() ->
+				     list_queue(Limit0, Next(AbsKey), Next,
+						Ets, Table, T, Q, Fltr,
+						HeedBlock, Limit0, [])
+			     end};
+			Limit1 ->
+			    list_queue(Limit1, Next(AbsKey), Next, Ets, Table,
+				       T, Q, Fltr, HeedBlock, Limit0, Acc1)
+		    end;
 		false ->
 		    {lists:reverse(Acc1), fun() -> done end}
 	    end
     end;
-list_queue(0, _, _, _, _, _, _, _, _, _, Acc) ->
+list_queue(_, _, _, _, _, _, _, _, _, _, Acc) ->
     {lists:reverse(Acc), fun() -> done end}.
 
 decr(infinity) -> infinity;
@@ -634,3 +722,27 @@ next_byte_r_list([X|Xs]) when X < 255 ->
     [X+1|Xs];
 next_byte_r_list([]) ->
     [1].
+
+
+int_read(#db{ref = Ets}, Item) ->
+    LookupKey = case Item of
+		    {deleted, _T, _K} = Del -> Del;
+		    {schema, What} ->
+			schema_key(What)
+		end,
+    case ets:lookup(Ets, LookupKey) of
+	[{_, V}] ->
+	    {ok, V};
+	[] ->
+	    {error, not_found}
+    end.
+
+int_write(#db{ref = Ets}, Item, Value) ->
+    Obj = case Item of
+	      {deleted, _T, _K} = Del when is_boolean(Value) ->
+		  {Del, Value};
+	      {schema, What} ->
+		  {schema_key(What), Value}
+	  end,
+    ets:insert(Ets, Obj).
+

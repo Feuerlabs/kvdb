@@ -13,7 +13,8 @@
 -export([add_table/3, delete_table/2, list_tables/1]).
 -export([put/3, push/4, get/3, get_attrs/4, index_get/4, index_keys/4,
 	 update_counter/4, pop/3, prel_pop/3, extract/3, delete/3,
-	 list_queue/3, list_queue/6, is_queue_empty/3]).
+	 list_queue/3, list_queue/6, is_queue_empty/3,
+	 mark_queue_object/4]).
 -export([first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3, prefix_match/3, prefix_match/4]).
 -export([get_schema_mod/2]).
@@ -327,6 +328,20 @@ push(#db{ref = Ref} = Db, Table, Q, Obj) ->
 	    end;
        true ->
 	    error(illegal)
+    end.
+
+mark_queue_object(#db{} = Db, Table, AbsKey, St) when St==blocking;
+						      St==active;
+						      St==inactive ->
+    case q_get(Db, Table, AbsKey) of
+	{ok, Obj} ->
+	    Enc = encoding(Db, Table),
+	    Type = type(Db, Table),
+	    {Q, K1} = kvdb_lib:split_queue_key(Enc, Type, AbsKey),
+	    mark_queue_obj(Db, Table, Enc, Obj, St),
+	    {ok, Q, setelement(1, Obj, K1)};
+	{error,_} = E ->
+	    E
     end.
 
 mark_queue_obj(#db{ref = Ref}, Table, Enc, Obj, St) when St==blocking;

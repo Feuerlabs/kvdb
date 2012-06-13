@@ -73,7 +73,8 @@
 	 list_queue/6,
 	 is_queue_empty/3,
 	 first_queue/2,
-	 next_queue/3]).
+	 next_queue/3,
+	 mark_queue_object/4]).
 %% debugging
 -export([dump_tables/1]).
 
@@ -139,6 +140,7 @@ behaviour_info(callbacks) ->
      {list_queue,3},
      {is_queue_empty,3},
      {first_queue,2},
+     {mark_queue_object,4},
      {next_queue,3},
      {pop,3},
      {delete,3},
@@ -379,8 +381,7 @@ index_keys(Name, Table, IxName, IxVal) ->
 		[Name, Table, IxName, IxVal]).
 
 update_counter(Name, Table, Key, Incr) ->
-    #kvdb_ref{} = Ref = call(Name, db),
-    ?KVDB_CATCH(kvdb_direct:update_counter(Ref, Table, Key, Incr),
+    ?KVDB_CATCH(call(Name, {update_counter, Table, Key, Incr}),
 		[Name, Table, Key, Incr]).
 
 -spec push(db_name(), table(), object()) ->
@@ -437,6 +438,14 @@ prel_pop(Name, Table, Q) ->
 
 extract(Name, Table, Key) ->
     ?KVDB_CATCH(call(Name, {extract, Table, Key}), [Name, Table, Key]).
+
+-spec mark_queue_object(db_name(), Table::table(), Key::binary(),
+			St::active | blocking | inactive) -> ok | {error,any()}.
+mark_queue_object(Name, Table, Key, St) when St==active;
+					     St==blocking;
+					     St==inactive ->
+    ?KVDB_CATCH(call(Name, {mark_queue_object, Table, Key, St}),
+		[Name, Table, Key, St]).
 
 
 -spec list_queue(db_name(), Table::table(), Q::queue_name()) ->
@@ -618,6 +627,8 @@ handle_call(Req, From, St) ->
 
 handle_call_({put, Tab, Obj}, _From, #st{db = Db} = St) ->
     {reply, kvdb_direct:put(Db, Tab, Obj), St};
+handle_call_({update_counter, Table, Key, Incr}, _From, #st{db = Db} = St) ->
+    {reply, kvdb_direct:update_counter(Db, Table, Key, Incr), St};
 handle_call_({push, Tab, Q, Obj}, _From, #st{db = Db} = St) ->
     {reply, kvdb_direct:push(Db, Tab, Q, Obj), St};
 handle_call_({pop, Tab, Q}, _From, #st{db = Db} = St) ->
@@ -626,6 +637,8 @@ handle_call_({prel_pop, Tab, Q}, _From, #st{db = Db} = St) ->
     {reply, kvdb_direct:prel_pop(Db, Tab, Q), St};
 handle_call_({extract, Tab, Key}, _From, #st{db = Db} = St) ->
     {reply, kvdb_direct:extract(Db, Tab, Key), St};
+handle_call_({mark_queue_object, Table, Key, OSt}, _From, #st{db = Db} = St) ->
+    {reply, kvdb_direct:mark_queue_object(Db, Table, Key, OSt), St};
 handle_call_({delete, Tab, Key}, _From, #st{db = Db} = St) ->
     {reply, kvdb_direct:delete(Db, Tab, Key), St};
 handle_call_({add_table, Table, Opts}, _From, #st{db = Db} = St) ->
