@@ -66,12 +66,10 @@
 	 dump_tables/1]).
 
 %% -import(kvdb_schema, [validate/3, validate_attr/3, on_update/4]).
--import(kvdb_lib, [table_name/1]).
+-import(kvdb_lib, [table_name/1, on_update/4]).
 
 -include("kvdb.hrl").
-
--define(KVDB_THROW(E), throw({kvdb_throw, E})).
-
+-include_lib("lager/include/log.hrl").
 
 -spec info(db_ref(), attr_name()) -> undefined | attr_value().
 info(#kvdb_ref{mod = DbMod, db = Db}, Item) ->
@@ -81,36 +79,54 @@ info(#kvdb_ref{mod = DbMod, db = Db}, Item) ->
 %% @doc Low-level equivalent to {@link dump_tables/1}
 %% @end
 dump_tables(#kvdb_ref{mod = DbMod, db = Db}) ->
+    ?debug("dump_tables(#kvdb_ref{mod = ~p})~n", [DbMod]),
     DbMod:dump_tables(Db).
 
 %% @doc Low-level equivalent to {@link add_table/3}
 %% @end
-add_table(#kvdb_ref{mod = DbMod, db = Db}, Table0, Opts) ->
+add_table(#kvdb_ref{mod = DbMod, db = Db} = R, Table0, Opts) ->
+    ?debug("add_table(#kvdb_ref{mod = ~p}, ~p, ~p)~n", [DbMod, Table0, Opts]),
     Table = kvdb_lib:valid_table_name(Table0),
-    DbMod:add_table(Db, Table, Opts).
+    case DbMod:add_table(Db, Table, Opts) of
+	ok ->
+	    on_update(add_table, R, Table, Opts),
+	    ok;
+	Other ->
+	    Other
+    end.
 
 -spec delete_table(Db::db_ref(), Table::table()) ->
 			     ok | {error, any()}.
 %% @doc low-level equivalent to {@link delete_table/2}
 %% @end
-delete_table(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
+delete_table(#kvdb_ref{mod = DbMod, db = Db} = R, Table0) ->
+    ?debug("delete_table(#kvdb_ref{mod = ~p}, ~p)~n", [DbMod, Table0]),
     Table = table_name(Table0),
-    DbMod:delete_table(Db, Table).
+    case DbMod:delete_table(Db, Table) of
+	ok ->
+	    on_update(delete_table, R, Table, []),
+	    ok;
+	Other ->
+	    Other
+    end.
 
 -spec list_tables(db_ref()) -> [binary()].
 %% @doc Lists the tables defined in the database
 %% @end
 list_tables(#kvdb_ref{mod = DbMod, db = Db}) ->
+    ?debug("list_tables(#kvdb_ref{mod = ~p})~n", [DbMod]),
     DbMod:list_tables(Db).
 
 -spec put(Db::db_ref(), Table::table(), Obj::object()) ->
 		    ok | {error, any()}.
 %% @doc Low-level equivalent to {@link put/3}
 %% @end
-put(#kvdb_ref{} = DbRef, Table0, {_,_} = Obj) ->
+put(#kvdb_ref{mod = DbMod} = DbRef, Table0, {_,_} = Obj) ->
+    ?debug("put(#kvdb_ref{mod = ~p}, ~p, ~p)~n", [DbMod, Table0, Obj]),
     Table = table_name(Table0),
     put_(DbRef, Table, Obj);
-put(#kvdb_ref{} = DbRef, Table0, {K,As,V}) when is_list(As) ->
+put(#kvdb_ref{mod = DbMod} = DbRef, Table0, {K,As,V} = _O) when is_list(As) ->
+    ?debug("put(#kvdb_ref{mod = ~p}, ~p, ~p)~n", [DbMod, Table0, _O]),
     Table = table_name(Table0),
     put_(DbRef, Table, {K, fix_attrs(As), V}).
 
@@ -121,7 +137,7 @@ put_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Obj) ->
 				    Actual =
 					Schema:validate(DbRef, put, Obj)) of
 			 ok ->
-			     Schema:on_update(put, DbRef, Table, Actual),
+			     on_update(put, DbRef, Table, Actual),
 			     ok;
 			 Error ->
 			     Error
@@ -133,6 +149,7 @@ put_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Obj) ->
 %% @doc Low-level equivalent of {@link get/3}
 %% @end
 get(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
+    ?debug("get(#kvdb_ref{mod = ~p}, ~p, ~p)~n", [DbMod, Table0, Key]),
     Table = table_name(Table0),
     case DbMod:get(Db, Table, Key) of
 	{ok, Obj} ->
@@ -142,6 +159,8 @@ get(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
     end.
 
 get_attrs(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, As) ->
+    ?debug("get_attrs(#kvdb_ref{mod = ~p}, ~p, ~p, ~p)~n", [DbMod, Table0,
+							    Key, As]),
     Table = table_name(Table0),
     DbMod:get_attrs(Db, Table, Key, As).
 
@@ -150,6 +169,8 @@ get_attrs(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, As) ->
 %% @doc Low-level equivalent of {@link index_get/4}
 %% @end
 index_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
+    ?debug("index_get(#kvdb_ref{mod = ~p}, ~p, ~p, ~p)~n",
+	   [DbMod, Table0, IxName, IxVal]),
     Table = table_name(Table0),
     case DbMod:index_get(Db, Table, IxName, IxVal) of
 	Res when is_list(Res) -> Res
@@ -158,6 +179,8 @@ index_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
 %% @doc Low-level equivalent of {@link index_keys/4}
 %% @end
 index_keys(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
+    ?debug("index_keys(#kvdb_ref{mod = ~p}, ~p, ~p, ~p)~n",
+	   [DbMod, Table0, IxName, IxVal]),
     Table = table_name(Table0),
     case DbMod:index_keys(Db, Table, IxName, IxVal) of
 	Res when is_list(Res) -> Res
@@ -165,11 +188,15 @@ index_keys(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
 
 -spec update_counter(Db::db_ref(), Table::table(), Key::binary(),
 		     Incr::increment()) -> integer().
-update_counter(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key, Incr) ->
+update_counter(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table0, Key, Incr) ->
+    ?debug("update_counter(#kvdb_ref{mod = ~p}, ~p, ~p, ~p)~n",
+	   [DbMod, Table0, Key, Incr]),
     Table = table_name(Table0),
     if_table(DbMod, Db, Table,
 	     fun() ->
-		     DbMod:update_counter(Db, Table, Key, Incr)
+		     Res = DbMod:update_counter(Db, Table, Key, Incr),
+		     on_update(update_counter, DbRef, Table, {Key, Incr, Res}),
+		     Res
 	     end).
 
 -spec push(Db::db_ref(), Table::table(), Obj::object()) ->
@@ -183,10 +210,13 @@ push(Db, Table, Obj) ->
 		     {ok, ActualKey::any()} | {error, any()}.
 %% @doc Low-level equivalent of {@link push/4}
 %% @end
-push(#kvdb_ref{} = DbRef, Table0, Q, {_,_} = Obj) ->
+push(#kvdb_ref{mod = DbMod} = DbRef, Table0, Q, {_,_} = Obj) ->
+    ?debug("push(#kvdb_ref{mod = ~p}, ~p, ~p, ~p)~n", [DbMod, Table0, Q, Obj]),
     Table = table_name(Table0),
     push_(DbRef, Table, Q, Obj);
-push(#kvdb_ref{} = DbRef, Table0, Q, {K,As,V}) when is_list(As) ->
+push(#kvdb_ref{mod = DbMod} = DbRef, Table0, Q, {K,As,V} = _O)
+  when is_list(As) ->
+    ?debug("push(#kvdb_ref{mod = ~p}, ~p, ~p, ~p)~n", [DbMod, Table0, Q, _O]),
     Table = table_name(Table0),
     push_(DbRef, Table, Q, {K, fix_attrs(As), V}).
 
@@ -198,7 +228,8 @@ push_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
 	      case DbMod:push(Db, Table, Q,
 			      Actual = Schema:validate(DbRef, put, Obj)) of
 		  {ok, ActualKey} ->
-		      Schema:on_update({push,Q}, DbRef, Table, Actual),
+		      on_update({q_op,push,Q,false}, DbRef, Table,
+				{Actual,Obj}),
 		      {ok, ActualKey};
 		  Error ->
 		      Error
@@ -219,14 +250,15 @@ pop(Db, Table) ->
 		    {error,any()}.
 %% @doc Low-level equivalent of {@link pop/3}
 %% @end
-pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Q) ->
+pop(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table0, Q) ->
+    ?debug("push(#kvdb_ref{mod = ~p}, ~p, ~p)~n", [DbMod, Table0, Q]),
     Table = table_name(Table0),
     if_table(
       DbMod, Db, Table,
       fun() ->
 	      case DbMod:pop(Db, Table, Q) of
 		  {ok, Obj, IsEmpty} ->
-		      Schema:on_update({pop,Q,IsEmpty}, DbRef, Table, Obj),
+		      on_update({q_op,pop,Q,IsEmpty}, DbRef, Table, Obj),
 		      {ok, Obj};
 		  blocked -> blocked;
 		  done    -> done
@@ -248,7 +280,7 @@ prel_pop(Db, Table) ->
 			 blocked |
 			 {error,any()}.
 
-prel_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
+prel_pop(#kvdb_ref{mod = DbMod, db = Db} = DbRef,
 	    Table0, Q) ->
     Table = table_name(Table0),
     if_table(
@@ -256,7 +288,7 @@ prel_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
       fun() ->
 	      case DbMod:prel_pop(Db, Table, Q) of
 		  {ok, Obj, RealKey, IsEmpty} ->
-		      Schema:on_update({pop,Q,IsEmpty}, DbRef, Table, Obj),
+		      on_update({q_op,prel_pop,Q,IsEmpty}, DbRef, Table, Obj),
 		      {ok, Obj, RealKey};
 		  blocked -> blocked;
 		  done    -> done
@@ -266,12 +298,11 @@ prel_pop(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
 -spec extract(#kvdb_ref{}, Table::table(), Key::binary()) ->
 			{ok, object()} | {error,any()}.
 extract(#kvdb_ref{mod = DbMod,
-		  db = Db,
-		  schema = Schema} = DbRef, Table0, Key) ->
+		  db = Db} = DbRef, Table0, Key) ->
     Table = table_name(Table0),
     case DbMod:extract(Db, Table, Key) of
 	{ok, Obj, Q, IsEmpty} ->
-	    Schema:on_update({pop,Q,IsEmpty}, DbRef, Table, Obj),
+	    on_update({q_op,extract,Q,IsEmpty}, DbRef, Table, Key),
 	    {ok, Obj};
 	Other ->
 	    Other
@@ -281,18 +312,13 @@ extract(#kvdb_ref{mod = DbMod,
 			St::active | blocking | inactive) ->
 			       ok | {error, any()}.
 mark_queue_object(#kvdb_ref{mod = DbMod,
-			    db = Db,
-			    schema = Schema} = DbRef, Table0, Key, St) when
+			    db = Db} = DbRef, Table0, Key, St) when
       St == active; St == blocking; St == inactive ->
     Table = table_name(Table0),
     case DbMod:mark_queue_object(Db, Table, Key, St) of
 	{ok, Q, Obj} ->
 	    IsEmpty = DbMod:is_empty(Db, Table, Q),
-	    if St == active ->
-		    Schema:on_update({push,Q,IsEmpty}, DbRef, Table, Obj);
-	       true ->
-		    queue_delete_event(DbRef, Table, Key)
-	    end;
+	    on_update({q_op,mark_obj,Q,IsEmpty}, DbRef, Table, {St,Obj});
 	Other ->
 	    Other
     end.
@@ -331,14 +357,14 @@ next_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
 -spec delete(Db::db_ref(), Table::table(), Key::binary()) ->
 		       ok | {error, any()}.
 
-delete(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table0, Key) ->
+delete(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table0, Key) ->
     Table = table_name(Table0),
     if_table(DbMod, Db, Table,
 	     fun() ->
 		     DbMod:delete(Db, Table, Key),
 		     case DbMod:info(Db, {Table,type}) of
 			 T when T==set ->
-			     Schema:on_update({delete,Key}, Db, Table, []);
+			     on_update(delete, DbRef, Table, Key);
 			 T ->
 			     queue_delete_event(DbRef, Table, T, Key)
 		     end
@@ -398,17 +424,15 @@ select(#kvdb_ref{mod = DbMod, db = Db}, Table0, MatchSpec, Limit) ->
     select_(DbMod:prefix_match(Db,Table,Prefix,Limit),
 	       Conv, MSC, [], Limit, Limit).
 
+%% queue_delete_event(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Key) ->
+%%     queue_delete_event(DbRef, Table, DbMod:info(Db, {Table, type}), Key).
 
-queue_delete_event(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Key) ->
-    queue_delete_event(DbRef, Table, DbMod:info(Db, {Table, type}), Key).
-
-queue_delete_event(#kvdb_ref{schema = Schema,
-			     mod = DbMod,
+queue_delete_event(#kvdb_ref{mod = DbMod,
 			     db = Db} = DbRef, Table, Type, Key) ->
     Enc = DbMod:info(Db, {Table,encoding}),
     {Q,_} = kvdb_lib:split_queue_key(Enc,Type,Key),
     IsEmpty = DbMod:is_queue_empty(Db, Table, Q),
-    Schema:on_update({delete_queue_obj,Q,IsEmpty}, DbRef, Table, Key).
+    on_update({q_op,extract,Q,IsEmpty}, DbRef, Table, Key).
 
 
 %% We must create a prefix for the prefix_match().
@@ -504,3 +528,8 @@ if_table(DbMod, Db, Table, F) ->
 	false ->
 	    error({no_such_table, Table})
     end.
+
+
+%% on_update(Event, #kvdb_ref{} = DbRef, Table, Info) ->
+%%     kvdb_lib:log(DbRef, Event, Table, Info),
+%%     kvdb_trans:on_update(Event, DbRef, Table, Info).

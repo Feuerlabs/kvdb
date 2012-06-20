@@ -33,10 +33,10 @@ validate(_, _, Obj) ->
 validate_attr(_, _, Attr) ->
     Attr.
 
-on_update({pop,Q,true}, DB, Table, _) ->
+on_update({q_op,_,Q,true}, DB, Table, _) ->
     notify_queue_status(DB, Table, Q, empty),
     ok;
-on_update({push,Q}, DB, Table, _) ->
+on_update({q_op,_,Q,false}, DB, Table, _) ->
     notify_queue_status(DB, Table, Q, not_empty),
     ok;
 on_update(_, _, _, _) ->

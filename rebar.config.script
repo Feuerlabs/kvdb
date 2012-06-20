@@ -1,10 +1,7 @@
 %% -*- erlang -*-
-{ok, Opts} = file:consult(
-	       filename:join(
-		 filename:dirname(SCRIPT), "rebar.config")).
 case os:getenv("REBAR_DEPS") of
-    false -> Opts;
-    [] -> Opts;
+    false -> CONFIG;
+    [] -> CONFIG;
     Dir ->
-	lists:keystore(deps_dir, 1, Opts, {deps_dir, Dir})
+	lists:keystore(deps_dir, 1, CONFIG, {deps_dir, Dir})
 end.

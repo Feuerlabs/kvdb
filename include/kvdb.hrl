@@ -7,7 +7,7 @@
 -record(kvdb_ref, {name, db, mod, schema = db}).
 -opaque db_ref()  :: #kvdb_ref{}.
 
--record(db, {ref, encoding = sext, metadata}).
+-record(db, {ref, encoding = sext, metadata, log = false}).
 -record(table, {name, type = set, encoding = sext, columns, schema, index = []}).
 
 -opaque db() :: #db{}.
@@ -28,3 +28,22 @@
 
 -type object() :: {key(), value()} | {key(), attrs(), value()}.
 -type increment() :: integer().
+
+-record(commit, {add_tables = [],
+		 del_tables = [],
+		 write = [],
+		 delete = []}).
+
+-record(thr, {writes,
+	      bytes,
+	      time}).
+
+-define(KVDB_CATCH(Expr, Args),
+	try Expr
+	catch
+	    throw:{kvdb_throw, __E} ->
+		%% error(__E, Args)
+		error(__E, erlang:get_stacktrace())
+	end).
+
+-define(KVDB_THROW(E), throw({kvdb_throw, E})).

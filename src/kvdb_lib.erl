@@ -8,6 +8,7 @@
 	 try_decode/1,
 	 enc_prefix/3,
 	 is_prefix/3,
+	 binary_match/2,
 	 check_valid_encoding/1,
 	 actual_key/3,
 	 actual_key/4,
@@ -18,6 +19,17 @@
 	 timestamp/0, timestamp/1,
 	 timestamp_to_datetime/1,
 	 good_string/1]).
+-export([common_open/3,
+	 log_filename/1,
+	 open_log/3,
+	 replay_logs/2,
+	 clear_log_thresholds/1,
+	 log/2,
+	 on_update/4,
+	 commit/2]).
+
+-include("kvdb.hrl").
+-include_lib("lager/include/log.hrl").
 
 valid_table_name(Table0) ->
     Table = table_name(Table0),
@@ -155,23 +167,27 @@ if_valid_ix_ref({M,F}   , _, Acc) when is_atom(M), is_atom(F) -> Acc;
 if_valid_ix_ref(A       , _, Acc) when is_atom(A) -> Acc;
 if_valid_ix_ref(_, X, Acc) -> [X|Acc].
 
-enc(_, X, raw ) -> X;
+enc(_, X, raw ) when is_binary(X) -> X;
 enc(_, X, term) -> term_to_binary(X);
 enc(_, X, sext) -> sext:encode(X);
 enc(key  , X, {Enc,_}  ) -> enc(key, X, Enc);
 enc(key  , X, {Enc,_,_}) -> enc(key, X, Enc);
 enc(value, X, {_,Enc}  ) -> enc(value, X, Enc);
 enc(value, X, {_,_,Enc}) -> enc(value, X, Enc);
-enc(attrs, X, {_,Enc,_}) -> enc(attrs, X, Enc).
+enc(attrs, X, {_,Enc,_}) -> enc(attrs, X, Enc);
+enc(W, X, E) ->
+    error({cannot_encode, [W,X,E]}).
 
-dec(_, X, raw ) -> X;
+dec(_, X, raw ) when is_binary(X) -> X;
 dec(_, X, term) -> binary_to_term(X);
 dec(_, X, sext) -> sext:decode(X);
 dec(key  , X, {Enc,_}  ) -> dec(key, X, Enc);
 dec(key  , X, {Enc,_,_}) -> dec(key, X, Enc);
 dec(value, X, {_,Enc}  ) -> dec(value, X, Enc);
 dec(value, X, {_,_,Enc}) -> dec(value, X, Enc);
-dec(attrs, X, {_,Enc,_}) -> dec(attrs, X, Enc).
+dec(attrs, X, {_,Enc,_}) -> dec(attrs, X, Enc);
+dec(W,X,E) ->
+    error({cannot_decode, [W,X,E]}).
 
 try_decode(V) ->
     try binary_to_term(V)
@@ -383,3 +399,159 @@ bin(B) when is_binary(B) ->
     B;
 bin(T) ->
     iolist_to_binary(io_lib:fwrite("~w", [T])).
+
+
+common_open(Name, #db{} = Db, Options) ->
+    case proplists:get_value(log_dir, Options, undefined) of
+	undefined ->
+	    {ok, Db#db{log = false}};
+	D ->
+	    replay_logs(D, Db),
+	    kvdb_meta:write(Db, log_dir, D),
+	    F = log_filename(D),
+	    do_open_log(Name, F, Db, log_threshold(Options))
+    end.
+
+replay_logs(Dir, #db{} = Db) ->
+    case file:list_dir(Dir) of
+	{ok, [_|_] = Fs} ->
+	    io:fwrite("Logs = ~p~n", [Fs]);
+	Other ->
+	    io:fwrite("No logs? ~p~n", [Other])
+    end.
+
+log_filename(D) ->
+    case file:list_dir(D) of
+	{ok, Fs} ->
+	    log_filename(D, Fs);
+	{error,_} ->
+	    case filelib:ensure_dir(F = log_filename(D, [])) of
+		ok ->
+		    F;
+		{error, E} ->
+		    error({log_filename, [D, E]})
+	    end
+    end.
+
+log_threshold(Options) ->
+    case proplists:get_value(log_threshold, Options) of
+	undefined -> #thr{writes = 10};
+	TOpts ->
+	    T0 = #thr{},
+	    Writes = proplists:get_value(writes, TOpts, T0#thr.writes),
+	    Bytes = proplists:get_value(bytes, TOpts, T0#thr.bytes),
+	    %% Time = proplists:get_value(writes, TOpts, T0#thr.time),
+	    T0#thr{writes = Writes,
+		   bytes = Bytes
+		  }
+    end.
+
+do_open_log(Name, F, Db, Thr) ->
+    case open_log(Name, F, self()) of
+	{ok, Log, Name, F} ->
+	    kvdb_meta:write(Db, log_info, [{id, Log},
+					   {name, Name},
+					   {file, F}]),
+	    {ok, Db#db{log = {Log, Thr}}};
+	{error,_} = E ->
+	    {error, {open_log_error, [F, E]}}
+    end.
+
+open_log(Name0, F, Pid) ->
+    Now = erlang:now(),
+    Name = {kvdb_log, Name0, Now},
+    case disk_log:open([{name, Name},
+			{file, F},
+			{linkto, Pid},
+			{size, infinity},
+			{type, halt}]) of
+	{ok, Log} ->
+	    {ok, [{id,Log},
+		  {name, Name},
+		  {file, F}]};
+	{repaired, Log, Rec, Bad} ->
+	    ?error("Log file ~p repaired: ~p; ~p.~n",
+		   [F, Rec, Bad]),
+	    {ok, [{id, Log},
+		  {name, Name},
+		  {file, F}]}
+    end.
+
+
+
+log_filename(Dir, Fs) ->
+    {_,_,US} = TS = os:timestamp(),
+    {{Y,Mo,D},{H,Mi,S}} = calendar:now_to_datetime(TS),
+    F = lists:flatten(
+	  io_lib:format("~s.~2..0w~2..0w~2..0w-~2..0w~2..0w~2..0w~w",
+			[filename:join(Dir,"kvdb_log"),
+			 Y rem 100,Mo,D,H,Mi,S,US div 1000])),
+    io:fwrite("F = ~s~n", [F]),
+    case lists:member(F, Fs) of
+	true ->
+	    %% how likely is that?
+	    timer:sleep(100),
+	    log_filename(Dir, Fs);
+	false ->
+	    F
+    end.
+
+commit(#commit{write = Writes,
+	       delete = Deletes,
+	       add_tables = AddTabs,
+	       del_tables = DelTabs} = Commit,
+       #kvdb_ref{mod = M,db=Db0} = Ref) ->
+    Db = Db0#db{log = false},
+    Ops = [{fun(T) ->
+		    M:delete_table(Db, T)
+	    end, DelTabs},
+	   {fun({T,TRec,DelFirst}) ->
+		    if DelFirst ->
+			    M:delete_table(Db, T);
+		       true -> ok
+		    end,
+		    M:add_table(Db, T, TRec)
+	    end, AddTabs},
+	   {fun({T, Obj}) ->
+		    M:put(Db, T, Obj)
+	    end, Writes},
+	   {fun({T, K}) ->
+		    M:delete(Db, T, K)
+	    end, Deletes}],
+    [lists:foreach(F, L) || {F, L} <- Ops],
+    log(Ref, Commit).  % note: original log mode, since Db0 used.
+
+on_update(Event, #kvdb_ref{} = DbRef, Table, Info) ->
+    log(DbRef, {Event, Table, Info}),
+    kvdb_trans:on_update(Event, DbRef, Table, Info).
+
+
+log(#kvdb_ref{db = #db{log = false}}, _) ->
+    ok;
+log(#kvdb_ref{name = Name, db = #db{log = {Log,Thr}} = Db}, Data) ->
+    Term = {os:timestamp(), Data},
+    Bytes = erts_debug:flat_size(Term),
+    disk_log:log(Log, Term),
+    SumBytes = kvdb_meta:update_counter(Db, logged_bytes, Bytes),
+    SumWrites = kvdb_meta:update_counter(Db, logged_writes, 1),
+    case threshold_reached(#thr{bytes = SumBytes, writes = SumWrites}, Thr) of
+	true ->
+	    case kvdb_meta:write_new(Db, log_threshold, true) of
+		true ->
+		    kvdb_server:cast(Name, log_threshold);
+		false ->
+		    ok
+	    end;
+	false ->
+	    ok
+    end.
+
+threshold_reached(#thr{bytes = ABs, writes = AWs},
+		  #thr{bytes = TBs, writes = TWs}) ->
+    (TBs =/= undefined andalso ABs > TBs)
+	orelse
+	(TWs =/= undefined andalso AWs > TWs).
+
+clear_log_thresholds(Db) ->
+    kvdb_meta:write(Db, logged_bytes, 0),
+    kvdb_meta:write(Db, logged_writes, 0).

@@ -5,7 +5,8 @@
 
 %% API
 -export([start_link/0]).
--export([childspec/1]).
+-export([start_child/2]).
+	 %% childspec/1]).
 
 %% Supervisor callbacks
 -export([init/1]).
@@ -25,30 +26,35 @@ start_link() ->
 %% ===================================================================
 
 init([]) ->
-    Children = childspecs(DBs = get_databases()),
-    io:fwrite("DBs = ~p~n", [DBs]),
-    {ok, { {one_for_one, 5, 10}, Children} }.
+    %% Children = childspecs(DBs = get_databases()),
+    %% io:fwrite("DBs = ~p~n", [DBs]),
+    {ok, { {simple_one_for_one, 5, 10},
+	   [{id, {kvdb_server, start_link, []},
+	     transient, 5000, worker, [kvdb_server]}] }}.
 
+
+start_child(Name, Opts) ->
+    supervisor:start_child(?MODULE, [Name, Opts]).
 
 childspecs(DBs) ->
     [childspec(DB) || DB <- lists:concat(DBs)].
 
 childspec({Name, Opts}) ->
     {Name, {kvdb, start_link, [Name, Opts]},
-     permanent, 5000, worker, [kvdb]}.
+     transient, 5000, worker, [kvdb]}.
 
-get_databases() ->
-    %% If 'setup' is available, query for other databases
-    OtherDBs =
-	case lists:keymember(setup, 1, application:loaded_applications()) of
-	    true ->
-		[DB || {_, DB} <- setup:find_env_vars(kvdb_databases)];
-	    false ->
-		[]
-	end,
-    case application:get_env(databases) of
-	{ok, DBs} when is_list(DBs) ->
-	    [DBs | OtherDBs];
-	_ ->
-	    OtherDBs
-    end.
+%% get_databases() ->
+%%     %% If 'setup' is available, query for other databases
+%%     OtherDBs =
+%% 	case lists:keymember(setup, 1, application:loaded_applications()) of
+%% 	    true ->
+%% 		[DB || {_, DB} <- setup:find_env_vars(kvdb_databases)];
+%% 	    false ->
+%% 		[]
+%% 	end,
+%%     case application:get_env(databases) of
+%% 	{ok, DBs} when is_list(DBs) ->
+%% 	    [DBs | OtherDBs];
+%% 	_ ->
+%% 	    OtherDBs
+%%     end.

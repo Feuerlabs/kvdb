@@ -5,7 +5,7 @@
 %%% @end
 %%% Created : 30 Dec 2011 by Tony Rogvall <tony@rogvall.se>
 
--module(kvdb_test).
+-module(kvdb_tests).
 
 -ifdef(TEST).
 
@@ -70,7 +70,8 @@ dbs() ->
      {s1,sext,sqlite3},
      {s2,raw,sqlite3},
      {l1,sext,leveldb},
-     {l2,raw,leveldb}
+     {l2,raw,leveldb},
+     {e1,sext,ets}
     ].
 
 create_db(Name, Encoding, Backend) ->
@@ -285,11 +286,19 @@ first_next_queue(Db) ->
     first_next_queue(Db, fifo, raw),
     first_next_queue(Db, lifo, raw),
     first_next_queue(Db, fifo, sext),
-    first_next_queue(Db, lifo, sext).
+    first_next_queue(Db, lifo, sext),
+    first_next_queue(Db, {keyed,fifo}, raw),
+    first_next_queue(Db, {keyed,fifo}, sext).
+
+type_to_binary({keyed,T}) ->
+    <<"keyed_", (atom_to_binary(T, latin1))/binary>>;
+type_to_binary(T) ->
+    atom_to_binary(T, latin1).
+
 
 first_next_queue(Db, Type, Enc) ->
     T = <<"q1_",(atom_to_binary(Db,latin1))/binary, "_",
-	  (atom_to_binary(Type,latin1))/binary, "_",
+	  (type_to_binary(Type))/binary, "_",
 	  (atom_to_binary(Enc, latin1))/binary>>, % binary, parameterized table name
     M = {Db,Type,Enc,T},
     Qs = if Enc == raw -> [<<"q1">>, <<"q2">>, <<"q3">>, <<"q4">>];

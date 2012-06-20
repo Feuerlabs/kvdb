@@ -46,7 +46,8 @@ info(#db{} = Db, {Tab, What}) ->
 		encoding -> encoding(Db, Tab);
 		index    -> index   (Db, Tab);
 		type     -> type    (Db, Tab);
-		schema   -> schema  (Db, Tab)
+		schema   -> schema  (Db, Tab);
+		tabrec   -> schema_lookup(Db, {table, Tab}, undefined)
 	    end;
 	false ->
 	    undefined
@@ -140,8 +141,10 @@ close(#db{ref = Db, metadata = ETS}) ->
     ets:delete(ETS),  % will crash if called several times
     sqlite3:close(Db).
 
-add_table(#db{ref = Ref, encoding = Enc} = Db, Table, Opts) ->
+add_table(#db{encoding = Enc} = Db,Table,Opts) when is_list(Opts) ->
     TabR = check_options(Opts, Db, #table{name = Table, encoding = Enc}),
+    add_table(Db, Table, TabR);
+add_table(#db{ref = Ref} = Db, Table, #table{} = TabR) ->
     case schema_lookup(Db, {table, Table}, undefined) of
 	T when T =/= undefined ->
 	    ok;

@@ -10,6 +10,7 @@
 		  gproc
                  ]},
   {mod, {kvdb_app, []}},
+  {start_phases, [{open_dbs, []}]},
   {env, [
 	 {backend, ets}  % default
 	 %% {dir, DbDirectory}
