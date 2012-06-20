@@ -37,6 +37,7 @@ info(#db{} = Db, What) ->
 	{Tab,index   } -> ?if_table(Db, Tab, index(Db, Tab));
 	{Tab,type    } -> ?if_table(Db, Tab, type(Db, Tab));
 	{Tab,schema  } -> ?if_table(Db, Tab, schema(Db, Tab));
+	{Tab,tabrec  } -> schema_lookup(Db, {table, Tab}, undefined);
 	_ -> undefined
     end.
 
@@ -169,13 +170,15 @@ close(_Db) ->
     %% leveldb is garbage collected
     ok.
 
-add_table(#db{encoding = Enc} = Db, Table, Opts) ->
+add_table(#db{encoding = Enc} = Db, Table, Opts) when is_list(Opts) ->
     TabR = check_options(Opts, Db, #table{name = Table, encoding = Enc}),
+    add_table(Db, Table, TabR);
+add_table(Db, Table, #table{} = TabR) ->
     case schema_lookup(Db, {table, Table}, undefined) of
 	T when T =/= undefined ->
 	    ok;
 	undefined ->
-	    case do_add_table(Db, Table, Opts) of
+	    case do_add_table(Db, Table) of
 		ok ->
 		    schema_write(Db, {{table, Table}, TabR}),
 		    schema_write(Db, {{a, Table, encoding}, TabR#table.encoding}),
@@ -187,7 +190,7 @@ add_table(#db{encoding = Enc} = Db, Table, Opts) ->
 	    end
     end.
 
-do_add_table(#db{ref = Db}, Table, _Opts) ->
+do_add_table(#db{ref = Db}, Table) ->
     T = make_table_key(Table, <<>>),
     eleveldb:put(Db, T, <<>>, []).
 
@@ -1062,27 +1065,45 @@ iterator_move(#db{ref = Ref} = Db, Enc, Table, Rel, Comp, Dir) ->
     with_iterator(
       Ref,
       fun(I) ->
-	      case eleveldb:iterator_move(I, RelKey) of
-		  {ok, <<TableKey:KeySize/binary, Key/binary>>, Value} ->
-		      case Key =/= <<>> andalso Comp(Key, EncRel) of
-			  true ->
-			      {ok, decode_obj(Db, Enc, Table, Key, Value)};
-			  false ->
-			      case eleveldb:iterator_move(I, Dir) of
-				  {ok, <<TableKey:KeySize/binary, Key2/binary>>, Value2} ->
-				      case Key2 of
-					  <<>> -> done;
-					  _ ->
-					      {ok, decode_obj(Db, Enc, Table, Key2, Value2)}
-				      end;
-				  _ ->
-				      done
-			      end
-		      end;
-		  _ ->
-		      done
-	      end
+	      iterator_move_(I, Db, Table, Enc, TableKey, KeySize,
+			     EncRel, RelKey, Comp, Dir)
       end).
+
+iterator_move_(I, Db, Table, Enc, TableKey, KeySize, EncRel,
+	       RelKey, Comp, Dir) ->
+    case eleveldb:iterator_move(I, RelKey) of
+	{ok, <<TableKey:KeySize/binary, Key/binary>>, Value} ->
+	    case Key =/= <<>> andalso Comp(Key, EncRel) of
+		true ->
+		    {ok, decode_obj(Db, Enc, Table, Key, Value)};
+		false ->
+		    case eleveldb:iterator_move(I, Dir) of
+			{ok, <<TableKey:KeySize/binary,
+			       Key2/binary>>, Value2} ->
+			    case Key2 of
+				<<>> -> done;
+				_ ->
+				    {ok, decode_obj(Db, Enc, Table,
+						    Key2, Value2)}
+			    end;
+			_ ->
+			    done
+		    end
+	    end;
+	{ok, OtherKey, _} when Dir == prev ->
+	    if byte_size(OtherKey) >= KeySize ->
+		    <<OtherTabPat:KeySize/binary, _/binary>> = OtherKey,
+		    if OtherTabPat > TableKey ->
+			    %% try stepping back
+			    iterator_move_(I, Db, Table, Enc, TableKey,
+					   KeySize, EncRel, prev, Comp, Dir);
+		       true ->
+			    done
+		    end
+	    end;
+	_ ->
+	    done
+    end.
 
 %% create key
 make_table_last_key(Table) ->
@@ -1177,7 +1198,7 @@ ensure_schema(#db{ref = Ref} = Db, Opts) ->
 	    [ets:insert(ETS, X) || X <- whole_table(Db1, sext, ?SCHEMA_TABLE)],
 	    Db1;
 	_ ->
-	    ok = do_add_table(Db1, ?SCHEMA_TABLE, []),
+	    ok = do_add_table(Db1, ?SCHEMA_TABLE),
 	    Tab = #table{name = ?SCHEMA_TABLE, encoding = sext,
 			 columns = [key,value]},
 	    schema_write(Db1, {{table, ?SCHEMA_TABLE}, Tab}),
