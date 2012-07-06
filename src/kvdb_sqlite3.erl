@@ -20,7 +20,8 @@
 	 pop/3, prel_pop/3, extract/3,
 	 list_queue/3, list_queue/6, is_queue_empty/3,
 	 first_queue/2, next_queue/3,
-	 mark_queue_object/4]).
+	 mark_queue_object/4,
+	 queue_insert/5, queue_read/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
 -export([info/2, get_schema_mod/2, dump_tables/1]).
@@ -89,12 +90,12 @@ format_row(T, ["ix", "key"], {{blob,Bi}, {blob,Bk}}) ->
 
 format_q_row(T, Type, Enc, ["key","value","active"], {{blob,Bk},
 						      {blob,Bv},A}) ->
-    {Q,Ko} = kvdb_lib:split_queue_key(Enc, Type, Bk),
+    #q_key{queue = Q,key = Ko} = kvdb_lib:split_queue_key(Enc, Type, Bk),
     {q_obj, T, Q, Bk, {Ko, dec(value, Bv, Enc)}, active_to_status(A)};
 format_q_row(T, Type, Enc, ["key","attrs","value","active"], {{blob,Bk},
 							      {blob,Ba},
 							      {blob,Bv},A}) ->
-    {Q,Ko} = kvdb_lib:split_queue_key(Enc, Type, Bk),
+    #q_key{queue = Q, key= Ko} = kvdb_lib:split_queue_key(Enc, Type, Bk),
     {q_obj, T, Q, Bk, {Ko, dec(attrs, Ba, Enc), dec(value, Bv, Enc)},
      active_to_status(A)}.
 
@@ -106,23 +107,26 @@ decode_r(R) ->
     list_to_tuple(lists:map(fun({blob, X}) -> kvdb_lib:try_decode(X) end,
 			    tuple_to_list(R))).
 
-open(Db0, Options) ->
-    Db = make_atom_name(Db0),
+open(DbName, Options) ->
+    IntName = make_atom_name(kvdb_lib:good_string(DbName)),
     E = proplists:get_value(encoding, Options, sext),
     kvdb_lib:check_valid_encoding(E),
     DbOptions = proplists:get_value(db_opts, Options, []),
     Res = case {proplists:get_value(file, Options),
 		proplists:get_value(file, DbOptions)} of
 	      {undefined,undefined} ->
-		  sqlite3:open(Db, [{file,atom_to_list(Db)++".db"}|DbOptions]);
+		  sqlite3:open(IntName, [{file,atom_to_list(IntName)++".db"}|
+					 DbOptions]);
 	      {F, undefined} ->
-		  sqlite3:open(Db, [{file, F}|DbOptions]);
+		  sqlite3:open(IntName, [{file, F}|DbOptions]);
 	      _ ->
-		  sqlite3:open(Db, DbOptions)
+		  sqlite3:open(IntName, DbOptions)
 	  end,
     case Res of
 	{ok, Instance} ->
-	    {ok, ensure_schema(#db{ref = Instance, encoding = E})};
+	    kvdb_lib:common_open(
+	      DbName, ?MODULE,
+	      ensure_schema(#db{ref = Instance, encoding = E}), Options);
 	{error,_} = Error ->
 	    Error
     end.
@@ -304,12 +308,12 @@ push(#db{ref = Ref} = Db, Table, Q, {Key, Value}) ->
     Type = type(Db, Table),
     if Type == fifo; Type == lifo; element(1, Type) == keyed ->
 	    Enc = encoding(Db, Table),
-	    ActualKey = kvdb_lib:actual_key(Enc, Type, Q, Key),
+	    {ActualKey, QKey} = kvdb_lib:actual_key(Enc, Type, Q, Key),
 	    case insert_or_replace(
 		   Ref, Table, [{key, {blob, enc(key, ActualKey, Enc)}},
 				{value, {blob, enc(value, Value, Enc)}}]) of
 		ok ->
-		    {ok, ActualKey};
+		    {ok, QKey};
 		{error, _} = Error ->
 		    Error
 	    end;
@@ -320,13 +324,13 @@ push(#db{ref = Ref} = Db, Table, Q, {Key, Attrs, Value}) ->
     Type = type(Db, Table),
     if Type == fifo; Type == lifo; element(1, Type) == keyed ->
 	    Enc = encoding(Db, Table),
-	    ActualKey = kvdb_lib:actual_key(Enc, Type, Q, Key),
+	    {ActualKey, QKey} = kvdb_lib:actual_key(Enc, Type, Q, Key),
 	    case insert_or_replace(
 		   Ref, Table, [{key, {blob, enc(key, ActualKey, Enc)}},
 				{attrs, {blob, enc(attrs, Attrs, Enc)}},
 				{value, {blob, enc(value, Value, Enc)}}]) of
 		ok ->
-		    {ok, ActualKey};
+		    {ok, QKey};
 		{error,_} = Error ->
 		    Error
 	    end;
@@ -437,16 +441,31 @@ index_keys(#db{ref = Ref} = Db, Table, IxName, IxVal) ->
 	    {error, no_index}
     end.
 
-get(#db{ref = Ref} = Db, Table, Key) ->
+get(Db, Table, Key) ->
+    get(Db, Table, Key, false).
+
+get(#db{ref = Ref} = Db, Table, Key, IncludeActive) when
+      is_boolean(IncludeActive) ->
     Enc = encoding(Db, Table),
     case sqlite3:read(Ref, Table, {key, {blob, enc(key, Key, Enc)}}) of
-	[{columns,["key","value","active"]},{rows,[{_,{blob,Value},_}]}] ->
-	    {ok, {Key, dec(value, Value, Enc)}};
+	[{columns,["key","value","active"]},
+	 {rows,[{_,{blob,Value},_} = Data]}] ->
+	    if IncludeActive ->
+		    {ok, {obj_status(Data), {Key, dec(value, Value, Enc)}}};
+	       true ->
+		    {ok, {Key, dec(value, Value, Enc)}}
+	    end;
 	[{columns,_},{rows,[{_,{blob,Value}}]}] ->
 	    {ok, {Key, dec(value, Value, Enc)}};
 	[{columns,["key","attrs","value","active"]},
-	 {rows,[{_,{blob,Attrs},{blob,Value},_}]}] ->
-	    {ok, {Key, dec(attrs, Attrs, Enc), dec(value, Value, Enc)}};
+	 {rows,[{_,{blob,Attrs},{blob,Value},_} = Data]}] ->
+	    if IncludeActive ->
+		    {ok,
+		     {obj_status(Data),
+		      {Key, dec(attrs, Attrs, Enc), dec(value, Value, Enc)}}};
+	       true ->
+		    {ok, {Key, dec(attrs, Attrs, Enc), dec(value, Value, Enc)}}
+	    end;
 	[{columns,["key","attrs","value"]},
 	 {rows,[{_,{blob,Attrs},{blob,Value}}]}] ->
 	    {ok, {Key, dec(attrs, Attrs, Enc), dec(value, Value, Enc)}};
@@ -494,7 +513,8 @@ mark_queue_object(#db{} = Db, Table, AbsKey, St) when St==active;
 	    Enc = encoding(Db, Table),
 	    Type = type(Db, Table),
 	    K = element(1, Obj),
-	    {Q, K1} = kvdb_lib:split_queue_key(Enc, Type, K),
+	    #q_key{queue = Q, key = K1} =
+		kvdb_lib:split_queue_key(Enc, Type, K),
 	    mark_queue_object(Db, Table, Enc, Obj, St),
 	    {ok, Q, setelement(1, Obj, K1)};
 	Error ->
@@ -518,6 +538,40 @@ mark_cols({K,As,V}, Enc) ->
 mark_cols({K,V}, Enc) ->
     [{key, {blob, enc(key, K, Enc)}},
      {value, {blob, enc(value, V, Enc)}}].
+
+
+queue_insert(#db{ref = Ref} = Db, Table, #q_key{} = QKey, St, Obj) when
+      St==inactive; St==active; St==blocking ->
+    Type = type(Db, Table),
+    if Type == fifo; Type == lifo; element(1, Type) == keyed ->
+	    Enc = encoding(Db, Table),
+	    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
+	    ActiveCol = case St of
+			    inactive -> {active, 0};
+			    active   -> {active, 1};
+			    blocking -> {active, 2}
+			end,
+	    case insert_or_replace(
+		   Ref, Table,
+		   case Obj of
+		       {_, Attrs, Value} ->
+			   [{key, {blob, enc(key, Key, Enc)}},
+			    {attrs, {blob, enc(attrs, Attrs, Enc)}},
+			    {value, {blob, enc(value, Value, Enc)}},
+			    ActiveCol];
+		       {_, Value} ->
+			   [{key, {blob, enc(key, Key, Enc)}},
+			    {value, {blob, enc(value, Value, Enc)}},
+			    ActiveCol]
+		   end) of
+		ok ->
+		    {ok, QKey};
+		{error,Error} ->
+		    error(Error)
+	    end;
+       true ->
+	    error(badarg)
+    end.
 
 
 do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
@@ -552,17 +606,34 @@ do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
 	    Error
     end.
 
-extract(#db{} = Db, Table, Key) ->
+extract(#db{} = Db, Table, #q_key{} = QKey) ->
     Type = type(Db, Table),
+    Enc = encoding(Db, Table),
     if Type == fifo; Type == lifo; element(1, Type) == keyed ->
+	    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
 	    case get(Db, Table, Key) of
 		{ok, Obj} ->
 		    K = element(1, Obj),
-		    {Q, K1} = kvdb_lib:split_queue_key(
-				encoding(Db, Table), Type, K),
+		    #q_key{queue = Q, key = K1} =
+			kvdb_lib:split_queue_key(Enc, Type, K),
 		    delete(Db, Table, Key),
 		    IsEmpty = is_queue_empty(Db, Table, Q),
 		    {ok, setelement(1, Obj, K1), Q, IsEmpty};
+		{error, _} = Error ->
+		    Error
+	    end;
+       true ->
+	    error(illegal)
+    end.
+
+queue_read(#db{} = Db, Table, #q_key{} = QKey) ->
+        Type = type(Db, Table),
+    Enc = encoding(Db, Table),
+    if Type == fifo; Type == lifo; element(1, Type) == keyed ->
+	    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
+	    case get(Db, Table, Key, _IncludeActive = true) of
+		{ok, {St, Obj}} ->
+		    {ok, St, Obj};
 		{error, _} = Error ->
 		    Error
 	    end;
@@ -619,7 +690,8 @@ first_queue(#db{} = Db, Table) ->
 	    case first(Db, Table, Enc) of
 		{ok, Obj} ->
 		    Key = element(1, Obj),
-		    {Q, _} = kvdb_lib:split_queue_key(Enc, Type, Key),
+		    #q_key{queue = Q} =
+			kvdb_lib:split_queue_key(Enc, Type, Key),
 		    {ok, Q};
 		done ->
 		    done
@@ -638,7 +710,8 @@ next_queue(Db, Table, Q) ->
     case next(Db, Table, RelK) of
 	{ok, Obj} ->
 	    Type = type(Db, Table),
-	    {Q1,_} = kvdb_lib:split_queue_key(Enc, Type, element(1, Obj)),
+	    #q_key{queue = Q1} =
+		kvdb_lib:split_queue_key(Enc, Type, element(1, Obj)),
 	    {ok, Q1};
 	done ->
 	    done
@@ -811,7 +884,7 @@ prefix_match_(_Prev, Dir, Ref, {_, _, Handle} = SH, Table,
 			    Obj1 = case Type of
 				       set -> Obj;
 				       _ ->
-					   {_,Kx} =
+					   #q_key{key = Kx} =
 					       kvdb_lib:split_queue_key(
 						 Enc, Type, AbsKey),
 					   setelement(1,Obj, Kx)

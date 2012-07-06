@@ -15,7 +15,7 @@
 %% for testing only
 -export([test_tree/0]).
 
--define(match(X, A, B), ?assertMatch({X,A}, {X,B})).
+-define(match(X, A, B), ?assertMatch({_,X,A}, {?LINE,X,B})).
 
 -define(CATCH(E),
 	try (E)
@@ -196,6 +196,11 @@ queue(Db) ->
     queue(Db, lifo, sext).
 
 queue(Db, Type, Enc) ->
+    dbg:tracer(),
+    dbg:tpl(kvdb_ets, push, x),
+    dbg:tpl(kvdb_ets, pop, x),
+    dbg:tpl(kvdb_ets, do_pop_, x),
+    dbg:p(all, [c]),
     M = {Db,Type,Enc},
     Q = <<"q1_", (atom_to_binary(Db, latin1))/binary, "_",
 	  (atom_to_binary(Type,latin1))/binary, "_",
@@ -207,6 +212,15 @@ queue(Db, Type, Enc) ->
 		  || Obj <- [{<<"1">>,<<"a">>},
 			     {<<"2">>,<<"b">>},
 			     {<<"3">>,<<"c">>}]],
+    case Q of
+	<<"q1_e", _/binary>> ->
+	    io:fwrite(user, "After push: ~p~n",
+		      [ets:tab2list(element(
+				      2,
+				      element(3, kvdb:db(Db))))]);
+	_ ->
+	    ok
+    end,
     ?match(M, {ok, {<<"2">>,<<"b">>}}, kvdb:extract(Db, Q, K2)),
     if Type == lifo ->
 	    ?match(M, {ok, {<<"3">>,<<"c">>}}, catch kvdb:pop(Db, Q)),
@@ -342,6 +356,14 @@ prel_pop(Db) ->
     ?match(M, ok, catch kvdb:delete_table(Db, T)),
     ok.
 
+queue_insert(Db) ->
+    M = {_, Type,Enc,T} = {Db,fifo,sext,q_fifo_sext},
+    ?match(M, ok, kvdb:add_table(Db, T, [{type,Type},{encoding,Enc}])),
+    Q = q,
+    {ok, QKey} = kvdb:push(Db, T, Q, {1,a}),
+    ?match(M, {ok, active, {1,a}}, kvdb:queue_read(Db, T, QKey)),
+    ?match(M, ok, catch kvdb:delete_table(Db, T)).
+
 indexing(Db) ->
     [indexing_(X) || X <- [{Db, set, {sext,term,sext}},
 			   {Db, set, {sext,sext,sext}}]].
@@ -396,7 +418,8 @@ word_index(Db) ->
 						  {w, words,{value}} ]}])),
     Txt1 = <<"a b c 123">>,
     Txt2 = <<"c 123">>,
-    ?match(M, ok, kvdb:put(Db, T, Obj1 = {1,[{c,Txt1}],a})),
+    Obj1 = {1,[{c,Txt1}],a},
+    ?match(M, ok, kvdb:put(Db, T, Obj1)),
     ?match(M, [Obj1], kvdb:index_get(Db, T, {c}, <<"a">>)),
     ?match(M, [Obj1], kvdb:index_get(Db, T, {c}, <<"b">>)),
     ?match(M, [Obj1], kvdb:index_get(Db, T, {c}, <<"123">>)),

@@ -14,7 +14,7 @@
 -export([put/3, push/4, get/3, get_attrs/4, index_get/4, index_keys/4,
 	 update_counter/4, pop/3, prel_pop/3, extract/3, delete/3,
 	 list_queue/3, list_queue/6, is_queue_empty/3,
-	 mark_queue_object/4]).
+	 queue_read/3, queue_insert/5, mark_queue_object/4]).
 -export([first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3, prefix_match/3, prefix_match/4]).
 -export([get_schema_mod/2]).
@@ -77,7 +77,8 @@ dump_tables_({ok, K, V}, I, Db) ->
 					 element(1, TType) == lifo ->
 				  %% io:fwrite("split_queue_key(~p, ~p, ~p)~n",
 				  %% 	    [Enc, TType, Key]),
-				  {Q,Ko} = kvdb_lib:split_queue_key(
+				  #q_key{queue = Q,
+					 key = Ko} = kvdb_lib:split_queue_key(
 					      Enc, TType, Key),
 				  <<F:8, Val/binary>> = V,
 				  St = case F of
@@ -132,20 +133,22 @@ get_schema_mod(Db, Default) ->
 	    M
     end.
 
-open(Db0, Options) ->
-    Db = kvdb_lib:good_string(Db0),
+open(DbName, Options) ->
     E = proplists:get_value(encoding, Options, sext),
     kvdb_lib:check_valid_encoding(E),
     DbOpts = proplists:get_value(db_opts, Options, [{create_if_missing,true}]),
     Res = case proplists:get_value(file, Options) of
 	      undefined ->
-		  eleveldb:open(atom_to_list(Db)++".db", DbOpts);
+		  NameStr = kvdb_lib:good_string(DbName),
+		  eleveldb:open(atom_to_list(NameStr) ++".db", DbOpts);
 	      Name ->
 		  eleveldb:open(Name, DbOpts)
 	  end,
     case Res of
 	{ok, Ref} ->
-	    {ok, ensure_schema(#db{ref = Ref, encoding = E}, Options)};
+	    kvdb_lib:common_open(
+	      DbName, ?MODULE,
+	      ensure_schema(#db{ref = Ref, encoding = E}, Options), Options);
 	Error ->
 	    Error
     end.
@@ -318,14 +321,15 @@ push(#db{ref = Ref} = Db, Table, Q, Obj) ->
     Type = type(Db, Table),
     if Type == fifo; Type == lifo; element(1,Type) == keyed ->
 	    Enc = encoding(Db, Table),
-	    ActualKey = kvdb_lib:actual_key(Enc, Type, Q, element(1, Obj)),
+	    {ActualKey, QKey} =
+		kvdb_lib:actual_key(Enc, Type, Q, element(1, Obj)),
 	    {Key, Attrs, Value} = encode_queue_obj(
 				    Enc, setelement(1, Obj, ActualKey)),
 	    PutAttrs = attrs_to_put(Table, Key, Attrs),
 	    Put = {put, make_table_key(Table, Key), Value},
 	    case eleveldb:write(Ref, [Put|PutAttrs], []) of
 		ok ->
-		    {ok, ActualKey};
+		    {ok, QKey};
 		Other ->
 		    Other
 	    end;
@@ -333,16 +337,27 @@ push(#db{ref = Ref} = Db, Table, Q, Obj) ->
 	    error(illegal)
     end.
 
-mark_queue_object(#db{} = Db, Table, AbsKey, St) when St==blocking;
-						      St==active;
-						      St==inactive ->
-    case q_get(Db, Table, AbsKey) of
-	{ok, Obj} ->
-	    Enc = encoding(Db, Table),
-	    Type = type(Db, Table),
-	    {Q, K1} = kvdb_lib:split_queue_key(Enc, Type, AbsKey),
-	    mark_queue_obj(Db, Table, Enc, Obj, St),
-	    {ok, Q, setelement(1, Obj, K1)};
+queue_insert(#db{ref = Ref} = Db, Table, #q_key{} = QKey, St, Obj) when
+      St==blocking; St==active; St==inactive ->
+    Enc = encoding(Db, Table),
+    Type = type(Db, Table),
+    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
+    Obj1 = setelement(1, Obj, Key),
+    {Key, Attrs, Value} = encode_queue_obj(Enc, Obj1, St),
+    PutAttrs = attrs_to_put(Table, Key, Attrs),
+    Put = {put, make_table_key(Table, Key), Value},
+    case eleveldb:write(Ref, [Put|PutAttrs], []) of
+	ok -> ok;
+	{error, Error} ->
+	    error(Error)
+    end.
+
+mark_queue_object(#db{} = Db, Table, #q_key{queue = Q} = QK, St) when
+      St==blocking; St==active; St==inactive ->
+    case queue_read(Db, Table, QK) of
+	{ok, EncKey, Obj} ->
+	    mark_queue_obj(Db, Table, EncKey, Obj, St),
+	    {ok, Q, Obj};
 	{error,_} = E ->
 	    E
     end.
@@ -397,18 +412,20 @@ do_pop(Db, Table, Type, Q, Remove, ReturnKey) ->
 
 
 
-extract(#db{} = Db, Table, Key) ->
+extract(#db{} = Db, Table, #q_key{key = Key} = QKey) ->
     case type(Db, Table) of
 	set -> error(illegal);
 	Type ->
 	    Enc = encoding(Db, Table),
-	    case q_get(Db, Table, Key) of
-		{ok, Obj} ->
-		    delete(Db, Table, Key),
+	    case queue_read(Db, Table, QKey) of
+		{ok, EncKey, Obj} ->
+		    DecKey = dec(key, EncKey, Enc),
+		    delete_(Db, Table, Enc, Key, EncKey),
 		    case Type of
 			_ when Type==fifo; Type==lifo;
 			       element(1,Type)==keyed ->
-			    {Q, _} = kvdb_lib:split_queue_key(Enc, Type, Key),
+			    #q_key{queue = Q} =
+				kvdb_lib:split_queue_key(Enc, Type, DecKey),
 			    IsEmpty =
 				case list_queue(Db, Table, Q,
 						fun(_,K,O) ->
@@ -480,7 +497,7 @@ first_queue_(Res, I, Db, Table, TPrefix, TPSz) ->
 			 Table, TPrefix, TPSz);
 	{ok, <<TPrefix:TPSz/binary, K/binary>>, _} ->
 	    Enc = encoding(Db, Table),
-	    {Q, _} = kvdb_lib:split_queue_key(Enc, dec(key,K,Enc)),
+	    #q_key{queue = Q} = kvdb_lib:split_queue_key(Enc, dec(key,K,Enc)),
 	    {ok, Q};
 	_ ->
 	    done
@@ -512,7 +529,7 @@ next_queue_(Res, I, Db, Table, QPrefix, Sz, TPrefix, TPSz, Enc) ->
 	    next_queue_(eleveldb:iterator_move(I, next), I, Db, Table,
 		       QPrefix, Sz, TPrefix, TPSz, Enc);
 	{ok, <<TPrefix:TPSz/binary, K/binary>>, _} ->
-	    {Q, _} = kvdb_lib:split_queue_key(Enc, dec(key,K,Enc)),
+	    #q_key{queue = Q} = kvdb_lib:split_queue_key(Enc, dec(key,K,Enc)),
 	    {ok, Q};
 	_ ->
 	    done
@@ -520,7 +537,7 @@ next_queue_(Res, I, Db, Table, QPrefix, Sz, TPrefix, TPSz, Enc) ->
 
 fix_q_obj(Obj, Enc, Type) ->
     K = element(1, Obj),
-    {_, K1} = kvdb_lib:split_queue_key(Enc, Type, K),
+    #q_key{key = K1} = kvdb_lib:split_queue_key(Enc, Type, K),
     setelement(1, Obj, K1).
 
 
@@ -772,25 +789,30 @@ get_by_ix_(done, _, _, _, _, _, _, _) ->
     [].
 
 
-q_get(#db{ref = Ref} = Db, Table, Key) ->
+queue_read(#db{ref = Ref} = Db, Table, #q_key{} = QKey) ->
     Enc = encoding(Db, Table),
+    Type = type(Db, Table),
+    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
     EncKey = enc(key, Key, Enc),
     case eleveldb:get(Ref, make_table_key(Table, EncKey), []) of
 	{ok, <<St:8, V/binary>>} when St==$*; St==$-; St==$+ ->
-	    {ok, decode_obj_v(Db, Enc, Table, Key, V)};
+	    {ok, EncKey, decode_obj_v(Db, Enc, Table, Key, V)};
 	not_found ->
 	    {error, not_found};
 	{error, _} = Error ->
 	    Error
     end.
 
-delete(#db{ref = Ref} = Db, Table, Key) ->
+delete(#db{} = Db, Table, Key) ->
     Enc = encoding(Db, Table),
+    EncKey = enc(key, Key, Enc),
+    delete_(Db, Table, Enc, Key, EncKey).
+
+delete_(#db{ref = Ref} = Db, Table, Enc, Key, EncKey) ->
     Ix = case Enc of
 	     {_,_,_} -> index(Db, Table);
 	     _ -> []
 	 end,
-    EncKey = enc(key, Key, Enc),
     {IxOps, As} =
 	case Enc of
 	    {_, _, _} ->

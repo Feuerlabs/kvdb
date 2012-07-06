@@ -34,8 +34,6 @@
 
 %% -behaviour(gen_server).
 
--export([test/0]).
-
 %% starting kvdb, opening databases
 -export([start/0, open_db/2, info/2]).
 -export([open/2, close/1, db/1, start_session/2]).
@@ -74,7 +72,9 @@
 	 is_queue_empty/3,
 	 first_queue/2,
 	 next_queue/3,
-	 mark_queue_object/4]).
+	 mark_queue_object/4,
+	 queue_insert/5,
+	 queue_read/3]).
 %% debugging
 -export([dump_tables/1]).
 
@@ -104,14 +104,6 @@
 		end
 	end).
 
-%% @private
-test() ->
-    dbg:tracer(),
-    [dbg:tpl(M, x) || M <- [kvdb, kvdb_sup, kvdb_sqlite3]],
-    [dbg:tp(M, x) || M <- [gproc]],
-    dbg:p(all, [c]),
-    application:start(gproc),
-    application:start(kvdb).
 
 %% @private
 %% The plugin behaviour
@@ -487,7 +479,7 @@ extract(Name, Table, Key) ->
        [Name, Table, Key]).
 
 -spec mark_queue_object(db_name(), Table::table(), Key::binary(),
-			St::active | blocking | inactive) -> ok | {error,any()}.
+			St::status()) -> ok | {error,any()}.
 mark_queue_object(Name, Table, Key, St) when St==active;
 					     St==blocking;
 					     St==inactive ->
@@ -538,6 +530,22 @@ next_queue(Name, Table, Q) ->
        Name,
        kvdb_direct:next_queue(Ref, Table, Q),
        kvdb_direct:next_queue(db(Name), Table, Q), [Name, Table, Q]).
+
+-spec queue_read(db_name(), table(), #q_key{}) -> {ok, status(), object()}
+						      | {error, any()}.
+queue_read(Name, Table, #q_key{} = QKey) ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:queue_read(Ref, Table, QKey),
+       kvdb_direct:queue_read(db(Name), Table, QKey), [Name, Table, QKey]).
+
+queue_insert(Name, Table, #q_key{} = QKey, St, Obj) when
+      St==active; St==inactive; St==blocking ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:queue_insert(Ref, Table, QKey, St, Obj),
+       kvdb_direct:queue_insert(db(Name), Table, QKey, St, Obj),
+       [Name, Table, QKey, St, Obj]).
 
 -spec get_attrs(db_name(), table(), _Key::any(), [attr_name()]) ->
 		       {ok, attrs()} | {error, any()}.
@@ -648,4 +656,3 @@ start_link(Name, Backend) ->
 
 start_session(Name, Id) ->
     kvdb_server:start_session(Name, Id).
-

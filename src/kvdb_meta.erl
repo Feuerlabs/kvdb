@@ -3,6 +3,7 @@
 -export([write/3,
 	 write_new/3,
 	 read/3,
+	 delete/2,
 	 update_counter/3]).
 
 -include("kvdb.hrl").
@@ -20,6 +21,10 @@ read(#db{metadata = Ets}, Key, Default) ->
 	[{_, Value}] ->
 	    Value
     end.
+
+delete(#db{metadata = Ets}, Key) ->
+    %% io:fwrite("delete meta (~p) ~p~n", [Ets, Key]),
+    ets:delete(Ets, key(Key)).
 
 update_counter(#db{metadata = Ets}, K, Incr) ->
     Key = key(K),

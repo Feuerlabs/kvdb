@@ -14,15 +14,17 @@
 	 actual_key/4,
 	 actual_key/5,
 	 split_queue_key/2, split_queue_key/3,
+	 q_key_to_actual/3,
 	 queue_prefix/2,
 	 queue_prefix/3,
 	 timestamp/0, timestamp/1,
 	 timestamp_to_datetime/1,
 	 good_string/1]).
--export([common_open/3,
+-export([common_open/4,
 	 log_filename/1,
-	 open_log/3,
-	 replay_logs/2,
+	 open_log/2,
+	 replay_logs/3,
+	 purge_logs/2,
 	 clear_log_thresholds/1,
 	 log/2,
 	 on_update/4,
@@ -250,19 +252,22 @@ actual_key(Enc, Q, Key) ->
     actual_key(Enc, fifo, Q, Key).
 
 actual_key(Enc, T, Q, Key) when Enc==raw; element(1, Enc) == raw ->
-    raw_queue_key(Q, T, Key);
+    TS = timestamp(),
+    {raw_queue_key(Q, T, TS, Key), #q_key{queue = Q, ts = TS, key = Key}};
 actual_key(Enc, {keyed,_}, Q, Key) when Enc==sext; element(1, Enc) == sext ->
-    {Q, Key, timestamp()};
+    TS = timestamp(),
+    {{Q, Key, TS}, #q_key{queue = Q, ts = TS, key = Key}};
 actual_key(Enc, _, Q, Key) when Enc==sext; element(1, Enc) == sext ->
-    {Q, timestamp(), Key}.
+    TS = timestamp(),
+    {{Q, TS, Key}, #q_key{queue = Q, ts = TS, key = Key}}.
 
 actual_key(Enc, T, Q, TS, Key) when Enc==raw; element(1, Enc) == raw ->
-    raw_queue_key(Q, T, TS, Key);
+    {raw_queue_key(Q, T, TS, Key), #q_key{queue = Q, ts = TS, key = Key}};
 actual_key(Enc, {keyed,_}, Q, TS, Key)
   when Enc==sext; element(1, Enc) == sext ->
-    {Q, Key, TS};
+    {{Q, Key, TS}, #q_key{queue = Q, ts = TS, key = Key}};
 actual_key(Enc, _, Q, TS, Key) when Enc==sext; element(1, Enc) == sext ->
-    {Q, TS, Key}.
+    {{Q, TS, Key}, #q_key{queue = Q, ts = TS, key = Key}}.
 
 split_queue_key(Enc, Key) ->
     split_queue_key(Enc, fifo, Key).
@@ -271,11 +276,24 @@ split_queue_key(Enc, T, Key) when Enc == raw; element(1, Enc) == raw ->
     split_raw_queue_key(T, Key);
 split_queue_key(Enc, T, Key) when Enc == sext; element(1, Enc) == sext ->
     case {T, Key} of
-	{{keyed,_}, {Q, K, _TS}} ->
-	    {Q, K};
-	{_, {Q, _TS, K}} ->
-	    {Q, K}
+	{{keyed,_}, {Q, K, TS}} ->
+	    #q_key{queue = Q, ts = TS, key = K};
+	{_, {Q, TS, K}} ->
+	    #q_key{queue = Q, ts = TS, key = K}
     end.
+
+q_key_to_actual(#q_key{queue = Q, ts = TS, key = K}, Enc, Type) when
+      Enc==raw; element(1,Enc) == raw ->
+    raw_queue_key(Q, Type, TS, K);
+q_key_to_actual(#q_key{queue = Q, ts = TS, key = K}, Enc, Type) when
+      Enc==sext; element(1,Enc) == sext ->
+    case Type of
+	{keyed,_} ->
+	    {Q, K, TS};
+	_ ->
+	    {Q, TS, K}
+    end.
+
 
 timestamp() ->
     timestamp(erlang:now()).
@@ -295,10 +313,11 @@ timestamp_to_datetime(TS) ->
 
 %% Encode a 56-bit prefix using our special-epoch timestamp.
 %% It will not overflow until year 4293 - hopefully that will be sufficient.
-raw_queue_key(Q, {keyed,_}, K) when is_binary(Q), is_binary(K) ->
-    raw_keyed_queue_key(Q, timestamp(), K);
-raw_queue_key(Q, _, K) when is_binary(Q), is_binary(K) ->
-    raw_queue_key_(Q, timestamp(), K).
+
+%% raw_queue_key(Q, {keyed,_}, K) when is_binary(Q), is_binary(K) ->
+%%     raw_keyed_queue_key(Q, timestamp(), K);
+%% raw_queue_key(Q, _, K) when is_binary(Q), is_binary(K) ->
+%%     raw_queue_key_(Q, timestamp(), K).
 
 raw_queue_key(Q, {keyed,_}, TS, K) when is_binary(Q), is_binary(K) ->
     raw_keyed_queue_key(Q, TS, K);
@@ -324,12 +343,12 @@ split_raw_queue_key({keyed,_}, K) ->
     Sz = byte_size(K),
     {P,_} = binary:match(K, <<"-">>),
     KSz = Sz - P - 7 - 1,
-    <<Q:P/binary, "-", Key:KSz/binary, _:56/integer>> = K,
-    {Q, Key};
+    <<Q:P/binary, "-", Key:KSz/binary, TS:56/integer>> = K,
+    #q_key{queue = Q, ts = TS, key = Key};
 split_raw_queue_key(_, K) ->
     {P,_} = binary:match(K, <<"-">>),
-    <<Q:P/binary, "-", _:56/integer, Key/binary>> = K,
-    {Q, Key}.
+    <<Q:P/binary, "-", TS:56/integer, Key/binary>> = K,
+    #q_key{queue = Q, ts = TS, key = Key}.
 %% split_raw_queue_key(<<_:56/integer, K/binary>>) ->
 %%     K.
 
@@ -358,7 +377,13 @@ binary_match(A, B) ->
 	_ -> false
     end.
 
-
+%% @spec(Name :: any()) -> string()
+%%
+%% @doc Ensures that a database name doesn't contain weird characters
+%%
+%% Kvdb database names need to be mapped to filesystem names. This function
+%% produces a formatting of the name that is filesystem-friendly.
+%% @end
 good_string(Name) when is_atom(Name) ->
     atom_to_list(Name);
 good_string(Bin) when is_binary(Bin) ->
@@ -401,23 +426,111 @@ bin(T) ->
     iolist_to_binary(io_lib:fwrite("~w", [T])).
 
 
-common_open(Name, #db{} = Db, Options) ->
+common_open(Name, Module, #db{} = Db, Options) ->
+    kvdb_meta:write(Db, name, Name),
     case proplists:get_value(log_dir, Options, undefined) of
 	undefined ->
 	    {ok, Db#db{log = false}};
 	D ->
-	    replay_logs(D, Db),
+	    replay_logs(D, Module, Db),
 	    kvdb_meta:write(Db, log_dir, D),
 	    F = log_filename(D),
-	    do_open_log(Name, F, Db, log_threshold(Options))
+	    do_open_log(F, Db, log_threshold(Options))
     end.
 
-replay_logs(Dir, #db{} = Db) ->
+replay_logs(Dir, Module, #db{} = Db) ->
+    LastDump = kvdb_meta:read(Db, last_dump, undefined),
+    FileKey = if LastDump == undefined -> "";
+		 true -> filename:basename(log_filename(Dir, LastDump, []))
+	      end,
     case file:list_dir(Dir) of
 	{ok, [_|_] = Fs} ->
-	    io:fwrite("Logs = ~p~n", [Fs]);
+	    UseLogs = use_logs(FileKey, lists:sort(Fs)),
+	    UseFiles = [filename:join(Dir, F) || F <- UseLogs],
+	    io:fwrite("Logs = ~p~n"
+		      "FileKey = ~p~n"
+		      "UseLogs = ~p~n", [Fs, FileKey, UseFiles]),
+	    Res = lists:foreach(fun(F) ->
+					ok = replay_log(F, Module, Db, LastDump)
+				end, UseFiles),
+	    if Res == ok ->
+		    case Module:save(Db) of
+			ok ->
+			    lists:foreach(
+			      fun(F) ->
+				      file:delete(F)
+			      end, UseFiles);
+			Error ->
+			    error({save_error, Error})
+		    end;
+	       true ->
+		    error({replay_error, Res})
+	    end;
 	Other ->
-	    io:fwrite("No logs? ~p~n", [Other])
+	    io:fwrite("No logs? ~p~n"
+		      "FileKey = ~p~n", [Other, FileKey])
+    end.
+
+replay_log(LogF, Module, Db, LastDump) ->
+    case open_log(LogF, self()) of
+	{ok, Info} ->
+	    {_, Log} = lists:keyfind(id, 1, Info),
+	    try eat_log(disk_log:chunk(Log, start), Log, Module, Db, LastDump)
+	    after
+		disk_log:close(Log)
+	    end;
+	Error ->
+	    error({error_opening_log, [LogF, Error]})
+    end.
+
+eat_log(eof, _, _, _, _) ->
+    ok;
+eat_log({Cont, Terms}, Log, Mod, Db, Last) ->
+    lists:foreach(
+      fun({{_,_,_} = TS, Op}) when TS > Last ->
+	      case Op of
+		  ?KVDB_LOG_INSERT(Table, Obj) ->
+		      Mod:put(Db, Table, Obj);
+		  ?KVDB_LOG_DELETE(Table, Key) ->
+		      Mod:delete(Db, Table, Key);
+		  ?KVDB_LOG_Q_INSERT(Table, QKey, St, Obj) ->
+		      Mod:queue_insert(Db, Table, QKey, St, Obj);
+		  ?KVDB_LOG_Q_DELETE(Table, QKey) ->
+		      _ = Mod:extract(Db, Table, QKey);
+		  ?KVDB_LOG_ADD_TABLE(Table, TabR) ->
+		      Mod:add_table(Db, Table, TabR);
+		  ?KVDB_LOG_DELETE_TABLE(Table) ->
+		      Mod:delete_table(Db, Table);
+		  ?KVDB_LOG_COMMIT(CommitRec) ->
+		      commit(CommitRec, Mod, Db)
+	      end;
+	 (_) ->
+	      skip
+      end, Terms),
+    eat_log(disk_log:chunk(Log, Cont), Log, Mod, Db, Last).
+
+use_logs(F, [A,B|_] = L) when A < F, F < B ->
+    L;
+use_logs(F, [A,B|T]) when F > A, F > B ->
+    use_logs(F, [B|T]);
+use_logs(_, L) ->
+    L.
+
+purge_logs(#db{} = Db, TS) when TS =/= undefined ->
+    case kvdb_meta:read(Db, log_dir, undefined) of
+	undefined ->
+	    ok;
+	Dir ->
+	    RefF = filename:basename(log_filename(Dir, TS, [])),
+	    case file:list_dir(Dir) of
+		{ok, [_|_] = Fs} ->
+		    Remove = Fs -- use_logs(RefF, Fs),
+		    lists:foreach(fun(F) ->
+					  file:delete(filename:join(Dir, F))
+				  end, Remove);
+		_ ->
+		    ok
+	    end
     end.
 
 log_filename(D) ->
@@ -446,20 +559,18 @@ log_threshold(Options) ->
 		  }
     end.
 
-do_open_log(Name, F, Db, Thr) ->
-    case open_log(Name, F, self()) of
-	{ok, Log, Name, F} ->
-	    kvdb_meta:write(Db, log_info, [{id, Log},
-					   {name, Name},
-					   {file, F}]),
+do_open_log(F, Db, Thr) ->
+    case open_log(F, self()) of
+	{ok, LogInfo} ->
+	    {_, Log} = lists:keyfind(id, 1, LogInfo),
+	    kvdb_meta:write(Db, log_info, LogInfo),
 	    {ok, Db#db{log = {Log, Thr}}};
 	{error,_} = E ->
 	    {error, {open_log_error, [F, E]}}
     end.
 
-open_log(Name0, F, Pid) ->
-    Now = erlang:now(),
-    Name = {kvdb_log, Name0, Now},
+open_log(F, Pid) ->
+    Name = {kvdb_log, list_to_binary(F)},
     case disk_log:open([{name, Name},
 			{file, F},
 			{linkto, Pid},
@@ -480,13 +591,16 @@ open_log(Name0, F, Pid) ->
 
 
 log_filename(Dir, Fs) ->
-    {_,_,US} = TS = os:timestamp(),
+    log_filename(Dir, os:timestamp(), Fs).
+
+log_filename(Dir, TS, Fs) ->
+    {_, _, US} = TS,
     {{Y,Mo,D},{H,Mi,S}} = calendar:now_to_datetime(TS),
     F = lists:flatten(
 	  io_lib:format("~s.~2..0w~2..0w~2..0w-~2..0w~2..0w~2..0w~w",
 			[filename:join(Dir,"kvdb_log"),
 			 Y rem 100,Mo,D,H,Mi,S,US div 1000])),
-    io:fwrite("F = ~s~n", [F]),
+    %% io:fwrite("F = ~s~n", [F]),
     case lists:member(F, Fs) of
 	true ->
 	    %% how likely is that?
@@ -496,11 +610,15 @@ log_filename(Dir, Fs) ->
 	    F
     end.
 
+commit(#commit{} = Commit, #kvdb_ref{mod = M,db=Db0}) ->
+    commit(Commit, M, Db0).
+
+commit(#commit{_ = []}, _, _) ->
+    ok;
 commit(#commit{write = Writes,
 	       delete = Deletes,
 	       add_tables = AddTabs,
-	       del_tables = DelTabs} = Commit,
-       #kvdb_ref{mod = M,db=Db0} = Ref) ->
+	       del_tables = DelTabs} = Commit, M, #db{} = Db0) ->
     Db = Db0#db{log = false},
     Ops = [{fun(T) ->
 		    M:delete_table(Db, T)
@@ -512,23 +630,26 @@ commit(#commit{write = Writes,
 		    end,
 		    M:add_table(Db, T, TRec)
 	    end, AddTabs},
-	   {fun({T, Obj}) ->
+	   {fun({T, #q_key{} = QK, St, Obj}) ->
+		    M:queue_insert(Db, T, QK, St, Obj);
+		({T, Obj}) ->
 		    M:put(Db, T, Obj)
 	    end, Writes},
 	   {fun({T, K}) ->
 		    M:delete(Db, T, K)
 	    end, Deletes}],
     [lists:foreach(F, L) || {F, L} <- Ops],
-    log(Ref, Commit).  % note: original log mode, since Db0 used.
+    log(Db0, ?KVDB_LOG_COMMIT(Commit)).         % note: original log mode,
+						% since Db0 used.
 
 on_update(Event, #kvdb_ref{} = DbRef, Table, Info) ->
-    log(DbRef, {Event, Table, Info}),
+    %% log(DbRef, {Event, Table, Info}),
     kvdb_trans:on_update(Event, DbRef, Table, Info).
 
 
-log(#kvdb_ref{db = #db{log = false}}, _) ->
+log(#db{log = false}, _) ->
     ok;
-log(#kvdb_ref{name = Name, db = #db{log = {Log,Thr}} = Db}, Data) ->
+log(#db{log = {Log,Thr}} = Db, Data) ->
     Term = {os:timestamp(), Data},
     Bytes = erts_debug:flat_size(Term),
     disk_log:log(Log, Term),
@@ -538,11 +659,14 @@ log(#kvdb_ref{name = Name, db = #db{log = {Log,Thr}} = Db}, Data) ->
 	true ->
 	    case kvdb_meta:write_new(Db, log_threshold, true) of
 		true ->
+		    Name = kvdb_meta:read(Db, name, undefined),
 		    kvdb_server:cast(Name, log_threshold);
 		false ->
+		    %% io:fwrite("won't report threshold ~p~n", [Db#db.ref]),
 		    ok
 	    end;
 	false ->
+	    kvdb_meta:delete(Db, log_threshold),
 	    ok
     end.
 
@@ -553,5 +677,7 @@ threshold_reached(#thr{bytes = ABs, writes = AWs},
 	(TWs =/= undefined andalso AWs > TWs).
 
 clear_log_thresholds(Db) ->
+    %% io:fwrite("clear_log_thresholds (~p)~n", [Db]),
     kvdb_meta:write(Db, logged_bytes, 0),
-    kvdb_meta:write(Db, logged_writes, 0).
+    kvdb_meta:write(Db, logged_writes, 0),
+    kvdb_meta:delete(Db, log_threshold).

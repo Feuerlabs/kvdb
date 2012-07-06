@@ -28,7 +28,7 @@
 	     pending_transactions = []}).
 
 start_link(Name, Backend) ->
-    io:fwrite("starting ~p, ~p~n", [Name, Backend]),
+    %% io:fwrite("starting ~p, ~p~n", [Name, Backend]),
     gen_server:start_link(?MODULE, {owner, Name, Backend}, []).
 
 start_session(Name, Id) ->
@@ -54,6 +54,9 @@ cast(Name, Msg) ->
     gen_server:cast(gproc:where({n,l,{kvdb,Name}}), Msg).
 
 call(Name, Req) ->
+    call(Name, Req, 5000).
+
+call(Name, Req, Timeout) ->
     Pid = case Name of
 	      #kvdb_ref{name = N} ->
 		  gproc:where({n, l, {kvdb, N}});
@@ -62,7 +65,7 @@ call(Name, Req) ->
 	      _ ->
 		  gproc:where({n,l,{kvdb,Name}})
 	  end,
-    case gen_server:call(Pid, Req) of
+    case gen_server:call(Pid, Req, Timeout) of
 	badarg ->
 	    ?KVDB_THROW(badarg);
 	{badarg,_} = Err ->
@@ -92,17 +95,18 @@ init_({owner, Name, Opts}) ->
     Backend = proplists:get_value(backend, Opts, ets),
     gproc:reg({n, l, {kvdb,Name}}, Backend),
     DbMod = mod(Backend),
-    F = name2file(Name),
-    File = case proplists:get_value(file, Opts) of
-	       undefined ->
-		   {ok, CWD} = file:get_cwd(),
-		   filename:join(CWD, F);
-	       F1 ->
-		   F1
-	   end,
-    ok = filelib:ensure_dir(File),
+    %% F = name2file(Name),
+    %% File = case proplists:get_value(file, Opts) of
+    %% 	       undefined ->
+    %% 		   {ok, CWD} = file:get_cwd(),
+    %% 		   filename:join(CWD, F);
+    %% 	       F1 ->
+    %% 		   F1
+    %% 	   end,
+    %% ok = filelib:ensure_dir(File),
     NewOpts = lists:keystore(backend, 1,
-			     lists:keystore(file, 1, Opts, {file, File}),
+			     %% lists:keystore(file, 1, Opts, {file, File}),
+			     Opts,
 			     {backend, DbMod}),
     case do_open(Name, NewOpts) of
 	{ok, Db} ->
@@ -152,15 +156,11 @@ handle_call_(begin_trans, {Pid,_}, #st{db = Db,
 				       transactions = Trans} = St) ->
     Ref = erlang:monitor(process, Pid),
     {reply, {Db, Ref}, St#st{transactions = [Ref | Trans]}};
-handle_call_(begin_trans, From, #st{switch_pending = true,
+handle_call_(begin_trans, From, #st{switch_pending = {true,_,_},
 				    pending_transactions = Pend} = St) ->
+    %% io:fwrite("buffering begin_trans ~p; St=~p~n", [From,St]),
     {noreply, St#st{pending_transactions = [From|Pend]}};
-handle_call_(db, _From, #st{db = Db} = St) ->
-    {reply, Db, St}.
-
-%% @private
-handle_info({'DOWN',_,_,_,{?MODULE, new_log, Log}},
-	    #st{db = Db, transactions = Trans} = St) ->
+handle_call_({new_log, Log}, From, #st{db = Db, transactions = Trans} = St) ->
     %% Need to switch logs. We try to do this atomically. For individual
     %% updates, it's no problem, since they will call on us for the db ref.
     %% If there are ongoing transactions, we must wait for them to end,
@@ -168,28 +168,75 @@ handle_info({'DOWN',_,_,_,{?MODULE, new_log, Log}},
     case Trans of
 	[] ->
 	    NewDb = switch_logs(Db, Log),
-	    {noreply, logs_switched(NewDb, St)};
+	    {reply, {ok, NewDb}, logs_switched(NewDb, St)};
 	[_|_] ->
-	    {noreply, St#st{switch_pending = {true, Log}}}
+	    %% io:fwrite("won't switch now; Ts = ~p~n", [Ts]),
+	    {noreply, St#st{switch_pending = {true, From, Log}}}
     end;
-handle_info({'DOWN',Ref,_,_,_}, #st{db = OldDb, transactions = Ts} = St) ->
-    Ts1 = lists:delete(Ref, Ts),
-    case {St#st.switch_pending, Ts1} of
-	{false, _} ->
-	    {noreply, St#st{transactions = Ts1}};
-	{{true,Log}, []} ->
-	    NewDb = kvdb_direct:switch_logs(OldDb, Log),
-	    {noreply, logs_switched(NewDb, St#st{transactions = Ts1})}
+handle_call_(db, _From, #st{db = Db} = St) ->
+    {reply, Db, St}.
+
+%% @private
+%% handle_info({'DOWN',Ref,_,_,_}, #st{db = OldDb, transactions = Ts} = St) ->
+%%     %% FIXME: We shouldn't get here unless the log switcher process dies badly.
+%%     %% Probably a good thing to manage that, but that's for later.
+%%     Ts1 = lists:delete(Ref, Ts),
+%%     case {St#st.switch_pending, Ts1} of
+%% 	{false, _} ->
+%% 	    {noreply, St#st{transactions = Ts1}};
+%% 	{{true,From,Log}, []} ->
+%% 	    NewDb = kvdb_direct:switch_logs(OldDb, Log),
+%% 	    gen_server:reply(From, {ok, NewDb}),
+%% 	    {noreply, logs_switched(NewDb, St#st{transactions = Ts1})}
+%%     end;
+handle_info({'DOWN', Ref, _,_,_}, #st{transactions = Ts,
+				      switch_pending = Pend} = St) ->
+    case {Ts -- [Ref], Pend} of
+	{[], {true, _From, Log}} ->
+	    NewDb = switch_logs(St#st.db, Log),
+	    {noreply, logs_switched(NewDb, St#st{transactions = []})};
+	{Ts1, _} ->
+	    {noreply, St#st{transactions = Ts1}}
     end;
 handle_info(_, St) ->
     {noreply, St}.
 
 %% @private
+handle_cast({end_trans, _Pid, Ref}, #st{db = Db,
+					transactions = Ts} = St) ->
+    %% io:fwrite("end_trans ~p~n", [Ref]),
+    case Ts -- [Ref] of
+	[] ->
+	    case St#st.switch_pending of
+		false ->
+		    {noreply, St#st{transactions = []}};
+		{true, From, Log} ->
+		    NewDb = switch_logs(Db, Log),
+		    gen_server:reply(From, {ok, NewDb}),
+		    {noreply, logs_switched(NewDb, St#st{transactions = []})}
+	    end;
+	[_|_] = Ts1 ->
+	    {noreply, St#st{transactions = Ts1}}
+    end;
 handle_cast(log_threshold, #st{db = Db} = St) ->
+    %% io:fwrite("threshold reached, ~p~n", [Db]),
     Me = self(),
     spawn_monitor(fun() ->
+			  %% io:fwrite("~p spawned to switch logs~n", [self()]),
 			  {ok, Log} = open_new_log(Db, Me),
-			  exit({?MODULE, new_log, Log})
+			  %% io:fwrite("new log opened: ~p~n", [Log]),
+			  TS = os:timestamp(),
+			  {ok, NewDb} = call(Me, {new_log, Log}, 15000),
+			  %% io:fwrite("NewDb = ~p~n", [NewDb]),
+			  #kvdb_ref{db = D} = NewDb,
+			  case kvdb_meta:read(D, last_dump, undefined) of
+			      DumpTS when DumpTS > TS ->
+				  kvdb_lib:purge_logs(D, DumpTS);
+				  %% io:fwrite("logs purged~n", []);
+			      _ ->
+				  %% io:fwrite("nothing to purge~n", []),
+				  ignore
+			  end
 		  end),
     {noreply, St};
 handle_cast(_, St) ->
@@ -205,41 +252,46 @@ code_change(_FromVsn, St, _Extra) ->
     {ok, St}.
 
 
-switch_logs(#kvdb_ref{mod = M, db = Db} = Ref, Log) ->
+switch_logs(#kvdb_ref{mod = M, db = #db{log = {OldLog,_}} = Db} = Ref, Log) ->
     #db{} = NewDb = M:switch_logs(Db, Log),
+    disk_log:close(OldLog),
     Ref#kvdb_ref{db = NewDb}.
 
 logs_switched(NewDb, St) ->
-    case St#st.pending_transactions of
+    St1 = case St#st.pending_transactions of
 	[] ->
-	    St#st{db = NewDb};
+	    St#st{db = NewDb,
+		  switch_pending = false};
 	Pend ->
-	    Ts = lists:foreach(
+	    Ts = lists:map(
 		   fun({Pid,_} = From) ->
 			   Ref = erlang:monitor(process, Pid),
 			   gen_server:reply(From, {NewDb, Ref}),
 			   Ref
 		   end, lists:reverse(Pend)),
 	    St#st{
-			db = NewDb,
-			pending_transactions = [],
-			transactions = Ts,
-			switch_pending = false}
-    end.
+	      db = NewDb,
+	      pending_transactions = [],
+	      transactions = Ts,
+	      switch_pending = false}
+	  end,
+    %% io:fwrite("logs switched; new st= ~p~n", [St1]),
+    St1.
 
 
-open_new_log(#kvdb_ref{name = Name, db = Db}, Pid) ->
+open_new_log(#kvdb_ref{db = Db}, Pid) ->
     LogDir = kvdb_meta:read(Db, log_dir, undefined),
-    kvdb_lib:open_log(Name, kvdb_lib:log_filename(LogDir), Pid).
+    kvdb_lib:open_log(kvdb_lib:log_filename(LogDir), Pid).
 
 
 do_open(Name, Options) when is_list(Options) ->
     DbMod = proplists:get_value(backend, Options, kvdb_sqlite3),
     case DbMod:open(Name,Options) of
 	{ok, Db} ->
-	    io:fwrite("opened ~p database: ~p~n", [DbMod, Options]),
+	    %% io:fwrite("opened ~p database: ~p~n", [DbMod, Options]),
 	    Default = DbMod:get_schema_mod(Db, kvdb_schema),
 	    Schema = proplists:get_value(schema, Options, Default),
+	    kvdb_meta:write(Db, name, Name),
 	    {ok, #kvdb_ref{name = Name, mod = DbMod, db = Db, schema = Schema}};
 	Error ->
 	    io:fwrite("ERROR opening ~p database: ~p. Opts = ~p~n",
@@ -262,8 +314,8 @@ mod(M) ->
 	    error(illegal_backend_type)
     end.
 
-name2file(X) ->
-    kvdb_lib:good_string(X).
+%% name2file(X) ->
+%%     kvdb_lib:good_string(X).
 
 
 

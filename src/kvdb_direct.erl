@@ -53,6 +53,8 @@
 	 is_queue_empty/3,
 	 first_queue/2,
 	 next_queue/3,
+	 queue_insert/5,
+	 queue_read/3,
 	 delete/3,
 	 add_table/3,
 	 delete_table/2,
@@ -187,7 +189,7 @@ index_keys(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
     end.
 
 -spec update_counter(Db::db_ref(), Table::table(), Key::binary(),
-		     Incr::increment()) -> integer().
+		     Incr::increment()) -> integer() | binary().
 update_counter(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table0, Key, Incr) ->
     ?debug("update_counter(#kvdb_ref{mod = ~p}, ~p, ~p, ~p)~n",
 	   [DbMod, Table0, Key, Incr]),
@@ -295,10 +297,10 @@ prel_pop(#kvdb_ref{mod = DbMod, db = Db} = DbRef,
 	      end
       end).
 
--spec extract(#kvdb_ref{}, Table::table(), Key::binary()) ->
+-spec extract(#kvdb_ref{}, Table::table(), Key::#q_key{}) ->
 			{ok, object()} | {error,any()}.
 extract(#kvdb_ref{mod = DbMod,
-		  db = Db} = DbRef, Table0, Key) ->
+		  db = Db} = DbRef, Table0, #q_key{} = Key) ->
     Table = table_name(Table0),
     case DbMod:extract(Db, Table, Key) of
 	{ok, Obj, Q, IsEmpty} ->
@@ -308,17 +310,17 @@ extract(#kvdb_ref{mod = DbMod,
 	    Other
     end.
 
--spec mark_queue_object(#kvdb_ref{}, Table::table(), Key::binary(),
+-spec mark_queue_object(#kvdb_ref{}, Table::table(), Key::#q_key{},
 			St::active | blocking | inactive) ->
 			       ok | {error, any()}.
 mark_queue_object(#kvdb_ref{mod = DbMod,
-			    db = Db} = DbRef, Table0, Key, St) when
+			    db = Db} = DbRef, Table0, #q_key{} = Key, St) when
       St == active; St == blocking; St == inactive ->
     Table = table_name(Table0),
     case DbMod:mark_queue_object(Db, Table, Key, St) of
 	{ok, Q, Obj} ->
 	    IsEmpty = DbMod:is_empty(Db, Table, Q),
-	    on_update({q_op,mark_obj,Q,IsEmpty}, DbRef, Table, {St,Obj});
+	    on_update({q_op,mark_obj,Q,IsEmpty}, DbRef, Table, {St,Key,Obj});
 	Other ->
 	    Other
     end.
@@ -353,6 +355,30 @@ first_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
 next_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
     Table = table_name(Table0),
     DbMod:next_queue(Db, Table, Q).
+
+-spec queue_insert(#kvdb_ref{}, table(), #q_key{}, status(), object()) ->
+			  ok.
+queue_insert(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table0,
+	     #q_key{queue = Q} = QKey, St, Obj) when
+      St == active; St == inactive; St == blocking ->
+    Table = table_name(Table0),
+    if_table(DbMod, Db, Table,
+	     fun() ->
+		     ok = DbMod:queue_insert(Db, Table, QKey, St, Obj),
+		     IsEmpty = is_queue_empty(DbRef, Table, Q),
+		     on_update({q_op, push,Q,IsEmpty}, DbRef, Table,
+			       {QKey, Obj}),
+		     ok
+	     end).
+
+-spec queue_read(#kvdb_ref{}, table(), #q_key{}) ->
+			{ok, status(), object()} | {error, any()}.
+queue_read(#kvdb_ref{mod = DbMod, db = Db}, Table0, #q_key{} = QKey) ->
+    Table = table_name(Table0),
+    if_table(DbMod, Db, Table,
+	     fun() ->
+		     DbMod:queue_read(Db, Table, QKey)
+	     end).
 
 -spec delete(Db::db_ref(), Table::table(), Key::binary()) ->
 		       ok | {error, any()}.
@@ -430,7 +456,7 @@ select(#kvdb_ref{mod = DbMod, db = Db}, Table0, MatchSpec, Limit) ->
 queue_delete_event(#kvdb_ref{mod = DbMod,
 			     db = Db} = DbRef, Table, Type, Key) ->
     Enc = DbMod:info(Db, {Table,encoding}),
-    {Q,_} = kvdb_lib:split_queue_key(Enc,Type,Key),
+    #q_key{queue = Q} = kvdb_lib:split_queue_key(Enc,Type,Key),
     IsEmpty = DbMod:is_queue_empty(Db, Table, Q),
     on_update({q_op,extract,Q,IsEmpty}, DbRef, Table, Key).
 

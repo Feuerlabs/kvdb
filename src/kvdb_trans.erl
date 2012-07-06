@@ -34,16 +34,21 @@
 	 prev/3
 	]).
 
+%% debug_function
+-export([tstore_to_list/1]).
+
 -include("kvdb.hrl").
 -include_lib("lager/include/log.hrl").
 
 -record(event, {event, tab, info}).
 
+-define(q_done(Res), (Res == done orelse Res == blocked)).
+
 run(#kvdb_ref{name = Name, schema = Schema} = KR0, F) when is_function(F,1) ->
-    KR2 = try kvdb_server:trans_db(Name)
-	  catch
-	      exit:{noproc,_} -> KR0
-	  end,
+    {KR2, Ref} = try kvdb_server:begin_trans(Name)
+		 catch
+		     exit:{noproc,_} -> {KR0, undefined}
+		 end,
     {ok, DbE} = kvdb_ets:open("trans", []),
     KR1 = #kvdb_ref{mod = kvdb_ets, db = DbE},
     K = #kvdb_ref{name = Name, schema = Schema, mod = ?MODULE,
@@ -53,7 +58,7 @@ run(#kvdb_ref{name = Name, schema = Schema} = KR0, F) when is_function(F,1) ->
 	 commit(K),
 	 Result
     after
-	catch kvdb_server:end_trans(Name),
+	kvdb_server:end_trans(Name, Ref),
 	erase({kvdb_trans, Name}),
 	erase({kvdb_trans_events, Name}),
 	#db{ref = Ets} = DbE,
@@ -71,6 +76,9 @@ is_transaction(Name) ->
 	_ ->
 	    false
     end.
+
+tstore_to_list(#kvdb_ref{db = #db{ref = {#kvdb_ref{db = #db{ref = Ets}},_}}}) ->
+    ets:tab2list(Ets).
 
 on_update(Event, #kvdb_ref{name = Name, schema = Schema} = Ref0, Tab, Info) ->
     Key = {kvdb_trans_events, Name},
@@ -172,8 +180,8 @@ get_schema_mod(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
 open(#db{} = _Db, _Opts) ->
     error(nyi).
 
-add_table(#kvdb_ref{db = {#kvdb_ref{mod=M1,db=Db1},_}} = Ref, Tab, Opts) ->
-    case info(Ref, {Tab, type}) of
+add_table(#db{ref = {#kvdb_ref{mod=M1,db=Db1}, _}} = DbT, Tab, Opts) ->
+    case info(DbT, {Tab, type}) of
 	undefined ->
 	    DelFirst = ok_true(M1:int_read(Db1, {deleted, Tab})),
 	    case M1:add_table(Db1, Tab, Opts) of
@@ -207,8 +215,27 @@ delete_table(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}} = Db, Tab) ->
 	    end
     end.
 
-extract(_Db, _Tab, _AbsKey) ->
-    error(nyi).
+extract(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
+		   #kvdb_ref{mod=M2,db=Db2} = KR2}}, Tab, QKey) ->
+    ensure_table(Tab, KR1, KR2),
+    case M1:int_read(Db1, {deleted, Tab, QKey}) of
+	{ok, true} ->
+	    {error, not_found};
+	_ ->
+	    case M1:extract(Db1, Tab, QKey) of
+		{error, not_found} ->
+		    case M2:extract(Db2, Tab, QKey) of
+			{error, not_found} = E ->
+			    E;
+			{ok, _, _, _} = Res ->  % {ok, Obj, Queue, IsEmpty}
+			    M1:int_write(Db1, {deleted, Tab, QKey}, true),
+			    Res
+		    end;
+		{ok, _, _, _} = Res ->
+		    M1:int_write(Db1, {deleted, Tab, QKey}, true),
+		    Res
+	    end
+    end.
 
 first(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
 		 #kvdb_ref{mod=M2,db=Db2} = KR2}}, Tab) ->
@@ -232,7 +259,23 @@ check_next({ok,O2} = R2, R1, Tab, M1,Db1, M2,Db2) ->
 	    check_next(M2:next(Db2,Tab,K2), R1, Tab, M1,Db1, M2,Db2);
 	_ ->
 	    case {K2, R1} of
-		{_, {ok,O1}} when K2 >= element(1,O1) ->
+		{_, {ok,O1}} when K2 > element(1,O1) ->
+		    R1;
+		_ ->
+		    R2
+	    end
+    end.
+
+check_prev(done, R1, _Tab, _M1,_Db1, _M2, _Db2) ->
+    R1;
+check_prev({ok,O2} = R2, R1, Tab, M1,Db1, M2,Db2) ->
+    K2 = element(1, O2),
+    case obj_deleted(K2, key, M1, Db1, Tab) of
+	true ->
+	    check_prev(M2:prev(Db2,Tab,K2), R1, Tab, M1,Db1, M2,Db2);
+	_ ->
+	    case {K2, R1} of
+		{_, {ok,O1}} when K2 < element(1,O1) ->
 		    R1;
 		_ ->
 		    R2
@@ -307,6 +350,84 @@ merge_sets([_|_] = S1, [H2|T2], Type, M, Db, Tab, AnyDel) ->
 merge_sets(S1, [], _, _, _, _, _) ->
     S1.
 
+-record(q_merge, {c1, c2, m, db, tab, filter, heedblock, anydel}).
+merge_q_sets(S1, S2, QM, Acc) ->
+    merge_q_sets(S1, S2, QM, Acc, []).
+
+merge_q_sets([{K,{S,O}}|T1], [{K,_}|T2], QM, Limit, Acc) ->
+    merge_q_acc(K,S,O, T1,T2, QM, Limit, Acc);
+merge_q_sets([{K1,{S,O}}|T1], [{K2,_}|_] = S2, QM, Limit, Acc) when K1 < K2 ->
+    merge_q_acc(K1,S,O, T1,S2, QM, Limit, Acc);
+merge_q_sets([_|_] = S1, [{K2,{St2,O2}}|T2], QM, Limit, Acc) ->
+    %% K2 < K1
+    #q_merge{anydel = AnyDel, m = M, db = Db, tab = Tab} = QM,
+    case AnyDel andalso obj_deleted(K2, key, M, Db, Tab) of
+	false ->
+	    merge_q_acc(K2,St2,O2, S1,T2, QM, Limit, Acc);
+	true ->
+	    merge_q_sets(S1,T2, QM, Limit, Acc)
+    end;
+merge_q_sets(done, [{K,{St,O}}|T2], QM, Limit, Acc) ->
+    #q_merge{anydel = AnyDel, m = M, db = Db, tab = Tab} = QM,
+    case AnyDel andalso obj_deleted(K, key, M, Db, Tab) of
+	false ->
+	    merge_q_acc(K,St,O, done,T2, QM, Limit, Acc);
+	true ->
+	    merge_q_sets(done, T2, QM, Limit, Acc)
+    end;
+merge_q_sets([{K,{St,O}}|T1], done, QM, Limit, Acc) ->
+    merge_q_acc(K,St,O, T1,done, QM, Limit, Acc);
+merge_q_sets([],S2, QM, Limit, Acc) ->
+    {S1, NewC1} = case (QM#q_merge.c1)() of
+		      done -> {done, done};
+		      {_, _} = Res -> Res
+		  end,
+    merge_q_sets(S1,S2, QM#q_merge{c1 = NewC1}, Limit, Acc);
+merge_q_sets(S1,[], QM, Limit, Acc) ->
+    {S2, NewC2} = case (QM#q_merge.c2)() of
+		      done -> {done, done};
+		      {_, _} = Res -> Res
+		  end,
+    merge_q_sets(S1,S2, QM#q_merge{c2 = NewC2}, Limit, Acc);
+merge_q_sets(done,done, QM, _Limit, Acc) ->
+    {lists:reverse(Acc), QM, stop}.
+
+
+merge_q_acc(K,St,O, S1,S2, #q_merge{heedblock = Heed,
+				    filter = Filter} = QM, Limit, Acc) ->
+    case Heed andalso St == blocked of
+	true ->
+	    {Acc, QM, stop};
+	false ->
+	    {Acc1,Limit1} = case Filter(St,K,O) of
+				{keep, X} -> {[X|Acc], decr(Limit)};
+				{stop, X} -> {[X|Acc], stop};
+				stop      -> {Acc, stop};
+				skip      -> {Acc, Limit}
+			    end,
+	    if Limit1 == 0 ->
+		    {lists:reverse(Acc1), set_cont(S1,S2, QM), 0};
+	       Limit1 == stop ->
+		    {lists:reverse(Acc1), QM, stop};
+	       true ->
+		    merge_q_sets(S1, S2, QM, Limit1, Acc1)
+	    end
+    end.
+
+set_cont(S1, S2, #q_merge{c1 = C1, c2 = C2} = QM) ->
+    QM#q_merge{c1 = set_cont_(S1, C1), c2 = set_cont_(S2, C2)}.
+
+set_cont_(done, _) -> fun() -> done end;
+set_cont_(blocking, _) -> fun() -> blocking end;
+set_cont_([], C) -> C;
+set_cont_([_|_] = S, C) -> fun() -> {S, C} end.
+
+
+	     
+
+
+obj_deleted({#q_key{} = K, _}, obj, M, Db, Tab) ->
+    ok_true(M:int_read(Db, {deleted, Tab, K}));
 obj_deleted(Obj, Type, M, Db, Tab) ->
     K = if Type==obj -> element(1, Obj);
 	   Type==key -> Obj
@@ -330,11 +451,17 @@ index_keys(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
 is_queue_empty(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 			  #kvdb_ref{mod=M2,db=Db2} = K2}}, Tab, Q) ->
     ensure_table(Tab, K1, K2),
-    case M1:int_read(Db1, {queue_op, Tab, Q}) of
-	{ok, true} ->
-	    M1:is_queue_empty(Db1, Tab, Q);
+    Filter = fun(active, K, O) -> {keep,{K,O}};
+		(_, _, _) -> skip
+	     end,
+    case list_queue_(
+	   M1:list_queue(Db1, Tab, Q, Filter, true, 1),
+	   M2:list_queue(Db2, Tab, Q, Filter, true, 1),
+	   M1,Db1, M2,Db2, Tab, Q, Filter, true, 1, 1, []) of
+	{[_|_], _} ->
+	    false;
 	_ ->
-	    M2:is_queue_empty(Db2, Tab, Q)
+	    true
     end.
 
 is_table(#db{ref = {#kvdb_ref{} = K1, #kvdb_ref{} = K2}}, Tab) ->
@@ -348,7 +475,7 @@ is_table(#db{ref = {#kvdb_ref{} = K1, #kvdb_ref{} = K2}}, Tab) ->
 last(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 		#kvdb_ref{mod=M2,db=Db2} = K2}}, Tab) ->
     ensure_table(Tab, K1, K2),
-    
+
     R1 = M1:last(Db1, Tab),
     R2 = M2:last(Db2, Tab),
     case {R1, R2} of
@@ -366,11 +493,140 @@ last(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 	    end
     end.
 
-list_queue(_Db, _Tab, _Q) ->
-    error(nyi).
+list_queue(Db, Tab, Q) ->
+    list_queue(Db, Tab, Q, fun(St,_,O) -> {keep,O} end, false, infinity).
 
-mark_queue_object(_Db, _Tab, _AbsKey, _St) ->
-    error(nyi).
+list_queue(#db{ref = {K1, K2}} = Ref, Tab, Q, Filter, HeedBlock, Limit) ->
+    ensure_table(Tab, K1, K2),
+    do_list_queue(Ref, Tab, Q, Filter, HeedBlock, Limit).
+
+do_list_queue(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
+			 #kvdb_ref{mod=M2,db=Db2}}}, Tab, Q,
+	      Filter, HeedBlock, Limit) ->
+    MyFilter = fun(S,K,O) -> {keep, {K,{S,O}}} end,
+    QM = #q_merge{filter = Filter, heedblock = HeedBlock,
+		  m = M1, db = Db1, tab = Tab,
+		  anydel = any_deleted(Db1, Tab)},
+    list_queue_(M1:list_queue(Db1, Tab, Q, MyFilter, HeedBlock, Limit),
+		M2:list_queue(Db2, Tab, Q, MyFilter, HeedBlock, Limit),
+		QM, Limit, Limit).
+
+list_queue_(R1, R2, _, _, _) when ?q_done(R1), ?q_done(R2) ->
+    most_done(R1, R2);
+list_queue_(blocked, _, _, _, _) ->
+    blocked;
+list_queue_({S1,C1}, {S2,C2}, QM, Limit0, Limit) ->
+    case merge_q_sets(S1,S2, QM#q_merge{c1 = C1, c2 = C2}, Limit) of
+	{blocked, _, _} -> blocked;
+	{done, _, _}    -> done;
+	{RetSet, _, stop} ->
+	    {RetSet, fun() -> done end};
+	{RetSet, #q_merge{c1 = NewC1, c2 = NewC2} = QM1, 0} ->
+	    {RetSet,
+	     fun() ->
+		     list_queue_(NewC1(), NewC2(), QM1, Limit0, Limit0)
+	     end}
+    end.
+
+
+list_queue_(done,done, _,_, _,_, _, _, _, _, _, _, _) ->
+    done;
+list_queue_(Done1, Done2, _M1,_Db1, _M2,_Db2, _Tab, _Q, _Filter,
+	    _HeedBlock, _Limit0, _Limit, Acc) when
+      ?q_done(Done1) orelse ?q_done(Done2) ->
+    Status = most_done(Done1, Done2),
+    if Acc == [] ->
+	    Status;
+       true ->
+
+	    {lists:reverse(Acc), fun() -> Status end}
+    end;
+list_queue_(R1, R2, M1,Db1, M2,Db2, Tab, Q, Filter,
+	    HeedBlock, Limit0, Limit, Acc) when
+      ?q_done(R1) orelse ?q_done(R2) ->
+    {Set, C1, C2} = if R1 == done ->
+			    {element(1, R2), fun() -> done end, element(2, R2)};
+		       R2 == done ->
+			    {element(1, R1), element(2, R1), fun() -> done end}
+		    end,
+    if Acc == [] ->
+	    R2;
+       true ->
+	    {RetSet, NewAcc, NewLimit} = fill_limit(Set, Acc, Limit, Limit0),
+	    {RetSet, fun() ->
+			     list_queue_(
+			       C1(), C2(), M1,Db1, M2,Db2, Tab, Q,
+			       Filter, HeedBlock, Limit0, NewLimit, NewAcc)
+		     end}
+    end;
+list_queue_({S1, C1}, {S2, C2}, M1,Db1, M2,Db2, Tab, Q, Filter,
+	    HeedBlock, Limit0, Limit, Acc) ->
+    Set = merge_sets(S1, S2, obj, M1, Db1, Tab),
+    case fill_limit(Set, Acc, Limit, Limit0) of
+	{[], [], _} ->
+	    {[], fun() -> done end};
+	{RetSet, NewAcc, NewLimit} ->
+	    {RetSet, fun() ->
+			     list_queue_(
+			       C1(), C2(), M1, Db1, M2,Db2, Tab, Q,
+			       Filter, HeedBlock, Limit0, NewLimit, NewAcc)
+		     end}
+    end.
+
+
+
+most_done(blocked, _) -> blocked;
+most_done(_, blocked) -> blocked;
+most_done(_, _) -> done.
+
+decr(infinity) -> infinity;
+decr(L) when is_integer(L) ->
+    L-1.
+
+fill_limit(Set, [], infinity, _) ->
+    %% reasonably, we shouldn't have anything in Acc if Limit==infinity
+    {Set, [], infinity};
+fill_limit(Set, Acc, Limit, Limit0) when is_integer(Limit) ->
+    Concat = lists:reverse(Acc) ++ Set,
+    case length(Concat) of
+	L when L =< Limit ->
+	    {Concat, [], Limit - L};
+	L when L > Limit->
+	    {Ret, NewAcc} = lists:split(Limit, Concat),
+	    {Ret, NewAcc, Limit0}
+    end.
+
+mark_queue_object(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
+			     #kvdb_ref{} = K2}} = Ref,
+		  Tab, #q_key{} = QK, St) ->
+    ensure_table(Tab, K1, K2),
+    case queue_read(Ref, Tab, QK) of
+	{error, not_found} = E ->
+	    E;
+	{ok, _OldSt, Obj} ->
+	    M1:queue_insert(Db1, Tab, QK, St, Obj)
+    end.
+
+queue_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
+		      #kvdb_ref{mod=M2,db=Db2} = K2}},
+	   Tab, #q_key{} = QKey) ->
+    ensure_table(Tab, K1, K2),
+    case M1:queue_read(Db1, Tab, QKey) of
+	{ok, _St, _Obj} = Res1 ->
+	    Res1;
+	{error, not_found} ->
+	    case obj_deleted(QKey, key, M1, Db1, Tab) of
+		false ->
+		    case M2:queue_read(Db2, Tab, QKey) of
+			{ok, _, _} = Res2 ->
+			    Res2;
+			{error, _} = Err2 ->
+			    Err2
+		    end;
+		true ->
+		    {error, not_found}
+	    end
+    end.
 
 next(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 		#kvdb_ref{mod=M2,db=Db2} = K2}}, Tab, K) ->
@@ -388,14 +644,43 @@ next(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 next_queue(_Db, _Tab, _Q) ->
     error(nyi).
 
-pop(_Db, _Tab, _Q) ->
-    error(nyi).
+pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
+    ensure_table(Tab, K1, K2),
+    Filter = fun(active, K, O) -> {keep,{K,O}};
+		(_, _, _) -> skip
+	     end,
+    %% case list_queue_(
+    %% 	   M1:list_queue(Db1, Tab, Q, Filter, true, 2),
+    %% 	   M2:list_queue(Db2, Tab, Q, Filter, true, 2),
+    %% 	   M1,Db1, M2,Db2, Tab, Q, Filter, true, 2, 2, []) of
+    case do_list_queue(Ref, Tab, Q, Filter, true, 2) of
+	{[{QKey, Obj}|Rest], _} ->
+	    _ = M1:extract(Db1, Tab, QKey), % we don't know where it came from.
+	    M1:int_write(Db1, {deleted, Tab, QKey}, true),
+	    IsEmpty = (Rest =/= []),
+	    {ok, Obj, IsEmpty};
+	R when ?q_done(R) ->
+	    R;
+	{error, _} = E ->
+	    E
+    end.
 
-prev(_Db, _Tab, _K) ->
-    error(nyi).
+prev(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
+		#kvdb_ref{mod=M2,db=Db2} = K2}}, Tab, K) ->
+    ensure_table(Tab, K1, K2),
+    R1 = M1:prev(Db1, Tab, K),
+    case {R1, M2:prev(Db2, Tab, K)} of
+	{done, done} ->
+	    done;
+	{_, done} ->
+	    R1;
+	{_, {ok, _} = Res} ->
+	    check_prev(Res, R1, Tab, M1,Db1, M2,Db2)
+    end.
 
-push(_Db, _Tab, _Q, _Obj) ->
-    error(nyi).
+push(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}}, Tab, Q, Obj) ->
+    ensure_table(Tab, K1, K2),
+    M1:push(Db1, Tab, Q, Obj).
 
 update_counter(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}} = Db, Tab, K, Incr) ->
     case get(Db, Tab, K) of
@@ -405,22 +690,28 @@ update_counter(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}} = Db, Tab, K, Incr) ->
 		       I when is_integer(I) ->
 			   I+1;
 		       B when is_binary(B) ->
-			   Sz = bit_size(B),
-			   <<I:Sz/integer>> = B,
+			   BSz = bit_size(B),
+			   <<I:BSz/integer>> = B,
 			   NewI = I + Incr,
-			   <<NewI:Sz/integer>>
+			   <<NewI:BSz/integer>>
 		   end,
-	    M1:put(Db1, Tab, setelement(Sz, Obj, NewV));
+	    M1:put(Db1, Tab, setelement(Sz, Obj, NewV)),
+	    NewV;
 	_ ->
 	    error(not_found)
     end.
 
 ensure_table(Tab, #kvdb_ref{mod = M1, db = Db1},
 	     #kvdb_ref{mod = M2, db = Db2}) ->
-    case M2:info(Db2, {Tab, tabrec}) of
+    case M1:info(Db1, {Tab, tabrec}) of
 	undefined ->
-	    error({no_such_table, Tab});
-	#table{} = TabR ->
-	    M1:int_write(Db1, {tabrec, Tab}, TabR),
+	    case M2:info(Db2, {Tab, tabrec}) of
+		undefined ->
+		    error({no_such_table, Tab});
+		#table{} = TabR ->
+		    M1:int_write(Db1, {tabrec, Tab}, TabR),
+		    true
+	    end;
+	#table{} ->
 	    true
     end.
