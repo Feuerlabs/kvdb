@@ -15,9 +15,12 @@
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_ets.md" class="module">kvdb_ets</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_leveldb.md" class="module">kvdb_leveldb</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_lib.md" class="module">kvdb_lib</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_meta.md" class="module">kvdb_meta</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_queue.md" class="module">kvdb_queue</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_schema.md" class="module">kvdb_schema</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_schema_events.md" class="module">kvdb_schema_events</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_server.md" class="module">kvdb_server</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_sqlite3.md" class="module">kvdb_sqlite3</a></td></tr>
-<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_sup.md" class="module">kvdb_sup</a></td></tr></table>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_sup.md" class="module">kvdb_sup</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_trans.md" class="module">kvdb_trans</a></td></tr></table>
 

@@ -12,7 +12,7 @@ __This module defines the `kvdb_schema` behaviour.__
 ##Function Index##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#behaviour_info-1">behaviour_info/1</a></td><td></td></tr><tr><td valign="top"><a href="#on_update-4">on_update/4</a></td><td></td></tr><tr><td valign="top"><a href="#read-1">read/1</a></td><td></td></tr><tr><td valign="top"><a href="#read-2">read/2</a></td><td></td></tr><tr><td valign="top"><a href="#validate-3">validate/3</a></td><td></td></tr><tr><td valign="top"><a href="#validate_attr-3">validate_attr/3</a></td><td></td></tr><tr><td valign="top"><a href="#write-2">write/2</a></td><td></td></tr></table>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#behaviour_info-1">behaviour_info/1</a></td><td></td></tr><tr><td valign="top"><a href="#on_update-4">on_update/4</a></td><td></td></tr><tr><td valign="top"><a href="#post_commit-2">post_commit/2</a></td><td></td></tr><tr><td valign="top"><a href="#pre_commit-2">pre_commit/2</a></td><td></td></tr><tr><td valign="top"><a href="#read-1">read/1</a></td><td></td></tr><tr><td valign="top"><a href="#read-2">read/2</a></td><td></td></tr><tr><td valign="top"><a href="#validate-3">validate/3</a></td><td></td></tr><tr><td valign="top"><a href="#validate_attr-3">validate_attr/3</a></td><td></td></tr><tr><td valign="top"><a href="#write-2">write/2</a></td><td></td></tr></table>
 
 
 <a name="functions"></a>
@@ -32,6 +32,20 @@ __This module defines the `kvdb_schema` behaviour.__
 
 
 `on_update(Op, Db, Table, Obj) -> any()`
+
+<a name="post_commit-2"></a>
+
+###post_commit/2##
+
+
+`post_commit(X1, X2) -> any()`
+
+<a name="pre_commit-2"></a>
+
+###pre_commit/2##
+
+
+`pre_commit(C, X2) -> any()`
 
 <a name="read-1"></a>
 

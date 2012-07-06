@@ -20,6 +20,7 @@
 	 update_counter/4,
 	 push/4,
 	 pop/3,
+	 prel_pop/3,
 	 extract/3,
 	 list_queue/3,
 	 is_queue_empty/3,
@@ -39,8 +40,6 @@
 
 -include("kvdb.hrl").
 -include_lib("lager/include/log.hrl").
-
--record(event, {event, tab, info}).
 
 -define(q_done(Res), (Res == done orelse Res == blocked)).
 
@@ -83,37 +82,37 @@ tstore_to_list(#kvdb_ref{db = #db{ref = {#kvdb_ref{db = #db{ref = Ets}},_}}}) ->
 on_update(Event, #kvdb_ref{name = Name, schema = Schema} = Ref0, Tab, Info) ->
     Key = {kvdb_trans_events, Name},
     case is_transaction(Name) of
-	{true, _} ->
+	{true, #kvdb_ref{db = #db{ref = {#kvdb_ref{mod = M, db = Db},_}}}} ->
 	    Rec = #event{event = Event,
 			 tab = Tab,
 			 info = Info},
-	    case get(Key) of
-		undefined ->
-		    put(Key, [Rec]);
-		List ->
-		    put(Key, [Rec|List])
-	    end;
-	false ->
+	    M:store_event(Db, Rec);
+ 	false ->
 	    Schema:on_update(Event, Ref0, Tab, Info)
     end.
 
-fire_events(#kvdb_ref{name = Name, schema = Schema} = Ref) ->
-    case get({kvdb_trans_events, Name}) of
-	undefined ->
-	    ok;
-	List ->
-	    lists:foreach(
-	      fun(#event{event = E, tab = T, info = I}) ->
-		      Schema:on_update(E, Ref, T, I)
-	      end, lists:reverse(List))
-    end.
+fire_events(#commit{events = Events},
+	    #kvdb_ref{name = Name, schema = Schema} = Ref) ->
+    deep_foreach(
+      fun(#event{event = E, tab = T, info = I}) ->
+	      Schema:on_update(E, Ref, T, I)
+      end, Events).
+
+deep_foreach(F, [[]|T]) -> deep_foreach(F, T);
+deep_foreach(F, [[_|_] = H|T]) -> deep_foreach(F, H), deep_foreach(F, T);
+deep_foreach(F, [H|T]) -> F(H), deep_foreach(F, T);
+deep_foreach(_, []) ->
+    ok.
 
 commit(#kvdb_ref{db = #db{ref = {#kvdb_ref{mod = M1,db=Db1},
-				 #kvdb_ref{} = KR2}}} = Ref) ->
+				 #kvdb_ref{} = KR2}},
+		schema = Schema} = Ref) ->
     #commit{} = Set = M1:commit_set(Db1),
+    #commit{} = Set1 = Schema:pre_commit(Set, Ref),
     ?debug("Commit set: ~p~n", [Set]),
-    kvdb_lib:commit(Set, KR2),
-    fire_events(Ref).
+    kvdb_lib:commit(Set1, KR2),
+    catch Schema:post_commit(Set1, Ref),
+    fire_events(Set1, Ref).
 
 
 info(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
@@ -598,7 +597,8 @@ fill_limit(Set, Acc, Limit, Limit0) when is_integer(Limit) ->
 
 mark_queue_object(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 			     #kvdb_ref{} = K2}} = Ref,
-		  Tab, #q_key{} = QK, St) ->
+		  Tab, #q_key{} = QK, St)
+  when St==active; St==inactive; St==blocking ->
     ensure_table(Tab, K1, K2),
     case queue_read(Ref, Tab, QK) of
 	{error, not_found} = E ->
@@ -608,9 +608,13 @@ mark_queue_object(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
     end.
 
 queue_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
-		      #kvdb_ref{mod=M2,db=Db2} = K2}},
+		      #kvdb_ref{mod=M2,db=Db2} = K2}} = Ref,
 	   Tab, #q_key{} = QKey) ->
     ensure_table(Tab, K1, K2),
+    do_queue_read(Ref, Tab, QKey).
+
+do_queue_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
+			 #kvdb_ref{mod=M2,db=Db2}}}, Tab, #q_key{} = QKey) ->
     case M1:queue_read(Db1, Tab, QKey) of
 	{ok, _St, _Obj} = Res1 ->
 	    Res1;
@@ -649,16 +653,28 @@ pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
     Filter = fun(active, K, O) -> {keep,{K,O}};
 		(_, _, _) -> skip
 	     end,
-    %% case list_queue_(
-    %% 	   M1:list_queue(Db1, Tab, Q, Filter, true, 2),
-    %% 	   M2:list_queue(Db2, Tab, Q, Filter, true, 2),
-    %% 	   M1,Db1, M2,Db2, Tab, Q, Filter, true, 2, 2, []) of
     case do_list_queue(Ref, Tab, Q, Filter, true, 2) of
 	{[{QKey, Obj}|Rest], _} ->
 	    _ = M1:extract(Db1, Tab, QKey), % we don't know where it came from.
 	    M1:int_write(Db1, {deleted, Tab, QKey}, true),
 	    IsEmpty = (Rest =/= []),
 	    {ok, Obj, IsEmpty};
+	R when ?q_done(R) ->
+	    R;
+	{error, _} = E ->
+	    E
+    end.
+
+prel_pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
+    ensure_table(Tab, K1, K2),
+    Filter = fun(active, K, O) -> {keep,{K,O}};
+		(_, _, _) -> skip
+	     end,
+    case do_list_queue(Ref, Tab, Q, Filter, true, 2) of
+	{[{QKey, Obj}|Rest], _} ->
+	    M1:queue_insert(Db1, Tab, QKey, blocking, Obj),
+	    IsEmpty = (Rest =/= []),
+	    {ok, Obj, QKey, IsEmpty};
 	R when ?q_done(R) ->
 	    R;
 	{error, _} = E ->

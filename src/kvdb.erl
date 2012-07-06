@@ -37,6 +37,7 @@
 %% starting kvdb, opening databases
 -export([start/0, open_db/2, info/2]).
 -export([open/2, close/1, db/1, start_session/2]).
+-export([transaction/2]).
 %% adding, deleting, listing tables
 -export([add_table/2,
 	 add_table/3,
@@ -241,6 +242,17 @@ db(#kvdb_ref{} = Db) ->
     Db;
 db(Name) ->
     kvdb_server:db(Name).
+
+-spec transaction(db_name() | #kvdb_ref{}, F::fun((#kvdb_ref{}) -> T)) -> T.
+%% @doc Runs a transaction with commit/rollback semantics.
+%%
+%% This function creates a transaction instance (NewRef) and executes F(NewRef).
+%% The transaction commits if F returns a value, and this value becomes the
+%% return value of `transaction/2', after committing any updates to the
+%% original kvdb instance.
+%% @end
+transaction(Db, F) when is_function(F, 1) ->
+    kvdb_trans:run(Db, F).
 
 -spec add_table(db_name(), table()) -> ok.
 %% @equiv add_table(Name, Table, [{type, set}])

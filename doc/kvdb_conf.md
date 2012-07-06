@@ -31,9 +31,10 @@ Example:
 {"system*services", []}
 {"system*services*ssh", []}
 
-Netconf identifiers can consist of alphanumerics, '-', '_' or '.'. The '*' as delimiter
-is chosen so that a "wildcard" character can be used that is greater than the delimiter,
-but smaller than any identifier character.
+Netconf identifiers can consist of alphanumerics, '-', '_' or '.'.
+The '*' as delimiter is chosen so that a "wildcard" character can be
+used that is greater than the delimiter, but smaller than any identifier
+character.
 <a name="types"></a>
 
 ##Data Types##

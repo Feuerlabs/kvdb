@@ -46,6 +46,7 @@ fill_test_() ->
 			      , ?_test(?debugVal(first_next(N)))
 			      , ?_test(?debugVal(q(N)))
 			      , ?_test(?debugVal(q_push_pop(N)))
+			      , ?_test(?debugVal(q_push_prel_pop(N)))
 			      , ?_test(?debugVal(q_extract(N)))
 			      , ?_test(?debugVal(q_mark_blocking(N)))
 			      , ?_test(?debugVal(q_mark_inactive(N)))
@@ -93,8 +94,10 @@ fill_db(Name, _Db, Opts, D) ->
       end, Objs),
     kvdb:close(Name),
     ?debugFmt("DB closed. Trying to reopen...~n", []),
+    timer:sleep(500),
     open_db(Name, Opts, D),
     Found = kvdb:prefix_match(Name, t, '_', infinity),
+    %% io:fwrite(user, "Objs = ~p~n", [Objs]),
     ?assertMatch({Objs, _}, Found).
 
 
@@ -179,8 +182,22 @@ q_push_pop(Name) ->
 	     Name, fun(_) ->
 			   kvdb:pop(Name, T, q)
 		   end),
-    ?debugHere,
     ?assertMatch({ok, {1,a}}, Res1),
+    ok = kvdb:delete_table(Name, T).
+
+q_push_prel_pop(Name) ->
+    T = ?tab,
+    ok = kvdb:add_table(Name, T, [{type, fifo}, {encoding, sext}]),
+    {ok, QKey1} = kvdb:push(Name, T, q, {1,a}),
+    kvdb:push(Name, T, q, {2,b}),
+    Res1 = kvdb_trans:run(
+	     Name, fun(_) ->
+			   ?assertMatch({ok,{1,a},QKey1},
+					kvdb:prel_pop(Name, T, q)),
+			   kvdb:pop(Name, T, q)
+		   end),
+    ?debugHere,
+    ?assertMatch(blocked, Res1),
     ok = kvdb:delete_table(Name, T).
 
 q_extract(Name) ->
@@ -205,9 +222,9 @@ q_mark_blocking(Name) ->
 	kvdb_trans:run(
 	  Name, fun(DbT) ->
 			kvdb:mark_queue_object(Name, T, QK1, blocking),
-			io:fwrite(user, "Tstore = ~p~n",
-				  [kvdb_trans:tstore_to_list(DbT)]),
-			?trace([kvdb_trans], kvdb:pop(Name, T, q))
+			%% io:fwrite(user, "Tstore = ~p~n",
+			%% 	  [kvdb_trans:tstore_to_list(DbT)]),
+			kvdb:pop(Name, T, q)
 		end),
     ?assertMatch(blocked, Res1),
     Res2 = kvdb:pop(Name, T, q),
@@ -223,11 +240,6 @@ q_mark_inactive(Name) ->
 	kvdb_trans:run(
 	  Name, fun(DbT) ->
 			kvdb:mark_queue_object(Name, T, QK1, inactive),
-			%% io:fwrite(user, "Tstore = ~p~n",
-			%%  	  [kvdb_trans:tstore_to_list(DbT)]),
-			%% ?trace([{kvdb_trans,merge_q_sets},
-			%% 	{kvdb_trans, list_queue},
-			%% 	{kvdb_trans, list_queue_}], kvdb:pop(Name, T, q))
 			kvdb:pop(Name, T, q)
 		end),
     ?assertMatch({ok,{2,b}}, Res1),

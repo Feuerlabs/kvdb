@@ -196,11 +196,6 @@ queue(Db) ->
     queue(Db, lifo, sext).
 
 queue(Db, Type, Enc) ->
-    dbg:tracer(),
-    dbg:tpl(kvdb_ets, push, x),
-    dbg:tpl(kvdb_ets, pop, x),
-    dbg:tpl(kvdb_ets, do_pop_, x),
-    dbg:p(all, [c]),
     M = {Db,Type,Enc},
     Q = <<"q1_", (atom_to_binary(Db, latin1))/binary, "_",
 	  (atom_to_binary(Type,latin1))/binary, "_",
@@ -212,15 +207,6 @@ queue(Db, Type, Enc) ->
 		  || Obj <- [{<<"1">>,<<"a">>},
 			     {<<"2">>,<<"b">>},
 			     {<<"3">>,<<"c">>}]],
-    case Q of
-	<<"q1_e", _/binary>> ->
-	    io:fwrite(user, "After push: ~p~n",
-		      [ets:tab2list(element(
-				      2,
-				      element(3, kvdb:db(Db))))]);
-	_ ->
-	    ok
-    end,
     ?match(M, {ok, {<<"2">>,<<"b">>}}, kvdb:extract(Db, Q, K2)),
     if Type == lifo ->
 	    ?match(M, {ok, {<<"3">>,<<"c">>}}, catch kvdb:pop(Db, Q)),
@@ -463,23 +449,6 @@ enc_bin({A,B}) ->
 enc_bin(E) ->
     atom_to_binary(E, latin1).
 
-
-
-%% with_trace(false, F)-> F();
-%% with_trace(true, F) ->
-%%     try
-%% 	dbg:tracer(),
-%% 	dbg:tpl(kvdb_sqlite3,x),
-%% 	dbg:tp(kvdb_lib,x),
-%% 	dbg:tp(sqlite3,read,x),
-%% 	dbg:p(all,[c]),
-%% 	F()
-%%     after
-%% 	dbg:ctpl(kvdb_sqlite3),
-%% 	dbg:ctp(kvdb_lib),
-%% 	dbg:ctp(sqlite3),
-%% 	dbg:stop()
-%%     end.
 
 %% These are not run automatically by eunit
 %%

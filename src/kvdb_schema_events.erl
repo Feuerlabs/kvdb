@@ -10,7 +10,9 @@
 %% kvdb_schema callbacks
 -export([validate/3,
 	 validate_attr/3,
-	 on_update/4]).
+	 on_update/4,
+	 pre_commit/2,
+	 post_commit/2]).
 
 notify_when_not_empty(#kvdb_ref{name = DBN} = Db, Table0, Q) ->
     Table = kvdb_lib:table_name(Table0),
@@ -40,6 +42,12 @@ on_update({q_op,_,Q,false}, DB, Table, _) ->
     notify_queue_status(DB, Table, Q, not_empty),
     ok;
 on_update(_, _, _, _) ->
+    ok.
+
+pre_commit(C, _) ->
+    C.
+
+post_commit(_, _) ->
     ok.
 
 notify_queue_status(#kvdb_ref{name = DBN, db = #db{metadata = Ets}},

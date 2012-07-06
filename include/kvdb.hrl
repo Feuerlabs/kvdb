@@ -8,7 +8,14 @@
 -opaque db_ref()  :: #kvdb_ref{}.
 
 -record(db, {ref, encoding = sext, metadata, log = false, st}).
--record(table, {name, type = set, encoding = sext, columns, schema, index = []}).
+-record(table, {name,
+		type = set,
+		encoding = sext,
+		columns,
+		schema,
+		index = []}).
+
+-record(event, {event, tab, info}).
 
 -record(dbst, {encoding,
 	       type}).
@@ -36,7 +43,8 @@
 -record(commit, {add_tables = [],
 		 del_tables = [],
 		 write = [],
-		 delete = []}).
+		 delete = [],
+		 events = []}).
 
 -record(thr, {writes,
 	      bytes,

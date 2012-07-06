@@ -63,7 +63,7 @@ Feature overview:
 ##Function Index##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_table-3">add_table/3</a></td><td>Low-level equivalent to <a href="#add_table-3"><code>add_table/3</code></a></td></tr><tr><td valign="top"><a href="#delete-3">delete/3</a></td><td></td></tr><tr><td valign="top"><a href="#delete_table-2">delete_table/2</a></td><td>low-level equivalent to <a href="#delete_table-2"><code>delete_table/2</code></a></td></tr><tr><td valign="top"><a href="#dump_tables-1">dump_tables/1</a></td><td>Low-level equivalent to <a href="#dump_tables-1"><code>dump_tables/1</code></a></td></tr><tr><td valign="top"><a href="#extract-3">extract/3</a></td><td></td></tr><tr><td valign="top"><a href="#first-2">first/2</a></td><td></td></tr><tr><td valign="top"><a href="#first_queue-2">first_queue/2</a></td><td></td></tr><tr><td valign="top"><a href="#get-3">get/3</a></td><td>Low-level equivalent of <a href="#get-3"><code>get/3</code></a></td></tr><tr><td valign="top"><a href="#get_attrs-4">get_attrs/4</a></td><td></td></tr><tr><td valign="top"><a href="#index_get-4">index_get/4</a></td><td>Low-level equivalent of <a href="#index_get-4"><code>index_get/4</code></a></td></tr><tr><td valign="top"><a href="#index_keys-4">index_keys/4</a></td><td>Low-level equivalent of <a href="#index_keys-4"><code>index_keys/4</code></a></td></tr><tr><td valign="top"><a href="#info-2">info/2</a></td><td></td></tr><tr><td valign="top"><a href="#is_queue_empty-3">is_queue_empty/3</a></td><td></td></tr><tr><td valign="top"><a href="#last-2">last/2</a></td><td></td></tr><tr><td valign="top"><a href="#list_queue-3">list_queue/3</a></td><td></td></tr><tr><td valign="top"><a href="#list_queue-6">list_queue/6</a></td><td></td></tr><tr><td valign="top"><a href="#list_tables-1">list_tables/1</a></td><td>Lists the tables defined in the database.</td></tr><tr><td valign="top"><a href="#next-3">next/3</a></td><td></td></tr><tr><td valign="top"><a href="#next_queue-3">next_queue/3</a></td><td></td></tr><tr><td valign="top"><a href="#pop-2">pop/2</a></td><td>Equivalent to <a href="#pop-3"><tt>pop(Db, Table, &lt;&lt;&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#pop-3">pop/3</a></td><td>Low-level equivalent of <a href="#pop-3"><code>pop/3</code></a></td></tr><tr><td valign="top"><a href="#prefix_match-4">prefix_match/4</a></td><td></td></tr><tr><td valign="top"><a href="#prel_pop-2">prel_pop/2</a></td><td></td></tr><tr><td valign="top"><a href="#prel_pop-3">prel_pop/3</a></td><td></td></tr><tr><td valign="top"><a href="#prev-3">prev/3</a></td><td></td></tr><tr><td valign="top"><a href="#push-3">push/3</a></td><td>Equivalent to <a href="#push-4"><tt>push(Db, Table, &lt;&lt;&gt;&gt;, Obj)</tt></a>.</td></tr><tr><td valign="top"><a href="#push-4">push/4</a></td><td>Low-level equivalent of <a href="#push-4"><code>push/4</code></a></td></tr><tr><td valign="top"><a href="#put-3">put/3</a></td><td>Low-level equivalent to <a href="#put-3"><code>put/3</code></a></td></tr><tr><td valign="top"><a href="#select-4">select/4</a></td><td></td></tr><tr><td valign="top"><a href="#update_counter-4">update_counter/4</a></td><td></td></tr></table>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_table-3">add_table/3</a></td><td>Low-level equivalent to <a href="#add_table-3"><code>add_table/3</code></a></td></tr><tr><td valign="top"><a href="#delete-3">delete/3</a></td><td></td></tr><tr><td valign="top"><a href="#delete_table-2">delete_table/2</a></td><td>low-level equivalent to <a href="#delete_table-2"><code>delete_table/2</code></a></td></tr><tr><td valign="top"><a href="#dump_tables-1">dump_tables/1</a></td><td>Low-level equivalent to <a href="#dump_tables-1"><code>dump_tables/1</code></a></td></tr><tr><td valign="top"><a href="#extract-3">extract/3</a></td><td></td></tr><tr><td valign="top"><a href="#first-2">first/2</a></td><td></td></tr><tr><td valign="top"><a href="#first_queue-2">first_queue/2</a></td><td></td></tr><tr><td valign="top"><a href="#get-3">get/3</a></td><td>Low-level equivalent of <a href="#get-3"><code>get/3</code></a></td></tr><tr><td valign="top"><a href="#get_attrs-4">get_attrs/4</a></td><td></td></tr><tr><td valign="top"><a href="#index_get-4">index_get/4</a></td><td>Low-level equivalent of <a href="#index_get-4"><code>index_get/4</code></a></td></tr><tr><td valign="top"><a href="#index_keys-4">index_keys/4</a></td><td>Low-level equivalent of <a href="#index_keys-4"><code>index_keys/4</code></a></td></tr><tr><td valign="top"><a href="#info-2">info/2</a></td><td></td></tr><tr><td valign="top"><a href="#is_queue_empty-3">is_queue_empty/3</a></td><td></td></tr><tr><td valign="top"><a href="#last-2">last/2</a></td><td></td></tr><tr><td valign="top"><a href="#list_queue-3">list_queue/3</a></td><td></td></tr><tr><td valign="top"><a href="#list_queue-6">list_queue/6</a></td><td></td></tr><tr><td valign="top"><a href="#list_tables-1">list_tables/1</a></td><td>Lists the tables defined in the database.</td></tr><tr><td valign="top"><a href="#mark_queue_object-4">mark_queue_object/4</a></td><td></td></tr><tr><td valign="top"><a href="#next-3">next/3</a></td><td></td></tr><tr><td valign="top"><a href="#next_queue-3">next_queue/3</a></td><td></td></tr><tr><td valign="top"><a href="#pop-2">pop/2</a></td><td>Equivalent to <a href="#pop-3"><tt>pop(Db, Table, &lt;&lt;&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#pop-3">pop/3</a></td><td>Low-level equivalent of <a href="#pop-3"><code>pop/3</code></a></td></tr><tr><td valign="top"><a href="#prefix_match-4">prefix_match/4</a></td><td></td></tr><tr><td valign="top"><a href="#prel_pop-2">prel_pop/2</a></td><td></td></tr><tr><td valign="top"><a href="#prel_pop-3">prel_pop/3</a></td><td></td></tr><tr><td valign="top"><a href="#prev-3">prev/3</a></td><td></td></tr><tr><td valign="top"><a href="#push-3">push/3</a></td><td>Equivalent to <a href="#push-4"><tt>push(Db, Table, &lt;&lt;&gt;&gt;, Obj)</tt></a>.</td></tr><tr><td valign="top"><a href="#push-4">push/4</a></td><td>Low-level equivalent of <a href="#push-4"><code>push/4</code></a></td></tr><tr><td valign="top"><a href="#put-3">put/3</a></td><td>Low-level equivalent to <a href="#put-3"><code>put/3</code></a></td></tr><tr><td valign="top"><a href="#queue_insert-5">queue_insert/5</a></td><td></td></tr><tr><td valign="top"><a href="#queue_read-3">queue_read/3</a></td><td></td></tr><tr><td valign="top"><a href="#select-4">select/4</a></td><td></td></tr><tr><td valign="top"><a href="#update_counter-4">update_counter/4</a></td><td></td></tr></table>
 
 
 <a name="functions"></a>
@@ -109,7 +109,7 @@ Low-level equivalent to [`dump_tables/1`](#dump_tables-1)<a name="extract-3"></a
 ###extract/3##
 
 
-<pre>extract(Kvdb_ref::#kvdb_ref{}, Table::<a href="#type-table">table()</a>, Key::binary()) -> {ok, <a href="#type-object">object()</a>} | {error, any()}</pre>
+<pre>extract(Kvdb_ref::#kvdb_ref{}, Table::<a href="#type-table">table()</a>, Key::#q_key{}) -> {ok, <a href="#type-object">object()</a>} | {error, any()}</pre>
 <br></br>
 
 
@@ -217,7 +217,16 @@ Low-level equivalent of [`index_keys/4`](#index_keys-4)<a name="info-2"></a>
 <br></br>
 
 
-Lists the tables defined in the database<a name="next-3"></a>
+Lists the tables defined in the database<a name="mark_queue_object-4"></a>
+
+###mark_queue_object/4##
+
+
+<pre>mark_queue_object(Kvdb_ref::#kvdb_ref{}, Table::<a href="#type-table">table()</a>, Key::#q_key{}, St::active | blocking | inactive) -> ok | {error, any()}</pre>
+<br></br>
+
+
+<a name="next-3"></a>
 
 ###next/3##
 
@@ -314,7 +323,25 @@ Low-level equivalent of [`push/4`](#push-4)<a name="put-3"></a>
 <br></br>
 
 
-Low-level equivalent to [`put/3`](#put-3)<a name="select-4"></a>
+Low-level equivalent to [`put/3`](#put-3)<a name="queue_insert-5"></a>
+
+###queue_insert/5##
+
+
+<pre>queue_insert(Kvdb_ref::#kvdb_ref{}, Table0::<a href="#type-table">table()</a>, Q_key::#q_key{}, St::<a href="#type-status">status()</a>, Obj::<a href="#type-object">object()</a>) -> ok</pre>
+<br></br>
+
+
+<a name="queue_read-3"></a>
+
+###queue_read/3##
+
+
+<pre>queue_read(Kvdb_ref::#kvdb_ref{}, Table0::<a href="#type-table">table()</a>, Q_key::#q_key{}) -> {ok, <a href="#type-status">status()</a>, <a href="#type-object">object()</a>} | {error, any()}</pre>
+<br></br>
+
+
+<a name="select-4"></a>
 
 ###select/4##
 
@@ -326,7 +353,7 @@ Low-level equivalent to [`put/3`](#put-3)<a name="select-4"></a>
 ###update_counter/4##
 
 
-<pre>update_counter(Db::<a href="#type-db_ref">db_ref()</a>, Table::<a href="#type-table">table()</a>, Key::binary(), Incr::<a href="#type-increment">increment()</a>) -> integer()</pre>
+<pre>update_counter(Db::<a href="#type-db_ref">db_ref()</a>, Table::<a href="#type-table">table()</a>, Key::binary(), Incr::<a href="#type-increment">increment()</a>) -> integer() | binary()</pre>
 <br></br>
 
 

@@ -4,6 +4,7 @@
 	 validate/3, validate_attr/3, on_update/4
 	]).
 -export([write/2, read/1, read/2]).
+-export([pre_commit/2, post_commit/2]).
 
 -export([behaviour_info/1]).
 
@@ -53,4 +54,8 @@ acc_([{_,_}|_] = L, Acc) ->
 acc_([], Acc) ->
     Acc.
 
+pre_commit(C, _) ->
+    C.
 
+post_commit(_, _) ->
+    ok.

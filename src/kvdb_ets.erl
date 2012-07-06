@@ -31,6 +31,7 @@
 -export([int_read/2,
 	 int_write/3,
 	 int_delete/2,
+	 store_event/2,
 	 commit_set/1]).
 -export([switch_logs/2]).
 
@@ -490,8 +491,7 @@ mark_queue_object_(#db{ref = Ets} = Db, #q_key{} = QK, #k{} = K, Obj, St) when
       St == inactive; St == blocking; St == active ->
     ?debug("mark_queue_object_(~p)~n", [Obj]),
     VPos = size(Obj),
-    {OldSt, Val} = element(VPos, Obj),
-    true = OldSt==active orelse OldSt==inactive orelse OldSt==blocking,
+    Val = element(VPos, Obj),
     kvdb_lib:log(Db, ?KVDB_LOG_Q_INSERT(K#k.t, QK, St, Obj)),
     ets:update_element(Ets, K, {VPos, {St, Val}}).
 
@@ -1207,6 +1207,10 @@ int_delete(#db{ref = Ets}, Item) ->
 	    ets:delete(Ets, Del)
     end.
 
+store_event(#db{ref = Ets}, #event{} = E) ->
+    ets:insert(Ets, {{evt, os:timestamp()}, E}),
+    ok.
+
 commit_set(#db{ref = Ets} = Db) ->
     Writes = ets:select(Ets, [ { {#k{t='$1',k='$2'},'$3'}, [],
 				 [{{ '$1', {{'$2','$3'}} }}] },
@@ -1218,11 +1222,13 @@ commit_set(#db{ref = Ets} = Db) ->
 				  [], ['$1'] } ]),
     AddTabs = ets:select(Ets, [ { {{add_table, '$1'}, '$2'},
 				  [], [{{'$1','$2'}}] } ]),
+    Events = ets:select(Ets, [ { {{evt,'_'}, '$1'}, [], ['$1'] } ]),
     #commit{write = decode_writes(Writes, Db),
 	    delete = Deletes,
 	    add_tables = [{T,schema_lookup(Db,{table,T}, undefined),DelFirst} ||
 			     {T,DelFirst} <- AddTabs],
-	    del_tables = DelTabs}.
+	    del_tables = DelTabs,
+	    events = Events}.
 
 decode_writes([{T,_}|_] = Writes, Db) ->
     decode_writes(Writes, T, encoding(Db,T), Db);
