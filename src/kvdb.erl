@@ -260,8 +260,10 @@ transaction(Db, F) when is_function(F, 1) ->
 %% This function verifies that a transaction context exists, and runs `F'
 %% inside it. If no transaction context exists, a new transaction is started.
 %% @end
-in_transaction(Db, F) when is_function(F, 1) ->
-    kvdb_trans:require(Db, F).
+in_transaction(#kvdb_ref{} = Db, F) when is_function(F, 1) ->
+    kvdb_trans:require(Db, F);
+in_transaction(Name, F) when is_function(F, 1) ->
+    kvdb_trans:require(db(Name), F).
 
 -spec add_table(db_name(), table()) -> ok.
 %% @equiv add_table(Name, Table, [{type, set}])

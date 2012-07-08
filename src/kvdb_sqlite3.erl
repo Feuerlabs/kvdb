@@ -1051,7 +1051,7 @@ check_options([], _, Rec) ->
     Rec.
 
 ensure_schema(#db{ref = Ref} = Db) ->
-    ETS = ets:new(kvdb_schema, [ordered_set]),
+    ETS = ets:new(kvdb_schema, [ordered_set, public]),
     Db1 = Db#db{metadata = ETS},
     case lists:member(?SCHEMA_TABLE, [to_bin(T) || T <- sqlite3:list_tables(Ref)]) of
 	false ->

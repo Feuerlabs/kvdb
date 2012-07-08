@@ -140,8 +140,11 @@ open(DbName, Options) ->
     Res = case proplists:get_value(file, Options) of
 	      undefined ->
 		  NameStr = kvdb_lib:good_string(DbName),
-		  eleveldb:open(atom_to_list(NameStr) ++".db", DbOpts);
+		  File = NameStr ++ ".db",
+		  filelib:ensure_dir(File),
+		  eleveldb:open(File, DbOpts);
 	      Name ->
+		  filelib:ensure_dir(Name),
 		  eleveldb:open(Name, DbOpts)
 	  end,
     case Res of
@@ -1213,7 +1216,7 @@ check_options([], _, Rec) ->
     Rec.
 
 ensure_schema(#db{ref = Ref} = Db, Opts) ->
-    ETS = ets:new(kvdb_schema, [ordered_set]),
+    ETS = ets:new(kvdb_schema, [ordered_set, public]),
     Db1 = Db#db{metadata = ETS},
     case eleveldb:get(Ref, make_table_key(?SCHEMA_TABLE, <<>>), []) of
 	{ok, _} ->
