@@ -1,7 +1,7 @@
 -module(kvdb_trans).
 -behaviour(kvdb).
 
--export([run/2,
+-export([run/2, require/2,
 	 is_transaction/1,
 	 on_update/4]).
 
@@ -43,34 +43,88 @@
 
 -define(q_done(Res), (Res == done orelse Res == blocked)).
 
-run(#kvdb_ref{name = Name, schema = Schema} = KR0, F) when is_function(F,1) ->
-    {KR2, Ref} = try kvdb_server:begin_trans(Name)
-		 catch
-		     exit:{noproc,_} -> {KR0, undefined}
-		 end,
+-spec require(#kvdb_ref{}, fun( (#kvdb_ref{}) -> T )) -> T.
+%% @doc Ensures a transaction context, either reusing one, or creating one.
+%%
+%% This function allows for a function `F' to run inside a transaction context.
+%% If no such context exists, a new transaction is started, just as if
+%% {@link run/2} had been called from the beginning. If there is an existing
+%% context, `F' is run inside that context. Note that the transaction is not
+%% committed when `F' returns - this is the responsibility of the topmost
+%% function. Also, if the provided reference has a valid `tref' (i.e. it is a
+%% transaction context, that context is reused explicitly. This could be used
+%% to participate in a transaction started by another process.
+%% @end
+require(#kvdb_ref{name=Name, tref=undefined} = Ref, F) when is_function(F,1) ->
+    case get({kvdb_trans, Name}) of
+	undefined -> run(Ref, F);
+	[Kt|_]    -> F(Kt)
+    end;
+require(#kvdb_ref{tref = TRef} = Ref, F) when is_function(F, 1) ->
+    Key = {kvdb_trans, Name = name(Ref)},
+    case get(Key) of
+	[#kvdb_ref{tref = TRef} = Kt|_] ->
+	    F(Kt);
+	Other ->
+	    push_trans(Name, Ref, Other),
+	    try F(Ref)
+	    after
+		pop_trans(Name)
+	    end
+    end.
+
+run(#kvdb_ref{schema = Schema} = KR0, F) when is_function(F,1) ->
+    %% - find the name of the original DB
+    %% - use the schema of the current level
+    Name = name(KR0),  %% finds the original name
+    TRef = make_ref(),
     {ok, DbE} = kvdb_ets:open("trans", []),
     KR1 = #kvdb_ref{mod = kvdb_ets, db = DbE},
-    K = #kvdb_ref{name = Name, schema = Schema, mod = ?MODULE,
-		  db = #db{ref = {KR1, KR2}}},
-    put({kvdb_trans, Name}, K),
+    K = #kvdb_ref{name = Name, schema = Schema,
+		  mod = ?MODULE, tref = TRef,
+		  db = #db{ref = {KR1, KR0}}},
+    kvdb_server:begin_trans(Name, TRef, K),
+    push_trans(Name, K),
     try  Result = F(K),
 	 commit(K),
 	 Result
     after
-	kvdb_server:end_trans(Name, Ref),
-	erase({kvdb_trans, Name}),
-	erase({kvdb_trans_events, Name}),
+	kvdb_server:end_trans(Name, TRef),
+	pop_trans(Name),
 	#db{ref = Ets} = DbE,
 	ets:delete(Ets)
     end;
 run(Name, F) when is_function(F, 1) ->
     run(#kvdb_ref{} = kvdb:db(Name), F).
 
+name(#kvdb_ref{tref = undefined, name = Name}) ->
+    Name;
+name(#kvdb_ref{db = #db{ref = {_, KR}}}) ->
+    name(KR).
+
+
+push_trans(Name, K) ->
+    push_trans(Name, K, get({kvdb_trans,Name})).
+
+push_trans(Name, K, undefined) ->
+    put({kvdb_trans,Name}, [K]);
+push_trans(Name, K, [_|_] = Running) ->
+    put({kvdb_trans, Name}, [K|Running]).
+
+pop_trans(Name) ->
+    Key = {kvdb_trans, Name},
+    case get(Key) of
+	[_] ->
+	    erase(Key);
+	[_|Rest] ->
+	    put(Key, Rest)
+    end.
+
 is_transaction(#kvdb_ref{mod = ?MODULE} = Ref) ->
     {true, Ref};
 is_transaction(Name) ->
     case get({kvdb_trans, Name}) of
-	#kvdb_ref{name = Name} = Ref ->
+	[#kvdb_ref{name = Name} = Ref|_] ->
 	    {true, Ref};
 	_ ->
 	    false
@@ -79,8 +133,8 @@ is_transaction(Name) ->
 tstore_to_list(#kvdb_ref{db = #db{ref = {#kvdb_ref{db = #db{ref = Ets}},_}}}) ->
     ets:tab2list(Ets).
 
-on_update(Event, #kvdb_ref{name = Name, schema = Schema} = Ref0, Tab, Info) ->
-    Key = {kvdb_trans_events, Name},
+on_update(Event, #kvdb_ref{schema = Schema} = Ref0, Tab, Info) ->
+    Name = name(Ref0),
     case is_transaction(Name) of
 	{true, #kvdb_ref{db = #db{ref = {#kvdb_ref{mod = M, db = Db},_}}}} ->
 	    Rec = #event{event = Event,
@@ -92,7 +146,7 @@ on_update(Event, #kvdb_ref{name = Name, schema = Schema} = Ref0, Tab, Info) ->
     end.
 
 fire_events(#commit{events = Events},
-	    #kvdb_ref{name = Name, schema = Schema} = Ref) ->
+	    #kvdb_ref{schema = Schema} = Ref) ->
     deep_foreach(
       fun(#event{event = E, tab = T, info = I}) ->
 	      Schema:on_update(E, Ref, T, I)
@@ -104,15 +158,24 @@ deep_foreach(F, [H|T]) -> F(H), deep_foreach(F, T);
 deep_foreach(_, []) ->
     ok.
 
-commit(#kvdb_ref{db = #db{ref = {#kvdb_ref{mod = M1,db=Db1},
-				 #kvdb_ref{} = KR2}},
-		schema = Schema} = Ref) ->
+commit(#kvdb_ref{tref = TRef, schema = Schema} = Ref0) ->
+    Name = name(Ref0),
+    NewDb = kvdb_server:start_commit(Name, TRef),
+    #kvdb_ref{db = #db{ref = {#kvdb_ref{mod = M1,db=Db1},
+			       #kvdb_ref{} = KR2}}} = Ref =
+	switch_db(Ref0, NewDb),
     #commit{} = Set = M1:commit_set(Db1),
     #commit{} = Set1 = Schema:pre_commit(Set, Ref),
     ?debug("Commit set: ~p~n", [Set]),
     kvdb_lib:commit(Set1, KR2),
     catch Schema:post_commit(Set1, Ref),
     fire_events(Set1, Ref).
+
+switch_db(#kvdb_ref{tref = undefined}, #kvdb_ref{} = New) ->
+    New;
+switch_db(#kvdb_ref{db = #db{ref = {K1,K2}} = Db} = R, New) ->
+    R#kvdb_ref{db = Db#db{ref = {K1, switch_db(K2, New)}}}.
+
 
 
 info(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
@@ -422,9 +485,6 @@ set_cont_([], C) -> C;
 set_cont_([_|_] = S, C) -> fun() -> {S, C} end.
 
 
-	     
-
-
 obj_deleted({#q_key{} = K, _}, obj, M, Db, Tab) ->
     ok_true(M:int_read(Db, {deleted, Tab, K}));
 obj_deleted(Obj, Type, M, Db, Tab) ->
@@ -493,7 +553,7 @@ last(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
     end.
 
 list_queue(Db, Tab, Q) ->
-    list_queue(Db, Tab, Q, fun(St,_,O) -> {keep,O} end, false, infinity).
+    list_queue(Db, Tab, Q, fun(_,_,O) -> {keep,O} end, false, infinity).
 
 list_queue(#db{ref = {K1, K2}} = Ref, Tab, Q, Filter, HeedBlock, Limit) ->
     ensure_table(Tab, K1, K2),
@@ -607,9 +667,7 @@ mark_queue_object(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 	    M1:queue_insert(Db1, Tab, QK, St, Obj)
     end.
 
-queue_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
-		      #kvdb_ref{mod=M2,db=Db2} = K2}} = Ref,
-	   Tab, #q_key{} = QKey) ->
+queue_read(#db{ref = {K1, K2}} = Ref, Tab, #q_key{} = QKey) ->
     ensure_table(Tab, K1, K2),
     do_queue_read(Ref, Tab, QKey).
 

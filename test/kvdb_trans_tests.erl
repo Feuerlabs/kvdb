@@ -4,6 +4,11 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+-define(_t(E), {timeout,60000,
+		[?_test(try E catch error:_R_ ->
+				      error({_R_, erlang:get_stacktrace()})
+			      end)]}).
+
 -define(tab, iolist_to_binary([<<"t_">>, integer_to_list(?LINE)])).
 -define(trace(Mods, Expr), begin dbg:tracer(),
 				 lists:foreach(
@@ -35,27 +40,27 @@ fill_test_() ->
 	     ?debugVal(application:stop(kvdb)),
 	     ?debugVal(application:stop(gproc))
      end,
-     [{foreachx,
-       fun({N,Opts,D}) ->
-	       delete_files(Opts),
-	       open_db(N, Opts, D)
-       end,
-       [{{N,Opts,D}, fun(_, Db) ->
-			     [?_test(?debugVal(fill_db(N, Db, Opts, D)))
-			      , ?_test(?debugVal(update_counter(N)))
-			      , ?_test(?debugVal(first_next(N)))
-			      , ?_test(?debugVal(q(N)))
-			      , ?_test(?debugVal(q_push_pop(N)))
-			      , ?_test(?debugVal(q_push_prel_pop(N)))
-			      , ?_test(?debugVal(q_extract(N)))
-			      , ?_test(?debugVal(q_mark_blocking(N)))
-			      , ?_test(?debugVal(q_mark_inactive(N)))
-			      , ?_test(?debugVal(index_get(N)))
-			      , ?_test(?debugVal(index_keys(N)))
-			     ]
-		     end} ||
-	   {N,Opts,D} <- [new_opts(foo_10, 10)]]
-      }]}.
+     {foreachx,
+      fun({N,Opts,D}) ->
+	      delete_files(Opts),
+	      open_db(N, Opts, D)
+      end,
+      [{{N,Opts,D}, fun(_, Db) ->
+			    [?_t(?debugVal(fill_db(N, Db, Opts, D)))
+			     , ?_t(?debugVal(update_counter(N)))
+			     , ?_t(?debugVal(first_next(N)))
+			     , ?_t(?debugVal(q(N)))
+			     , ?_t(?debugVal(q_push_pop(N)))
+			     , ?_t(?debugVal(q_push_prel_pop(N)))
+			     , ?_t(?debugVal(q_extract(N)))
+			     , ?_t(?debugVal(q_mark_blocking(N)))
+			     , ?_t(?debugVal(q_mark_inactive(N)))
+			     , ?_t(?debugVal(index_get(N)))
+			     , ?_t(?debugVal(index_keys(N)))
+			    ]
+		    end} ||
+	  {N,Opts,D} <- [new_opts(foo_10, 10)]]
+      }}.
 
 
 delete_files(_Opts) -> ok.

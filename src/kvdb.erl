@@ -37,7 +37,7 @@
 %% starting kvdb, opening databases
 -export([start/0, open_db/2, info/2]).
 -export([open/2, close/1, db/1, start_session/2]).
--export([transaction/2]).
+-export([transaction/2, in_transaction/2]).
 %% adding, deleting, listing tables
 -export([add_table/2,
 	 add_table/3,
@@ -253,6 +253,15 @@ db(Name) ->
 %% @end
 transaction(Db, F) when is_function(F, 1) ->
     kvdb_trans:run(Db, F).
+
+-spec in_transaction(db_name() | #kvdb_ref{}, F::fun((#kvdb_ref{}) -> T)) -> T.
+%% @doc Runs inside an existing transaction if ongoing, or starts a new one.
+%%
+%% This function verifies that a transaction context exists, and runs `F'
+%% inside it. If no transaction context exists, a new transaction is started.
+%% @end
+in_transaction(Db, F) when is_function(F, 1) ->
+    kvdb_trans:require(Db, F).
 
 -spec add_table(db_name(), table()) -> ok.
 %% @equiv add_table(Name, Table, [{type, set}])

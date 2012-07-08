@@ -3,12 +3,13 @@
 
 -export([start_link/2,
 	 start_session/2,
-	 db/1,
+	 db/1, db/2,
 	 close/1,
 	 call/2,
 	 cast/2]).
 
--export([begin_trans/1,
+-export([begin_trans/3,
+	 start_commit/2,
 	 end_trans/2]).
 
 -export([init/1,
@@ -25,7 +26,10 @@
 -record(st, {name, db, is_owner = false,
 	     switch_pending = false,
 	     transactions = [],
-	     pending_transactions = []}).
+	     commits = [],
+	     pending_commits = []}).
+
+-record(trans, {pid, mref, tref, role = master, db}).
 
 start_link(Name, Backend) ->
     %% io:fwrite("starting ~p, ~p~n", [Name, Backend]),
@@ -41,8 +45,35 @@ session(Name, Id) ->
 db(Name) ->
     call(Name, db).
 
-begin_trans(Name) ->
-    call(Name, begin_trans).
+db(Name, TRef) ->
+    call(Name, {db, TRef}).
+
+begin_trans(Name, TRef, Db) ->
+    call(Name, {begin_trans, TRef, Db}).
+
+start_commit(Name, TRef) ->
+    try call(Name, {start_commit, TRef}) of
+	#kvdb_ref{} = Res ->
+	    Res;
+	Other ->
+	    error(Other)
+    catch
+	exit:Err ->
+	    io:fwrite(user, "kvdb_server status:~n~s~n",
+		      [print_state(Name)]),
+	    exit(Err)
+    end.
+
+print_state(Name) ->
+    {status,_,_,[_,_,_,_,[_,_,{data,[{"State",S}]}]]} =
+	sys:get_status(get_pid(Name)),
+    Sz = tuple_size(S) -1,
+    RF = fun(st, Size) when Size == Sz ->
+		 record_info(fields, st);
+	    (_, _) ->
+		 no
+	 end,
+    io_lib_pretty:print(S, RF).
 
 end_trans(Name, Ref) ->
     cast(Name, {end_trans, self(), Ref}).
@@ -57,14 +88,7 @@ call(Name, Req) ->
     call(Name, Req, 5000).
 
 call(Name, Req, Timeout) ->
-    Pid = case Name of
-	      #kvdb_ref{name = N} ->
-		  gproc:where({n, l, {kvdb, N}});
-	      P when is_pid(P) ->
-		  P;
-	      _ ->
-		  gproc:where({n,l,{kvdb,Name}})
-	  end,
+    Pid = get_pid(Name),
     case gen_server:call(Pid, Req, Timeout) of
 	badarg ->
 	    ?KVDB_THROW(badarg);
@@ -73,6 +97,17 @@ call(Name, Req, Timeout) ->
 	Res ->
 	    Res
     end.
+
+get_pid(Name) ->
+    case Name of
+	#kvdb_ref{name = N} ->
+	    gproc:where({n, l, {kvdb, N}});
+	P when is_pid(P) ->
+	    P;
+	_ ->
+	    gproc:where({n,l,{kvdb,Name}})
+    end.
+
 
 %% @private
 init(Alias) ->
@@ -151,21 +186,34 @@ handle_call_({delete_table, Table}, _From, #st{db = Db} = St) ->
     {reply, kvdb_direct:delete_table(Db, Table), St};
 handle_call_(close, _From, #st{is_owner = true} = St) ->
     {stop, normal, ok, St};
-handle_call_(begin_trans, {Pid,_}, #st{db = Db,
-				       switch_pending = false,
-				       transactions = Trans} = St) ->
-    Ref = erlang:monitor(process, Pid),
-    {reply, {Db, Ref}, St#st{transactions = [Ref | Trans]}};
-handle_call_(begin_trans, From, #st{switch_pending = {true,_,_},
-				    pending_transactions = Pend} = St) ->
-    %% io:fwrite("buffering begin_trans ~p; St=~p~n", [From,St]),
-    {noreply, St#st{pending_transactions = [From|Pend]}};
-handle_call_({new_log, Log}, From, #st{db = Db, transactions = Trans} = St) ->
+handle_call_({begin_trans, Ref, DbT}, {Pid,_}, #st{transactions = Ts} = St) ->
+    MRef = erlang:monitor(process, Pid),
+    Ts1 = [#trans{pid = Pid, tref = Ref, mref = MRef, db = DbT}|Ts],
+    {reply, ok, St#st{transactions = Ts1}};
+handle_call_({start_commit, Ref}, {Pid,_} = From, #st{switch_pending = SwPend,
+						      transactions = Ts,
+						      db = Db} = St) ->
+    case is_transaction_master(Pid, Ref, Ts) of
+	yes ->
+	    case SwPend of false ->
+		    {reply, Db, St#st{commits = [Ref|St#st.commits]}};
+		{true,_,_} ->
+		    Pend = St#st.pending_commits,
+		    {noreply, St#st{pending_commits = [From|Pend]}}
+	    end;
+	{no, Reason} ->
+	    {reply, {error, Reason}, St}
+    end;
+%% handle_call_(begin_trans, From, #st{switch_pending = {true,_,_},
+%% 				    pending_commits = Pend} = St) ->
+%%     %% io:fwrite("buffering begin_trans ~p; St=~p~n", [From,St]),
+%%     {noreply, St#st{pending_commits = [From|Pend]}};
+handle_call_({new_log, Log}, From, #st{db = Db, commits = Commits} = St) ->
     %% Need to switch logs. We try to do this atomically. For individual
     %% updates, it's no problem, since they will call on us for the db ref.
     %% If there are ongoing transactions, we must wait for them to end,
     %% queueing new transaction requests in the meantime.
-    case Trans of
+    case Commits of
 	[] ->
 	    NewDb = switch_logs(Db, Log),
 	    {reply, {ok, NewDb}, logs_switched(NewDb, St)};
@@ -190,33 +238,54 @@ handle_call_(db, _From, #st{db = Db} = St) ->
 %% 	    {noreply, logs_switched(NewDb, St#st{transactions = Ts1})}
 %%     end;
 handle_info({'DOWN', Ref, _,_,_}, #st{transactions = Ts,
+				      commits = Commits,
 				      switch_pending = Pend} = St) ->
-    case {Ts -- [Ref], Pend} of
-	{[], {true, _From, Log}} ->
-	    NewDb = switch_logs(St#st.db, Log),
-	    {noreply, logs_switched(NewDb, St#st{transactions = []})};
-	{Ts1, _} ->
-	    {noreply, St#st{transactions = Ts1}}
+    case lists:keytake(Ref, #trans.mref, Ts) of
+	{value, #trans{tref = TRef, role = master}, Ts1} ->
+	    case Commits -- [TRef] of
+		[] ->
+		    case Pend of
+			{true, _From, Log} ->
+			    NewDb = switch_logs(St#st.db, Log),
+			    {noreply, logs_switched(
+					NewDb, St#st{transactions = Ts1,
+						     commits = []})};
+			false ->
+			    {noreply, St#st{transactions = Ts1,
+					    commits = []}}
+		    end;
+		Commits1 ->
+		    {noreply, St#st{transactions = Ts1,
+				    commits = Commits1}}
+	    end;
+	{_, Ts1} ->
+	    {noreply, St#st{transactions = Ts1}};
+	false ->
+	    {noreply, St}
     end;
 handle_info(_, St) ->
     {noreply, St}.
 
 %% @private
 handle_cast({end_trans, _Pid, Ref}, #st{db = Db,
+					commits = Commits,
 					transactions = Ts} = St) ->
     %% io:fwrite("end_trans ~p~n", [Ref]),
-    case Ts -- [Ref] of
+    Ts1 = [T || #trans{tref = R} = T <- Ts, R =/= Ref],
+    case Commits1 = Commits -- [Ref] of
 	[] ->
 	    case St#st.switch_pending of
 		false ->
-		    {noreply, St#st{transactions = []}};
+		    {noreply, St#st{transactions = Ts1, commits = []}};
 		{true, From, Log} ->
 		    NewDb = switch_logs(Db, Log),
 		    gen_server:reply(From, {ok, NewDb}),
-		    {noreply, logs_switched(NewDb, St#st{transactions = []})}
+		    {noreply, logs_switched(NewDb, St#st{transactions = Ts1,
+							 commits = []})}
 	    end;
-	[_|_] = Ts1 ->
-	    {noreply, St#st{transactions = Ts1}}
+	[_|_] = Commits1 ->
+	    {noreply, St#st{transactions = Ts1,
+			    commits = Commits1}}
     end;
 handle_cast(log_threshold, #st{db = Db} = St) ->
     %% io:fwrite("threshold reached, ~p~n", [Db]),
@@ -251,6 +320,16 @@ terminate(_Reason, #st{db = #kvdb_ref{mod = M, db = Db}}) ->
 code_change(_FromVsn, St, _Extra) ->
     {ok, St}.
 
+is_transaction_master(Pid, Ref, Ts) ->
+    case [T || #trans{pid = P, tref = R} = T <- Ts,
+	       P =:= Pid, R =:= Ref] of
+	[#trans{role = master}] ->
+	    yes;
+	[_] ->
+	    {no, wrong_pid};
+	[] ->
+	    {no, not_found}
+    end.
 
 switch_logs(#kvdb_ref{mod = M, db = #db{log = {OldLog,_}} = Db} = Ref, Log) ->
     #db{} = NewDb = M:switch_logs(Db, Log),
@@ -258,22 +337,18 @@ switch_logs(#kvdb_ref{mod = M, db = #db{log = {OldLog,_}} = Db} = Ref, Log) ->
     Ref#kvdb_ref{db = NewDb}.
 
 logs_switched(NewDb, St) ->
-    St1 = case St#st.pending_transactions of
-	[] ->
-	    St#st{db = NewDb,
-		  switch_pending = false};
-	Pend ->
-	    Ts = lists:map(
-		   fun({Pid,_} = From) ->
-			   Ref = erlang:monitor(process, Pid),
-			   gen_server:reply(From, {NewDb, Ref}),
-			   Ref
-		   end, lists:reverse(Pend)),
-	    St#st{
-	      db = NewDb,
-	      pending_transactions = [],
-	      transactions = Ts,
-	      switch_pending = false}
+    St1 = case St#st.pending_commits of
+	      [] ->
+		  St#st{db = NewDb,
+			switch_pending = false};
+	      Pend ->
+		  lists:foreach(fun(From) ->
+					gen_server:reply(From, NewDb)
+				end, Pend),
+		  St#st{
+		    db = NewDb,
+		    pending_commits = [],
+		    switch_pending = false}
 	  end,
     %% io:fwrite("logs switched; new st= ~p~n", [St1]),
     St1.
