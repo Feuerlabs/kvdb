@@ -28,9 +28,16 @@ first(Db, Table)        -> kvdb:first_queue(Db, Table).
 next(Db, Table, PrevQ)  -> kvdb:next_queue(Db, Table, PrevQ).
 
 clear_queue(Db, Table, Q) ->
+    clear_queue_(kvdb:list_queue(Db, Table, Q,
+				 fun(_,K,_) -> {keep,K} end,
+				 false, infinity), Db, Table, Q).
+
+clear_queue_(done, _, _, _) ->
+    done;
+clear_queue_({Keys, Cont}, Db, Table, Q) ->
     lists:foreach(
       fun(Key) ->
 	      kvdb:delete(Db, Table, Key)
-      end, kvdb:list_queue(Db, Table, Q,
-			   fun(_,K,_) -> {keep,K} end, false, infinity)).
+      end, Keys),
+    clear_queue_(Cont(), Db, Table, Q).
 
