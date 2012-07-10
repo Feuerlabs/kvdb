@@ -270,11 +270,11 @@ put(#db{ref = Ref} = Db, Table, {K, Attrs, V}) ->
 			    []
 		    end,
 	    DelAttrs = attrs_to_delete(
-			 Table, K,
+			 Table, Key,
 			 [{A,Va} ||
 			     {A,Va} <- OldAttrs,
 			     not lists:keymember(A, 1, Attrs)]),
-	    PutAttrs = attrs_to_put(Table, K, Attrs),
+	    PutAttrs = attrs_to_put(Table, Key, Attrs),
 	    case eleveldb:write(Ref, [{put, make_table_key(Table, Key), Val}|
 				      DelAttrs ++ PutAttrs ++ IxOps], []) of
 		ok ->
@@ -733,9 +733,9 @@ get(#db{ref = Ref} = Db, Table, Key, Enc, Type) ->
     EncKey = enc(key, Key, Enc),
     case {Type, eleveldb:get(Ref, make_table_key(Table, EncKey), [])} of
 	{set, {ok, V}} ->
-	    {ok, decode_obj_v(Db, Enc, Table, Key, V)};
+	    {ok, decode_obj_v(Db, Enc, Table, EncKey, Key, V)};
 	{_, {ok, <<F:8, V/binary>>}} when F==$*; F==$+; F==$- ->
-	    {ok, decode_obj_v(Db, Enc, Table, Key, V)};
+	    {ok, decode_obj_v(Db, Enc, Table, EncKey, Key, V)};
 	{_, not_found} ->
 	    {error, not_found};
 	{_, {error, _}} = Error ->
@@ -799,7 +799,7 @@ queue_read(#db{ref = Ref} = Db, Table, #q_key{} = QKey) ->
     EncKey = enc(key, Key, Enc),
     case eleveldb:get(Ref, make_table_key(Table, EncKey), []) of
 	{ok, <<St:8, V/binary>>} when St==$*; St==$-; St==$+ ->
-	    {ok, EncKey, decode_obj_v(Db, Enc, Table, Key, V)};
+	    {ok, EncKey, decode_obj_v(Db, Enc, Table, EncKey, Key, V)};
 	not_found ->
 	    {error, not_found};
 	{error, _} = Error ->
@@ -819,7 +819,7 @@ delete_(#db{ref = Ref} = Db, Table, Enc, Key, EncKey) ->
     {IxOps, As} =
 	case Enc of
 	    {_, _, _} ->
-		Attrs = get_attrs(Db, Table, Key, all),
+		Attrs = get_attrs_(Db, Table, EncKey, all),
 		IxOps_ = case Ix of
 			     [_|_] -> [{delete, ix_key(Table, I, Key)} ||
 					  I <- kvdb_lib:index_vals(
@@ -830,7 +830,7 @@ delete_(#db{ref = Ref} = Db, Table, Enc, Key, EncKey) ->
 						 end)];
 			     _ -> []
 			 end,
-		{IxOps_, attrs_to_delete(Table, Key, Attrs)};
+		{IxOps_, attrs_to_delete(Table, EncKey, Attrs)};
 	    _ ->
 		{[], []}
 	end,
@@ -839,17 +839,17 @@ delete_(#db{ref = Ref} = Db, Table, Enc, Key, EncKey) ->
 
 attrs_to_put(_, _, []) -> [];
 attrs_to_put(_, _, none) -> [];  % still needed?
-attrs_to_put(Table, Key, Attrs) when is_list(Attrs) ->
-    EncKey = sext:encode(Key),
-    [{put, make_key(Table, $=, <<EncKey/binary,
+attrs_to_put(Table, Key, Attrs) when is_list(Attrs), is_binary(Key) ->
+    %% EncKey = sext:encode(Key),
+    [{put, make_key(Table, $=, <<Key/binary,
 				 (sext:encode(K))/binary>>),
       term_to_binary(V)} || {K, V} <- Attrs].
 
 attrs_to_delete(_, _, []) -> [];
-attrs_to_delete(Table, Key, Attrs) ->
-    EncKey = sext:encode(Key),
+attrs_to_delete(Table, Key, Attrs) when is_list(Attrs), is_binary(Key) ->
+    %% EncKey = sext:encode(Key),
     [{delete, make_key(Table, $=,
-		       <<EncKey/binary,
+		       <<Key/binary,
 			 (sext:encode(A))/binary>>)} || {A,_} <- Attrs].
 
 %% old_ixes_to_delete(Ref, Table, Enc, EncKey, true) ->
@@ -868,31 +868,34 @@ attrs_to_delete(Table, Key, Attrs) ->
 %%     exit(nyi).
 
 
-get_attrs(#db{ref = Ref} = Db, Table, Key, As) ->
+get_attrs(#db{} = Db, Table, Key, As) ->
     case encoding(Db, Table) of
 	{_, _, _} ->
 	    EncKey = sext:encode(Key),
-	    TableKey = make_key(Table, $=, EncKey),
-	    with_iterator(
-	      Ref,
-	      fun(I) ->
-		      get_attrs_(prefix_move(I, TableKey, TableKey),
-				 I, TableKey, As)
-	      end);
+	    get_attrs_(Db, Table, EncKey, As);
 	_ ->
 	    error(badarg)
     end.
 
-get_attrs_({ok, K, V}, I, Prefix, As) ->
+get_attrs_(#db{ref = Ref}, Table, EncKey, As) ->
+    TableKey = make_key(Table, $=, EncKey),
+    with_iterator(
+      Ref,
+      fun(I) ->
+	      get_attrs_iter_(prefix_move(I, TableKey, TableKey),
+			      I, TableKey, As)
+      end).
+
+get_attrs_iter_({ok, K, V}, I, Prefix, As) ->
     Key = sext:decode(K),
     case As == all orelse lists:member(Key, As) of
 	true ->
 	    [{Key, binary_to_term(V)}|
-	     get_attrs_(prefix_move(I, Prefix, next), I, Prefix, As)];
+	     get_attrs_iter_(prefix_move(I, Prefix, next), I, Prefix, As)];
 	false ->
-	    get_attrs_(prefix_move(I, Prefix, next), I, Prefix, As)
+	    get_attrs_iter_(prefix_move(I, Prefix, next), I, Prefix, As)
     end;
-get_attrs_(done, _, _, _) ->
+get_attrs_iter_(done, _, _, _) ->
    [].
 
 %% delete_attrs(#db{ref = Ref} = Db, Table, Key) ->
@@ -1164,13 +1167,13 @@ enc_queue_obj_status(inactive) -> $-.
 
 decode_obj(Db, Enc, Table, K, V) ->
     Key = dec(key, K, Enc),
-    decode_obj_v(Db, Enc, Table, Key, V).
+    decode_obj_v(Db, Enc, Table, K, Key, V).
 
-decode_obj_v(Db, Enc, Table, Key, V) ->
+decode_obj_v(Db, Enc, Table, EncKey, Key, V) ->
     Value = dec(value, V, Enc),
     case Enc of
 	{_, _, _} ->
-	    Attrs = get_attrs(Db, Table, Key, all),
+	    Attrs = get_attrs_(Db, Table, EncKey, all),
 	    {Key, Attrs, Value};
 	_ ->
 	    {Key, Value}
