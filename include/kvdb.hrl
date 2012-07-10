@@ -57,12 +57,15 @@
 -define(KVDB_CATCH(Expr, Args),
 	try Expr
 	catch
+	    throw:{kvdb_return, __R} ->
+		__R;
 	    throw:{kvdb_throw, __E} ->
 		%% error(__E, Args)
 		error(__E, erlang:get_stacktrace())
 	end).
 
 -define(KVDB_THROW(E), throw({kvdb_throw, E})).
+-define(KVDB_RETURN(R), throw({kvdb_return, R})).
 
 -define(KVDB_LOG_INSERT(Tab, Obj), {insert, Tab, Obj}).
 -define(KVDB_LOG_DELETE(Tab, Key), {delete, Tab, Key}).

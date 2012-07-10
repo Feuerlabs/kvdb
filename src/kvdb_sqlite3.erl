@@ -21,7 +21,7 @@
 	 list_queue/3, list_queue/6, is_queue_empty/3,
 	 first_queue/2, next_queue/3,
 	 mark_queue_object/4,
-	 queue_insert/5, queue_read/3]).
+	 queue_insert/5, queue_delete/3, queue_read/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4]).
 -export([info/2, get_schema_mod/2, dump_tables/1]).
@@ -441,10 +441,27 @@ index_keys(#db{ref = Ref} = Db, Table, IxName, IxVal) ->
 	    {error, no_index}
     end.
 
+%% get(Db, Table, #q_key{} = QKey) ->
+%%     case type(Db, Table) of
+%% 	set -> get(Db, Table, QKey, false);
+%% 	_ ->
+%% 	    error(illegal)
+%% 	    %% case queue_read(Db, Table, QKey) of
+%% 	    %% 	{ok, _St, Obj} ->
+%% 	    %% 	    {ok, Obj};
+%% 	    %% 	{error, _} = Err ->
+%% 	    %% 	    Err
+%% 	    %% end
+%%     end;
 get(Db, Table, Key) ->
-    get(Db, Table, Key, false).
+    case type(Db, Table) of
+	set ->
+	    get_(Db, Table, Key, false);
+	_ ->
+	    error(illegal)
+    end.
 
-get(#db{ref = Ref} = Db, Table, Key, IncludeActive) when
+get_(#db{ref = Ref} = Db, Table, Key, IncludeActive) when
       is_boolean(IncludeActive) ->
     Enc = encoding(Db, Table),
     case sqlite3:read(Ref, Table, {key, {blob, enc(key, Key, Enc)}}) of
@@ -505,10 +522,9 @@ prel_pop(Db, Table, Q) ->
 	    do_pop(Db, Table, T, Q, Remove, true)
     end.
 
-mark_queue_object(#db{} = Db, Table, AbsKey, St) when St==active;
-						      St==blocking;
-						      St==inactive ->
-    case get(Db, Table, AbsKey) of
+mark_queue_object(#db{} = Db, Table, #q_key{} = QKey, St) when
+      St==active; St==blocking; St==inactive ->
+    case queue_read(Db, Table, QKey) of
 	{ok, Obj} ->
 	    Enc = encoding(Db, Table),
 	    Type = type(Db, Table),
@@ -573,6 +589,10 @@ queue_insert(#db{ref = Ref} = Db, Table, #q_key{} = QKey, St, Obj) when
 	    error(badarg)
     end.
 
+queue_delete(Db, Table, #q_key{} = QKey) ->
+    _ = extract(Db, Table, QKey),
+    ok.
+
 
 do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
     Enc = encoding(Db, Table),
@@ -594,7 +614,8 @@ do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
 	{[{RawKey,Obj}|More], _} ->
 	    Remove(setelement(1, Obj, RawKey), Enc),
 	    if ReturnKey ->
-		    {ok, Obj, RawKey, More == []};
+		    QKey = kvdb_lib:split_queue_key(Enc,Type,RawKey),
+		    {ok, Obj, QKey, More == []};
 	       true ->
 		    {ok, Obj, More == []}
 	    end;
@@ -606,19 +627,16 @@ do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
 	    Error
     end.
 
-extract(#db{} = Db, Table, #q_key{} = QKey) ->
+extract(#db{} = Db, Table, #q_key{queue = Q, key = K} = QKey) ->
     Type = type(Db, Table),
     Enc = encoding(Db, Table),
     if Type == fifo; Type == lifo; element(1, Type) == keyed ->
-	    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
-	    case get(Db, Table, Key) of
-		{ok, Obj} ->
-		    K = element(1, Obj),
-		    #q_key{queue = Q, key = K1} =
-			kvdb_lib:split_queue_key(Enc, Type, K),
+	    case queue_read(Db, Table, QKey) of
+		{ok, _, Obj} ->
+		    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
 		    delete(Db, Table, Key),
 		    IsEmpty = is_queue_empty(Db, Table, Q),
-		    {ok, setelement(1, Obj, K1), Q, IsEmpty};
+		    {ok, Obj, Q, IsEmpty};
 		{error, _} = Error ->
 		    Error
 	    end;
@@ -626,14 +644,14 @@ extract(#db{} = Db, Table, #q_key{} = QKey) ->
 	    error(illegal)
     end.
 
-queue_read(#db{} = Db, Table, #q_key{} = QKey) ->
+queue_read(#db{} = Db, Table, #q_key{key = K} = QKey) ->
         Type = type(Db, Table),
     Enc = encoding(Db, Table),
     if Type == fifo; Type == lifo; element(1, Type) == keyed ->
 	    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
-	    case get(Db, Table, Key, _IncludeActive = true) of
+	    case get_(Db, Table, Key, _IncludeActive = true) of
 		{ok, {St, Obj}} ->
-		    {ok, St, Obj};
+		    {ok, St, setelement(1, Obj, K)};
 		{error, _} = Error ->
 		    Error
 	    end;

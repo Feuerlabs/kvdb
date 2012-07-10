@@ -54,6 +54,7 @@
 	 first_queue/2,
 	 next_queue/3,
 	 queue_insert/5,
+	 queue_delete/3,
 	 queue_read/3,
 	 delete/3,
 	 add_table/3,
@@ -371,6 +372,14 @@ queue_insert(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table0,
 		     ok
 	     end).
 
+-spec queue_delete(#kvdb_ref{}, table(), #q_key{}) -> ok.
+queue_delete(#kvdb_ref{mod = DbMod, db = Db}, Table0, #q_key{} = QKey) ->
+    Table = table_name(Table0),
+    if_table(DbMod, Db, Table,
+	     fun() ->
+		     DbMod:queue_delete(Db, Table, QKey)
+	     end).
+
 -spec queue_read(#kvdb_ref{}, table(), #q_key{}) ->
 			{ok, status(), object()} | {error, any()}.
 queue_read(#kvdb_ref{mod = DbMod, db = Db}, Table0, #q_key{} = QKey) ->
@@ -454,11 +463,11 @@ select(#kvdb_ref{mod = DbMod, db = Db}, Table0, MatchSpec, Limit) ->
 %%     queue_delete_event(DbRef, Table, DbMod:info(Db, {Table, type}), Key).
 
 queue_delete_event(#kvdb_ref{mod = DbMod,
-			     db = Db} = DbRef, Table, Type, Key) ->
+			     db = Db} = DbRef, Table, Type,
+		   #q_key{queue = Q} = QKey) ->
     Enc = DbMod:info(Db, {Table,encoding}),
-    #q_key{queue = Q} = kvdb_lib:split_queue_key(Enc,Type,Key),
     IsEmpty = DbMod:is_queue_empty(Db, Table, Q),
-    on_update({q_op,extract,Q,IsEmpty}, DbRef, Table, Key).
+    on_update({q_op,extract,Q,IsEmpty}, DbRef, Table, QKey).
 
 
 %% We must create a prefix for the prefix_match().

@@ -75,6 +75,7 @@
 	 next_queue/3,
 	 mark_queue_object/4,
 	 queue_insert/5,
+	 queue_delete/3,
 	 queue_read/3]).
 %% debugging
 -export([dump_tables/1]).
@@ -569,6 +570,13 @@ queue_insert(Name, Table, #q_key{} = QKey, St, Obj) when
        kvdb_direct:queue_insert(Ref, Table, QKey, St, Obj),
        kvdb_direct:queue_insert(db(Name), Table, QKey, St, Obj),
        [Name, Table, QKey, St, Obj]).
+
+queue_delete(Name, Table, #q_key{} = QKey) ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:queue_delete(Ref, Table, QKey),
+       kvdb_direct:queue_delete(db(Name), Table, QKey),
+       [Name, Table, QKey]).
 
 -spec get_attrs(db_name(), table(), _Key::any(), [attr_name()]) ->
 		       {ok, attrs()} | {error, any()}.

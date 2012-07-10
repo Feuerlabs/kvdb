@@ -25,7 +25,8 @@
 -export([info/2,
 	 is_table/2,
 	 dump_tables/1,
-	 queue_insert/5]).
+	 queue_insert/5,
+	 queue_delete/3]).
 
 %% used by kvdb_trans.erl
 -export([int_read/2,
@@ -337,6 +338,10 @@ queue_insert(#db{ref = Ets} = Db, Table, #q_key{} = QKey, St, Obj) ->
 	    end
     end.
 
+queue_delete(Db, Table, #q_key{} = QKey) ->
+    _ = extract(Db, Table, QKey),
+    ok.
+
 queue_read(#db{ref = Ets} = Db, Table, #q_key{} = QKey) ->
     case type(Db, Table) of
 	set ->
@@ -519,7 +524,7 @@ do_pop(#db{ref = Ets} = Db, Table, Type, Q, Remove, ReturnKey) ->
 		end,
 	    Remove(Obj, RawKey),
 	    if ReturnKey ->
-		    {ok, Obj, RawKey, IsEmpty};
+		    {ok, Obj, int_to_q_key(Db,Table,RawKey), IsEmpty};
 	       true ->
 		    {ok, Obj, IsEmpty}
 	    end
@@ -715,7 +720,13 @@ get(#db{ref = Ets} = Db, Table, Key) ->
 	    EncKey =
 		if Type==set -> enc(key, Key, Enc);
 		   Type==fifo;Type==lifo;element(1,Type)==keyed ->
-			Key
+			?KVDB_THROW(illegal)
+			%% case Key of
+			%%     #q_key{} ->
+			%% 	q_key_to_int(Key, Type);
+			%%     _ ->
+			%% 	?KVDB_RETURN({error, not_found})
+			%% end
 		end,
 	    case ets:lookup(Ets, #k{t=Table,k=EncKey}) of
 		[] ->

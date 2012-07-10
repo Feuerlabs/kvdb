@@ -11,6 +11,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("kernel/include/file.hrl").
+-include("kvdb.hrl").
 
 %% for testing only
 -export([test_tree/0]).
@@ -207,6 +208,7 @@ queue(Db, Type, Enc) ->
 		  || Obj <- [{<<"1">>,<<"a">>},
 			     {<<"2">>,<<"b">>},
 			     {<<"3">>,<<"c">>}]],
+    ?match(M, #q_key{}, K2),
     ?match(M, {ok, {<<"2">>,<<"b">>}}, kvdb:extract(Db, Q, K2)),
     if Type == lifo ->
 	    ?match(M, {ok, {<<"3">>,<<"c">>}}, catch kvdb:pop(Db, Q)),
@@ -334,10 +336,11 @@ prel_pop(Db) ->
     PopRes = kvdb:prel_pop(Db, T, Q),
     ?match(M, {ok, {1,a}, _}, PopRes),
     {ok, _, Key} = PopRes,
-    ?match(M, {ok, {_,_}}, catch kvdb:get(Db, T, Key)),
+    ?match(M, {ok, blocking, {1,a}}, catch kvdb:queue_read(Db, T, Key)),
+    ?match(M, {'EXIT',_}, catch kvdb:get(Db, T, Key)),
     ?match(M, blocked, kvdb:pop(Db, T, Q)),
     ?match(M, blocked, kvdb:prel_pop(Db, T, Q)),
-    ?match(M, ok, kvdb:delete(Db, T, Key)),
+    ?match(M, ok, kvdb:queue_delete(Db, T, Key)),
     ?match(M, {ok, {2,b}}, kvdb:pop(Db, T, Q)),
     ?match(M, ok, catch kvdb:delete_table(Db, T)),
     ok.

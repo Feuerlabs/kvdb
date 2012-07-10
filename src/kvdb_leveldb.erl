@@ -14,7 +14,7 @@
 -export([put/3, push/4, get/3, get_attrs/4, index_get/4, index_keys/4,
 	 update_counter/4, pop/3, prel_pop/3, extract/3, delete/3,
 	 list_queue/3, list_queue/6, is_queue_empty/3,
-	 queue_read/3, queue_insert/5, mark_queue_object/4]).
+	 queue_read/3, queue_insert/5, queue_delete/3, mark_queue_object/4]).
 -export([first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3, prefix_match/3, prefix_match/4]).
 -export([get_schema_mod/2]).
@@ -355,28 +355,33 @@ queue_insert(#db{ref = Ref} = Db, Table, #q_key{} = QKey, St, Obj) when
 	    error(Error)
     end.
 
+queue_delete(Db, Table, #q_key{} = QKey) ->
+    _ = extract(Db, Table, QKey),
+    ok.
+
 mark_queue_object(#db{} = Db, Table, #q_key{queue = Q} = QK, St) when
       St==blocking; St==active; St==inactive ->
     case queue_read(Db, Table, QK) of
-	{ok, EncKey, Obj} ->
-	    mark_queue_obj(Db, Table, EncKey, Obj, St),
+	{ok, _OldSt, Obj} ->
+	    mark_queue_obj(Db, Table, encoding(Db,Table), QK, Obj, St),
 	    {ok, Q, Obj};
 	{error,_} = E ->
 	    E
     end.
 
-mark_queue_obj(#db{ref = Ref}, Table, Enc, Obj, St) when St==blocking;
-							 St==active;
-							 St==inactive ->
-    {Key, _Attrs, Value} = encode_queue_obj(Enc, Obj, St),
+mark_queue_obj(#db{ref = Ref} = Db, Table, Enc, QK, Obj, St) when
+      St==blocking; St==active; St==inactive ->
+    Type = type(Db, Table),
+    AKey = kvdb_lib:q_key_to_actual(QK, Enc, Type),
+    {Key, _Attrs, Value} = encode_queue_obj(Enc, setelement(1,Obj,AKey), St),
     eleveldb:put(Ref, make_table_key(Table, Key), Value, []).
 
 pop(#db{} = Db, Table, Q) ->
     case type(Db, Table) of
 	set -> error(illegal);
 	T ->
-	    Remove = fun(Obj, _) ->
-			     delete(Db, Table, element(1,Obj))
+	    Remove = fun(QKey, _Obj, _) ->
+			     delete(Db, Table, QKey)
 		     end,
 	    do_pop(Db, Table, T, Q, Remove, false)
     end.
@@ -385,27 +390,27 @@ prel_pop(Db, Table, Q) ->
     case type(Db, Table) of
 	set -> error(illegal);
 	T ->
-	    Remove = fun(Obj, Enc) ->
-			     mark_queue_obj(Db, Table, Enc, Obj, blocking)
+	    Remove = fun(QKey, Obj, Enc) ->
+			     mark_queue_obj(Db, Table, Enc, QKey, Obj, blocking)
 		     end,
 	    do_pop(Db, Table, T, Q, Remove, true)
     end.
 
-do_pop(Db, Table, Type, Q, Remove, ReturnKey) ->
+do_pop(Db, Table, _Type, Q, Remove, ReturnKey) ->
     Enc = encoding(Db, Table),
     case list_queue(Db, Table, Q, fun(inactive, _, _) ->
 					  skip;
 				     (_St,K,O) ->
-					  {keep, setelement(1,O,K)}
+					  {keep, {K,O}}
 				  end, _HeedBlock = true, 2) of
-	{[Obj|More], _} ->
-	    Obj1 = fix_q_obj(Obj, Enc, Type),
+	{[{QKey,Obj}|More], _} ->
+	    %% Obj1 = fix_q_obj(Obj, Enc, Type),
 	    Empty = More == [],
-	    Remove(Obj, Enc),
+	    Remove(QKey, Obj, Enc),
 	    if ReturnKey ->
-		    {ok, Obj1, element(1, Obj), Empty};
+		    {ok, Obj, QKey, Empty};
 	       true ->
-		    {ok, Obj1, Empty}
+		    {ok, Obj, Empty}
 	    end;
 	{error, _} = Error ->
 	    Error;
@@ -415,36 +420,32 @@ do_pop(Db, Table, Type, Q, Remove, ReturnKey) ->
 
 
 
-extract(#db{} = Db, Table, #q_key{key = Key} = QKey) ->
+extract(#db{ref = Ref} = Db, Table, #q_key{queue = Q, key = Key} = QKey) ->
     case type(Db, Table) of
 	set -> error(illegal);
 	Type ->
 	    Enc = encoding(Db, Table),
-	    case queue_read(Db, Table, QKey) of
-		{ok, EncKey, Obj} ->
-		    DecKey = dec(key, EncKey, Enc),
-		    delete_(Db, Table, Enc, Key, EncKey),
-		    case Type of
-			_ when Type==fifo; Type==lifo;
-			       element(1,Type)==keyed ->
-			    #q_key{queue = Q} =
-				kvdb_lib:split_queue_key(Enc, Type, DecKey),
-			    IsEmpty =
-				case list_queue(Db, Table, Q,
-						fun(_,K,O) ->
-							{keep,
-							 setelement(1,O,K)}
-						end,
-						_HeedBlock=true, 1) of
-				    {[_], _} -> false;
-				    _ -> true
-				end,
-			    {ok, fix_q_obj(Obj, Enc, Type), Q, IsEmpty};
-			set ->
-			    {ok, Obj}
-		    end;
-		{error, _} = Error ->
-		    Error
+	    AKey = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
+	    EncKey = enc(key, AKey, Enc),
+	    RawKey = make_table_key(Table, EncKey),
+	    case eleveldb:get(Ref, RawKey, []) of
+		{ok, <<St:8, V/binary>>} when St==$*; St==$-; St==$+ ->
+		    Obj = decode_obj_v(Db, Enc, Table, EncKey, Key, V),
+		    eleveldb:delete(Ref, RawKey, []),
+		    IsEmpty =
+			case list_queue(Db, Table, Q,
+					fun(_,_,O) ->
+						{keep,O}
+					end,
+					_HeedBlock=true, 1) of
+			    {[_], _} -> false;
+			    _ -> true
+			end,
+		    {ok, setelement(1, Obj, Key), Q, IsEmpty};
+		not_found ->
+		    {error, not_found};
+		{error,_} = Err ->
+		    Err
 	    end
     end.
 
@@ -538,10 +539,10 @@ next_queue_(Res, I, Db, Table, QPrefix, Sz, TPrefix, TPSz, Enc) ->
 	    done
     end.
 
-fix_q_obj(Obj, Enc, Type) ->
-    K = element(1, Obj),
-    #q_key{key = K1} = kvdb_lib:split_queue_key(Enc, Type, K),
-    setelement(1, Obj, K1).
+%% fix_q_obj(Obj, Enc, Type) ->
+%%     K = element(1, Obj),
+%%     #q_key{key = K1} = kvdb_lib:split_queue_key(Enc, Type, K),
+%%     setelement(1, Obj, K1).
 
 
 q_first_(I, Db, Table, Q, Enc, HeedBlock) ->
@@ -659,7 +660,9 @@ q_all_dir({keyed,lifo}) -> prev.
 q_all_({St, Obj}, Limit, Limit0, Filter, I, Db, Table, Dir, Enc,
        Type, QPrefix, TPrefix, HeedBlock, Acc)
   when Limit > 0 ->
-    {Cont,Acc1} = case Filter(St, element(1, Obj), fix_q_obj(Obj, Enc, Type)) of
+    #q_key{key = Key} = QKey =
+	kvdb_lib:split_queue_key(Enc,Type,element(1,Obj)),
+    {Cont,Acc1} = case Filter(St, QKey, setelement(1, Obj, Key)) of
 		      skip     -> {true, Acc};
 		      stop     -> {false, Acc};
 		      {stop,X} -> {false, [X|Acc]};
@@ -672,13 +675,13 @@ q_all_({St, Obj}, Limit, Limit0, Filter, I, Db, Table, Dir, Enc,
 	_ when Acc1 == [] ->
 	    done;
 	{true, _} ->
-	    Key = make_table_key(Table, enc(key, element(1, Obj), Enc)),
+	    TabKey = make_table_key(Table, enc(key, element(1, Obj), Enc)),
 	    {lists:reverse(Acc1),
 	     fun() ->
 		     with_iterator(
 		       Db#db.ref,
 		       fun(I1) ->
-			       eleveldb:iterator_move(I1, Key),
+			       eleveldb:iterator_move(I1, TabKey),
 			       q_all_cont(Limit0, Limit0, Filter, I1,
 					  Db, Table, Dir, Enc,
 					  Type, QPrefix, TPrefix, HeedBlock, [])
@@ -727,10 +730,22 @@ table_queue_prefix(Table, Q, Enc) when Enc == sext; element(1, Enc) == sext ->
 
 
 get(Db, Table, Key) ->
-    get(Db, Table, Key, encoding(Db, Table), type(Db, Table)).
+    case type(Db, Table) of
+	set ->
+	    get(Db, Table, Key, encoding(Db, Table), set);
+	_ ->
+	    error(illegal)
+    end.
 
-get(#db{ref = Ref} = Db, Table, Key, Enc, Type) ->
+%% get(#db{} = Db, Table, #q_key{} = QKey, Enc, Type) ->
+%%     Actual = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
+%%     EncKey = enc(key, Actual, Enc),
+%%     get_(Db, Table, QKey#q_key.key, EncKey, Enc, Type);
+get(#db{} = Db, Table, Key, Enc, Type) ->
     EncKey = enc(key, Key, Enc),
+    get_(Db, Table, Key, EncKey, Enc, Type).
+
+get_(#db{ref = Ref} = Db, Table, Key, EncKey, Enc, Type) ->
     case {Type, eleveldb:get(Ref, make_table_key(Table, EncKey), [])} of
 	{set, {ok, V}} ->
 	    {ok, decode_obj_v(Db, Enc, Table, EncKey, Key, V)};
@@ -792,20 +807,28 @@ get_by_ix_(done, _, _, _, _, _, _, _) ->
     [].
 
 
-queue_read(#db{ref = Ref} = Db, Table, #q_key{} = QKey) ->
+queue_read(#db{ref = Ref} = Db, Table, #q_key{key = K} = QKey) ->
     Enc = encoding(Db, Table),
     Type = type(Db, Table),
     Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
     EncKey = enc(key, Key, Enc),
     case eleveldb:get(Ref, make_table_key(Table, EncKey), []) of
 	{ok, <<St:8, V/binary>>} when St==$*; St==$-; St==$+ ->
-	    {ok, EncKey, decode_obj_v(Db, Enc, Table, EncKey, Key, V)};
+	    Obj = decode_obj_v(Db, Enc, Table, EncKey, Key, V),
+	    Status = dec_queue_obj_status(St),
+	    {ok, Status, setelement(1, Obj, K)};
 	not_found ->
 	    {error, not_found};
 	{error, _} = Error ->
 	    Error
     end.
 
+delete(#db{} = Db, Table, #q_key{} = QKey) ->
+    Enc = encoding(Db, Table),
+    Type = type(Db, Table),
+    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
+    EncKey = enc(key, Key, Enc),
+    delete_(Db, Table, Enc, Key, EncKey);
 delete(#db{} = Db, Table, Key) ->
     Enc = encoding(Db, Table),
     EncKey = enc(key, Key, Enc),
@@ -1164,6 +1187,10 @@ encode_queue_obj(Enc, {Key, Value}, Status) ->
 enc_queue_obj_status(blocking) -> $*;
 enc_queue_obj_status(active  ) -> $+;
 enc_queue_obj_status(inactive) -> $-.
+
+dec_queue_obj_status($*) -> blocking;
+dec_queue_obj_status($+) -> active;
+dec_queue_obj_status($-) -> inactive.
 
 decode_obj(Db, Enc, Table, K, V) ->
     Key = dec(key, K, Enc),
