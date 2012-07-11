@@ -5,7 +5,7 @@
 * [Function Details](#functions)
 
 
-<a name="index"></a>
+__Authors:__ Ulf Wiger ([`ulf@wiger.net`](mailto:ulf@wiger.net)).<a name="index"></a>
 
 ##Function Index##
 

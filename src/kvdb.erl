@@ -9,7 +9,6 @@
 %%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Ulf Wiger <ulf@feuerlabs.com>
 %%% @author Tony Rogvall <tony@rogvall.se>
-%%% Created : 29 Dec 2011 by Tony Rogvall <tony@rogvall.se>
 %%% @doc
 %%% Key-value database frontend
 %%%

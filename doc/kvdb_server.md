@@ -5,24 +5,26 @@
 * [Function Details](#functions)
 
 
-__Behaviours:__ [`gen_server`](gen_server.md).<a name="index"></a>
+__Behaviours:__ [`gen_server`](gen_server.md).
+
+__Authors:__ Ulf Wiger ([`ulf@wiger.net`](mailto:ulf@wiger.net)).<a name="index"></a>
 
 ##Function Index##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#begin_trans-1">begin_trans/1</a></td><td></td></tr><tr><td valign="top"><a href="#call-2">call/2</a></td><td></td></tr><tr><td valign="top"><a href="#cast-2">cast/2</a></td><td></td></tr><tr><td valign="top"><a href="#close-1">close/1</a></td><td></td></tr><tr><td valign="top"><a href="#db-1">db/1</a></td><td></td></tr><tr><td valign="top"><a href="#end_trans-2">end_trans/2</a></td><td></td></tr><tr><td valign="top"><a href="#start_link-2">start_link/2</a></td><td></td></tr><tr><td valign="top"><a href="#start_session-2">start_session/2</a></td><td></td></tr></table>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#begin_trans-3">begin_trans/3</a></td><td></td></tr><tr><td valign="top"><a href="#call-2">call/2</a></td><td></td></tr><tr><td valign="top"><a href="#cast-2">cast/2</a></td><td></td></tr><tr><td valign="top"><a href="#close-1">close/1</a></td><td></td></tr><tr><td valign="top"><a href="#db-1">db/1</a></td><td></td></tr><tr><td valign="top"><a href="#db-2">db/2</a></td><td></td></tr><tr><td valign="top"><a href="#end_trans-2">end_trans/2</a></td><td></td></tr><tr><td valign="top"><a href="#start_commit-2">start_commit/2</a></td><td></td></tr><tr><td valign="top"><a href="#start_link-2">start_link/2</a></td><td></td></tr><tr><td valign="top"><a href="#start_session-2">start_session/2</a></td><td></td></tr></table>
 
 
 <a name="functions"></a>
 
 ##Function Details##
 
-<a name="begin_trans-1"></a>
+<a name="begin_trans-3"></a>
 
-###begin_trans/1##
+###begin_trans/3##
 
 
-`begin_trans(Name) -> any()`
+`begin_trans(Name, TRef, Db) -> any()`
 
 <a name="call-2"></a>
 
@@ -52,12 +54,26 @@ __Behaviours:__ [`gen_server`](gen_server.md).<a name="index"></a>
 
 `db(Name) -> any()`
 
+<a name="db-2"></a>
+
+###db/2##
+
+
+`db(Name, TRef) -> any()`
+
 <a name="end_trans-2"></a>
 
 ###end_trans/2##
 
 
 `end_trans(Name, Ref) -> any()`
+
+<a name="start_commit-2"></a>
+
+###start_commit/2##
+
+
+`start_commit(Name, TRef) -> any()`
 
 <a name="start_link-2"></a>
 

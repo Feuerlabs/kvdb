@@ -5,7 +5,9 @@
 * [Function Details](#functions)
 
 
-__Behaviours:__ [`application`](application.md).<a name="index"></a>
+__Behaviours:__ [`application`](application.md).
+
+__Authors:__ Ulf Wiger ([`ulf@wiger.net`](mailto:ulf@wiger.net)).<a name="index"></a>
 
 ##Function Index##
 

@@ -5,7 +5,9 @@
 * [Function Details](#functions)
 
 
-__Behaviours:__ [`kvdb_schema`](kvdb_schema.md).<a name="index"></a>
+__Behaviours:__ [`kvdb_schema`](kvdb_schema.md).
+
+__Authors:__ Ulf Wiger ([`ulf@feuerlabs.com`](mailto:ulf@feuerlabs.com)).<a name="index"></a>
 
 ##Function Index##
 

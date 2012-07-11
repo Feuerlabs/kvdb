@@ -10,7 +10,7 @@
 
 API to store NETCONF-style config data in kvdb.
 
-<a name="description"></a>
+__Authors:__ Ulf Wiger ([`ulf@wiger.net`](mailto:ulf@wiger.net)).<a name="description"></a>
 
 ##Description##
 
@@ -92,7 +92,7 @@ character.
 ##Function Index##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_table-1">add_table/1</a></td><td></td></tr><tr><td valign="top"><a href="#add_table-2">add_table/2</a></td><td></td></tr><tr><td valign="top"><a href="#all-0">all/0</a></td><td></td></tr><tr><td valign="top"><a href="#all-1">all/1</a></td><td></td></tr><tr><td valign="top"><a href="#close-0">close/0</a></td><td></td></tr><tr><td valign="top"><a href="#delete-1">delete/1</a></td><td></td></tr><tr><td valign="top"><a href="#delete-2">delete/2</a></td><td></td></tr><tr><td valign="top"><a href="#delete_all-1">delete_all/1</a></td><td></td></tr><tr><td valign="top"><a href="#delete_all-2">delete_all/2</a></td><td></td></tr><tr><td valign="top"><a href="#first-0">first/0</a></td><td></td></tr><tr><td valign="top"><a href="#first-1">first/1</a></td><td></td></tr><tr><td valign="top"><a href="#first_tree-0">first_tree/0</a></td><td></td></tr><tr><td valign="top"><a href="#first_tree-1">first_tree/1</a></td><td></td></tr><tr><td valign="top"><a href="#flatten_tree-1">flatten_tree/1</a></td><td>Converts a configuration tree into an ordered list of configuration objects.</td></tr><tr><td valign="top"><a href="#join_key-1">join_key/1</a></td><td>Creates a kvdb_conf key out of a list of key parts.</td></tr><tr><td valign="top"><a href="#last-0">last/0</a></td><td></td></tr><tr><td valign="top"><a href="#last-1">last/1</a></td><td></td></tr><tr><td valign="top"><a href="#last_tree-0">last_tree/0</a></td><td></td></tr><tr><td valign="top"><a href="#last_tree-1">last_tree/1</a></td><td></td></tr><tr><td valign="top"><a href="#make_tree-1">make_tree/1</a></td><td>Converts an ordered list of configuration objects into a configuration tree.</td></tr><tr><td valign="top"><a href="#next-1">next/1</a></td><td></td></tr><tr><td valign="top"><a href="#next-2">next/2</a></td><td></td></tr><tr><td valign="top"><a href="#next_at_level-1">next_at_level/1</a></td><td></td></tr><tr><td valign="top"><a href="#next_at_level-2">next_at_level/2</a></td><td></td></tr><tr><td valign="top"><a href="#next_tree-1">next_tree/1</a></td><td></td></tr><tr><td valign="top"><a href="#next_tree-2">next_tree/2</a></td><td></td></tr><tr><td valign="top"><a href="#open-1">open/1</a></td><td></td></tr><tr><td valign="top"><a href="#open-2">open/2</a></td><td></td></tr><tr><td valign="top"><a href="#options-1">options/1</a></td><td></td></tr><tr><td valign="top"><a href="#prev-1">prev/1</a></td><td></td></tr><tr><td valign="top"><a href="#prev-2">prev/2</a></td><td></td></tr><tr><td valign="top"><a href="#read-1">read/1</a></td><td>Reads a configuration object from the database.</td></tr><tr><td valign="top"><a href="#read-2">read/2</a></td><td></td></tr><tr><td valign="top"><a href="#read_tree-1">read_tree/1</a></td><td>Read a configuration (sub-)tree matching Prefix.</td></tr><tr><td valign="top"><a href="#read_tree-2">read_tree/2</a></td><td></td></tr><tr><td valign="top"><a href="#split_key-1">split_key/1</a></td><td>Splits a <code>kvdb_conf` key into a list of key parts
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_table-1">add_table/1</a></td><td></td></tr><tr><td valign="top"><a href="#add_table-2">add_table/2</a></td><td></td></tr><tr><td valign="top"><a href="#all-0">all/0</a></td><td></td></tr><tr><td valign="top"><a href="#all-1">all/1</a></td><td></td></tr><tr><td valign="top"><a href="#close-0">close/0</a></td><td></td></tr><tr><td valign="top"><a href="#delete-1">delete/1</a></td><td></td></tr><tr><td valign="top"><a href="#delete-2">delete/2</a></td><td></td></tr><tr><td valign="top"><a href="#delete_all-1">delete_all/1</a></td><td></td></tr><tr><td valign="top"><a href="#delete_all-2">delete_all/2</a></td><td></td></tr><tr><td valign="top"><a href="#first-0">first/0</a></td><td></td></tr><tr><td valign="top"><a href="#first-1">first/1</a></td><td></td></tr><tr><td valign="top"><a href="#first_top_key-0">first_top_key/0</a></td><td></td></tr><tr><td valign="top"><a href="#first_top_key-1">first_top_key/1</a></td><td></td></tr><tr><td valign="top"><a href="#first_tree-0">first_tree/0</a></td><td></td></tr><tr><td valign="top"><a href="#first_tree-1">first_tree/1</a></td><td></td></tr><tr><td valign="top"><a href="#flatten_tree-1">flatten_tree/1</a></td><td>Converts a configuration tree into an ordered list of configuration objects.</td></tr><tr><td valign="top"><a href="#join_key-1">join_key/1</a></td><td>Creates a kvdb_conf key out of a list of key parts.</td></tr><tr><td valign="top"><a href="#last-0">last/0</a></td><td></td></tr><tr><td valign="top"><a href="#last-1">last/1</a></td><td></td></tr><tr><td valign="top"><a href="#last_tree-0">last_tree/0</a></td><td></td></tr><tr><td valign="top"><a href="#last_tree-1">last_tree/1</a></td><td></td></tr><tr><td valign="top"><a href="#make_tree-1">make_tree/1</a></td><td>Converts an ordered list of configuration objects into a configuration tree.</td></tr><tr><td valign="top"><a href="#next-1">next/1</a></td><td></td></tr><tr><td valign="top"><a href="#next-2">next/2</a></td><td></td></tr><tr><td valign="top"><a href="#next_at_level-1">next_at_level/1</a></td><td></td></tr><tr><td valign="top"><a href="#next_at_level-2">next_at_level/2</a></td><td></td></tr><tr><td valign="top"><a href="#next_tree-1">next_tree/1</a></td><td></td></tr><tr><td valign="top"><a href="#next_tree-2">next_tree/2</a></td><td></td></tr><tr><td valign="top"><a href="#open-1">open/1</a></td><td></td></tr><tr><td valign="top"><a href="#open-2">open/2</a></td><td></td></tr><tr><td valign="top"><a href="#options-1">options/1</a></td><td></td></tr><tr><td valign="top"><a href="#prev-1">prev/1</a></td><td></td></tr><tr><td valign="top"><a href="#prev-2">prev/2</a></td><td></td></tr><tr><td valign="top"><a href="#read-1">read/1</a></td><td>Reads a configuration object from the database.</td></tr><tr><td valign="top"><a href="#read-2">read/2</a></td><td></td></tr><tr><td valign="top"><a href="#read_tree-1">read_tree/1</a></td><td>Read a configuration (sub-)tree matching Prefix.</td></tr><tr><td valign="top"><a href="#read_tree-2">read_tree/2</a></td><td></td></tr><tr><td valign="top"><a href="#split_key-1">split_key/1</a></td><td>Splits a <code>kvdb_conf` key into a list of key parts
 
 Example: `split_key(<<"a*b*c">>) -> [<<"a">>,<<"b">>,<<"c">>].</code></td></tr><tr><td valign="top"><a href="#store_tree-1">store_tree/1</a></td><td>Store a configuration tree in the database.</td></tr><tr><td valign="top"><a href="#store_tree-2">store_tree/2</a></td><td></td></tr><tr><td valign="top"><a href="#update_counter-2">update_counter/2</a></td><td></td></tr><tr><td valign="top"><a href="#update_counter-3">update_counter/3</a></td><td></td></tr><tr><td valign="top"><a href="#write-1">write/1</a></td><td>Writes a configuration object into the database.</td></tr><tr><td valign="top"><a href="#write-2">write/2</a></td><td></td></tr></table>
 
@@ -177,6 +177,20 @@ Example: `split_key(<<"a*b*c">>) -> [<<"a">>,<<"b">>,<<"c">>].</code></td></tr><
 
 
 `first(Tab) -> any()`
+
+<a name="first_top_key-0"></a>
+
+###first_top_key/0##
+
+
+`first_top_key() -> any()`
+
+<a name="first_top_key-1"></a>
+
+###first_top_key/1##
+
+
+`first_top_key(Tab) -> any()`
 
 <a name="first_tree-0"></a>
 

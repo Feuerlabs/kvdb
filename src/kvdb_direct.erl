@@ -36,7 +36,6 @@
 %%% - Configurable encoding schemes (raw, sext or term_to_binary)
 %%%
 %%% @end
-%%% Created : 29 Dec 2011 by Tony Rogvall <tony@rogvall.se>
 
 -module(kvdb_direct).
 

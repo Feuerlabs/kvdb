@@ -7,7 +7,9 @@
 
 __This module defines the `kvdb_schema` behaviour.__
 <br></br>
- Required callback functions: `validate/3`, `validate_attr/3`, `on_update/4`.<a name="index"></a>
+ Required callback functions: `validate/3`, `validate_attr/3`, `on_update/4`.
+
+__Authors:__ Ulf Wiger ([`ulf@feuerlabs.com`](mailto:ulf@feuerlabs.com)).<a name="index"></a>
 
 ##Function Index##
 

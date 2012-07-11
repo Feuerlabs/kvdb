@@ -12,7 +12,6 @@
 %%% @doc
 %%%    ETS backend to kvdb
 %%% @end
-%%% Created : 29 Dec 2011 by Tony Rogvall <tony@rogvall.se>
 
 -module(kvdb_ets).
 

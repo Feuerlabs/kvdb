@@ -7,6 +7,4 @@
 
 Simple diff algorithm.
 
-Copyright (c) (C) 2012, Tony Rogvall
-
-__Authors:__ Tony Rogvall ([`tony@rogvall.se`](mailto:tony@rogvall.se)).
+__Authors:__ Ulf Wiger ([`ulf@wiger.net`](mailto:ulf@wiger.net)), Tony Rogvall ([`tony@rogvall.se`](mailto:tony@rogvall.se)).

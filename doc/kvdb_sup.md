@@ -5,7 +5,9 @@
 * [Function Details](#functions)
 
 
-__Behaviours:__ [`supervisor`](supervisor.md).<a name="index"></a>
+__Behaviours:__ [`supervisor`](supervisor.md).
+
+__Authors:__ Ulf Wiger ([`ulf@wiger.net`](mailto:ulf@wiger.net)).<a name="index"></a>
 
 ##Function Index##
 

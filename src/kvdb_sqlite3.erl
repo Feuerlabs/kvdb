@@ -11,8 +11,6 @@
 %%% @doc
 %%%    SQLITE3 backend to kvdb
 %%% @end
-%%% Created : 29 Dec 2011 by Tony Rogvall <tony@rogvall.se>
-%%% Hacked further by Ulf Wiger <ulf@feuerlabs.com>
 
 -module(kvdb_sqlite3).
 

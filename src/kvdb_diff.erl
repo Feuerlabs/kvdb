@@ -12,7 +12,6 @@
 %%% @doc
 %%%     Simple diff algorithm 
 %%% @end
-%%% Created : 17 Feb 2012 by Tony Rogvall <tony@rogvall.se>
 
 -module(kvdb_diff).
 
