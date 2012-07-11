@@ -1,34 +1,42 @@
-%% @author Ulf Wiger <ulf@feuerlabs.com>
-%% @author Tony Rogvall <tony@rogvall.se>
-%% @copyright 2011-2012, Feuerlabs Inc
-%% @doc
-%% Key-value database frontend
-%%
-%% Kvdb is a key-value database library, supporting different backends
-%% (currently: sqlite3 and leveldb), and a number of different table types.
-%%
-%% Feature overview:
-%%
-%% - Multiple logical tables per database
-%%
-%% - Persistent ordered-set semantics
-%%
-%% - `{Key, Value}' or `{Key, Attributes, Value}' structure (per-table)
-%%
-%% - Table types: set (normal) or queue (FIFO, LIFO or keyed FIFO or LIFO)
-%%
-%% - Attributes can be indexed
-%%
-%% - Schema-based validation (per-database) with update triggers
-%%
-%% - Prefix matching
-%%
-%% - ETS-style select() operations
-%%
-%% - Configurable encoding schemes (raw, sext or term_to_binary)
-%%
-%% @end
-%% Created : 29 Dec 2011 by Tony Rogvall <tony@rogvall.se>
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
+%%% @author Tony Rogvall <tony@rogvall.se>
+%%% @doc
+%%% Key-value database frontend
+%%%
+%%% Kvdb is a key-value database library, supporting different backends
+%%% (currently: sqlite3 and leveldb), and a number of different table types.
+%%%
+%%% Feature overview:
+%%%
+%%% - Multiple logical tables per database
+%%%
+%%% - Persistent ordered-set semantics
+%%%
+%%% - `{Key, Value}' or `{Key, Attributes, Value}' structure (per-table)
+%%%
+%%% - Table types: set (normal) or queue (FIFO, LIFO or keyed FIFO or LIFO)
+%%%
+%%% - Attributes can be indexed
+%%%
+%%% - Schema-based validation (per-database) with update triggers
+%%%
+%%% - Prefix matching
+%%%
+%%% - ETS-style select() operations
+%%%
+%%% - Configurable encoding schemes (raw, sext or term_to_binary)
+%%%
+%%% @end
+%%% Created : 29 Dec 2011 by Tony Rogvall <tony@rogvall.se>
 
 -module(kvdb_direct).
 
@@ -64,6 +72,7 @@
 	 prev/3,
 	 last/2,
 	 prefix_match/4,
+	 prefix_match_rel/5,
 	 select/4,
 	 info/2,
 	 dump_tables/1]).
@@ -451,6 +460,11 @@ prefix_match(#kvdb_ref{mod = DbMod, db = Db}, Table0, Prefix, Limit)
     Table = table_name(Table0),
     DbMod:prefix_match(Db, Table, Prefix, Limit).
 
+prefix_match_rel(#kvdb_ref{mod = DbMod, db = Db}, Table0, Prefix, Start, Limit)
+  when Limit==infinity orelse (is_integer(Limit) andalso Limit >= 0) ->
+    Table = table_name(Table0),
+    DbMod:prefix_match_rel(Db, Table, Prefix, Start, Limit).
+
 select(#kvdb_ref{mod = DbMod, db = Db}, Table0, MatchSpec, Limit) ->
     Table = table_name(Table0),
     MSC = ets:match_spec_compile(MatchSpec),
@@ -463,9 +477,9 @@ select(#kvdb_ref{mod = DbMod, db = Db}, Table0, MatchSpec, Limit) ->
 %%     queue_delete_event(DbRef, Table, DbMod:info(Db, {Table, type}), Key).
 
 queue_delete_event(#kvdb_ref{mod = DbMod,
-			     db = Db} = DbRef, Table, Type,
+			     db = Db} = DbRef, Table, _Type,
 		   #q_key{queue = Q} = QKey) ->
-    Enc = DbMod:info(Db, {Table,encoding}),
+    %% Enc = DbMod:info(Db, {Table,encoding}),
     IsEmpty = DbMod:is_queue_empty(Db, Table, Q),
     on_update({q_op,extract,Q,IsEmpty}, DbRef, Table, QKey).
 

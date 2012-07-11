@@ -1,3 +1,13 @@
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
 -module(kvdb_trans_tests).
 
 -ifdef(TEST).
@@ -10,6 +20,25 @@
 			      end)]}).
 
 -define(tab, iolist_to_binary([<<"t_">>, integer_to_list(?LINE)])).
+
+-define(dbg(E),
+	(fun() ->
+		 try (E) of
+		     __V ->
+			 ?debugFmt(<<"~s = ~P">>, [(??E), __V, 15]),
+			 __V
+		 catch
+		     error:__Err ->
+			 io:fwrite(user,
+				   "FAIL: test = ~s~n"
+				   "Error = ~p~n"
+				   "Trace = ~p~n", [(??E), __Err,
+						    erlang:get_stacktrace()]),
+			 error(__Err)
+		 end
+	  end)()).
+
+
 -define(trace(Mods, Expr), begin dbg:tracer(),
 				 lists:foreach(
 				   fun(_M_) when is_atom(_M_) ->
@@ -46,17 +75,19 @@ fill_test_() ->
 	      open_db(N, Opts, D)
       end,
       [{{N,Opts,D}, fun(_, Db) ->
-			    [?_t(?debugVal(fill_db(N, Db, Opts, D)))
-			     , ?_t(?debugVal(update_counter(N)))
-			     , ?_t(?debugVal(first_next(N)))
-			     , ?_t(?debugVal(q(N)))
-			     , ?_t(?debugVal(q_push_pop(N)))
-			     , ?_t(?debugVal(q_push_prel_pop(N)))
-			     , ?_t(?debugVal(q_extract(N)))
-			     , ?_t(?debugVal(q_mark_blocking(N)))
-			     , ?_t(?debugVal(q_mark_inactive(N)))
-			     , ?_t(?debugVal(index_get(N)))
-			     , ?_t(?debugVal(index_keys(N)))
+			    [?_t(?dbg(fill_db(N, Db, Opts, D)))
+			     , ?_t(?dbg(update_counter(N)))
+			     , ?_t(?dbg(first_next(N)))
+			     , ?_t(?dbg(q(N)))
+			     , ?_t(?dbg(q_push_pop(N)))
+			     , ?_t(?dbg(q_push_prel_pop(N)))
+			     , ?_t(?dbg(q_extract(N)))
+			     , ?_t(?dbg(q_mark_blocking(N)))
+			     , ?_t(?dbg(q_mark_inactive(N)))
+			     , ?_t(?dbg(index_get(N)))
+			     , ?_t(?dbg(index_keys(N)))
+			     , ?_t(?dbg(prefix_match(N)))
+			     , ?_t(?dbg(prefix_match_rel(N)))
 			    ]
 		    end} ||
 	  {N,Opts,D} <- [new_opts(foo_10, 10)]]
@@ -290,5 +321,26 @@ index_keys(Name) ->
 	     end),
     ?assertMatch([1,2,3,4], Res1),
     ok = kvdb:delete_table(Name, T).
+
+prefix_match(Name) ->
+    T = ?tab,
+    ok = kvdb:add_table(Name, T, [{type, set}, {encoding, sext}]),
+    [ok,ok] = [kvdb:put(Name, T, Obj) || Obj <- [{2,b}, {3,c}]],
+    Res = kvdb:transaction(
+	    Name,
+	    fun(_) ->
+		    {[{2,b},{3,c}], _} =
+			kvdb:prefix_match(Name, T, '_', infinity),
+		    [ok,ok] =
+			[kvdb:put(Name, T, Obj) || Obj <- [{1,a}, {4,d}]],
+		    {[{1,a}, {2,b}], C1} =
+			kvdb:prefix_match(Name, T, '_', 2),
+		    {[{3,c}, {4,d}], C2} = C1(),
+		    done = C2()
+	    end),
+    ok.
+
+prefix_match_rel(_) ->
+    ok.
 
 -endif.

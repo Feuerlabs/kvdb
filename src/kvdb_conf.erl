@@ -1,21 +1,31 @@
-%% @doc
-%% API to store NETCONF-style config data in kvdb
-%%
-%% identifiers are stored as a structured key (binary)
-%% delimited by:
-%%
-%% Example:
-%% `{system,[{services, [{ssh,[...]}]}]}' would be stored as
-%%
-%% {"system", []}
-%% {"system*services", []}
-%% {"system*services*ssh", []}
-%%
-%% Netconf identifiers can consist of alphanumerics, '-', '_' or '.'.
-%% The '*' as delimiter is chosen so that a "wildcard" character can be
-%% used that is greater than the delimiter, but smaller than any identifier
-%% character.
-%% @end
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
+%%% @author Ulf Wiger <ulf@wiger.net>
+%%% @doc
+%%% API to store NETCONF-style config data in kvdb
+%%%
+%%% identifiers are stored as a structured key (binary)
+%%% delimited by:
+%%%
+%%% Example:
+%%% `{system,[{services, [{ssh,[...]}]}]}' would be stored as
+%%%
+%%% {"system", []}
+%%% {"system*services", []}
+%%% {"system*services*ssh", []}
+%%%
+%%% Netconf identifiers can consist of alphanumerics, '-', '_' or '.'.
+%%% The '*' as delimiter is chosen so that a "wildcard" character can be
+%%% used that is greater than the delimiter, but smaller than any identifier
+%%% character.
+%%% @end
 
 -module(kvdb_conf).
 
@@ -45,6 +55,8 @@
 	 prev/2,            %% (Tab, Key)
 	 next_at_level/1,   %% (Key) -> next_at_level(data, Key)
 	 next_at_level/2,   %% (Tab, Key)
+	 first_top_key/0,   %% () -> first_top_key(data)
+	 first_top_key/1,   %% (Tab)
 	 first_tree/0,      %% () -> first_tree(data)
 	 first_tree/1,      %% (Tab)
 	 last_tree/0,       %% () -> last_tree(data)
@@ -170,7 +182,7 @@ all() ->
     all(data).
 
 all(Tab) ->
-    all_(kvdb:first(instance_()), Tab).
+    all_(kvdb:first(instance_(), Tab), Tab).
 
 all_({ok, {K,_,_} = Obj}, Tab) ->
     [Obj | all_(kvdb:next(instance_(), data, K), Tab)];
@@ -238,6 +250,17 @@ next_at_level(Tab, K) ->
 		    done
 	    end;
 	done ->
+	    done
+    end.
+
+first_top_key() ->
+    first_top_key(data).
+
+first_top_key(Tab) ->
+    case kvdb:first(instance_(), Tab) of
+	{ok, Obj} ->
+	    {ok, element(1, Obj)};
+	_ ->
 	    done
     end.
 

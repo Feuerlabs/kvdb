@@ -1,8 +1,14 @@
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
 %%% @author Tony Rogvall <tony@rogvall.se>
-%%% @copyright (C) 2011, Tony Rogvall
-%%% @doc
-%%%    Some tests of kvdb
-%%% @end
 %%% Created : 30 Dec 2011 by Tony Rogvall <tony@rogvall.se>
 
 -module(kvdb_tests).
@@ -17,6 +23,24 @@
 -export([test_tree/0]).
 
 -define(match(X, A, B), ?assertMatch({_,X,A}, {?LINE,X,B})).
+
+%% Inspired by eunit's ?debugVal(E)
+-define(dbg(Db,E),
+	(fun() ->
+		 try (E) of
+		     __V ->
+			 ?debugFmt(<<"db = ~p; ~s = ~P">>, [Db,(??E), __V, 15]),
+			 __V
+		 catch
+		     error:__Err ->
+			 io:fwrite(user,
+				   "FAIL: db = ~p; test = ~s~n"
+				   "Error = ~p~n"
+				   "Trace = ~p~n", [Db,(??E), __Err,
+						    erlang:get_stacktrace()]),
+			 error(__Err)
+		 end
+	  end)()).
 
 -define(CATCH(E),
 	try (E)
@@ -50,17 +74,19 @@ basic_test_() ->
        end,
        [{{Db,E,B}, fun({Db1,_,_},_) ->
 			   [
-			    ?_test(?debugVal(fill_db(Db1)))
-			    , ?_test(?debugVal(first_next(Db1)))
-			    , ?_test(?debugVal(last_prev(Db1)))
-			    , ?_test(?debugVal(prefix_match(Db1)))
-			    , ?_test(?debugVal(add_delete_add_tab(Db1)))
-			    , ?_test(?debugVal(queue(Db1)))
-			    , ?_test(?debugVal(subqueues(Db1)))
-			    , ?_test(?debugVal(first_next_queue(Db1)))
-			    , ?_test(?debugVal(prel_pop(Db1)))
-			    , ?_test(?debugVal(each_index(Db1)))
-			    , ?_test(?debugVal(word_index(Db1)))
+			    ?_test(?dbg(Db,fill_db(Db1)))
+			    , ?_test(?dbg(Db,first_next(Db1)))
+			    , ?_test(?dbg(Db,last_prev(Db1)))
+			    , ?_test(?dbg(Db,prefix_match(Db1)))
+			    , ?_test(?dbg(Db,prefix_match2(Db1)))
+			    , ?_test(?dbg(Db,prefix_match_rel(Db1)))
+			    , ?_test(?dbg(Db,add_delete_add_tab(Db1)))
+			    , ?_test(?dbg(Db,queue(Db1)))
+			    , ?_test(?dbg(Db,subqueues(Db1)))
+			    , ?_test(?dbg(Db,first_next_queue(Db1)))
+			    , ?_test(?dbg(Db,prel_pop(Db1)))
+			    , ?_test(?dbg(Db,each_index(Db1)))
+			    , ?_test(?dbg(Db,word_index(Db1)))
 			   ]
 		   end} ||
 	   {Db,E,B} <- dbs()]
@@ -72,7 +98,8 @@ dbs() ->
      {s2,raw,sqlite3},
      {l1,sext,leveldb},
      {l2,raw,leveldb},
-     {e1,sext,ets}
+     {e1,sext,ets},
+     {e2,raw,ets}
     ].
 
 create_db(Name, Encoding, Backend) ->
@@ -162,14 +189,60 @@ prev([{K,_},Next|Tail], Db, Tab) ->
     prev([Next|Tail], Db, Tab).
 
 prefix_match(Db) ->
+    kvdb:add_table(Db, tr, [{encoding, raw}]),
+    kvdb:put(Db, tr, {<<"aabb">>, <<"1">>}),
+    kvdb:put(Db, tr, {<<"aacc">>, <<"2">>}),
+    kvdb:put(Db, tr, {<<"abcc">>, <<"3">>}),
+    kvdb:put(Db, tr, {<<"abcd">>, <<"4">>}),
+    {[ {<<"aabb">>, <<"1">>}, {<<"aacc">>, <<"2">>}], C1} =
+	kvdb:prefix_match(Db, tr, <<"aa">>, 2),
+    case C1() of
+	{[], _} -> ok;
+	done -> ok;
+	Other ->
+	    error({badmatch, Other})
+    end.
+
+prefix_match2(Db) ->
+    kvdb:add_table(Db, ts, [{encoding, sext}]),
+    kvdb:put(Db, ts, {{a,1}, 1}),
+    kvdb:put(Db, ts, {{a,2}, 2}),
+    kvdb:put(Db, ts, {{b,1}, 3}),
+    kvdb:put(Db, ts, {{b,2}, 4}),
+    { [{{a,1},1}, {{a,2},2}], C1} =
+	kvdb:prefix_match(Db, ts, {a,'_'}, 2),
+    case C1() of
+	{[], _} -> ok;
+	done -> ok;
+	Other ->
+	    error({badmatch, Other})
+    end,
+    { [{{a,1},1}, {{a,2},2}, {{b,1},3}, {{b,2},4}], C2} =
+	kvdb:prefix_match(Db, ts, '_'),
+    done = C2().
+
+%% prefix_match(Db) ->
+%%     Prefix = <<"/config/test">>,
+%%     SortedTypes = lists:sort(types()),
+%%     Subset = [{K,V} || {K,V} <- SortedTypes,
+%% 		       is_tuple(binary:match(K, Prefix))],
+%%     ?debugVal(Subset),
+%%     ?match(Db, {SortedTypes, _}, catch kvdb:prefix_match(Db, type, <<>>)),
+%%     ?match(Db, {Subset, _}, catch kvdb:prefix_match(Db, type, Prefix)),
+%%     ok.
+
+prefix_match_rel(Db) ->
     Prefix = <<"/config/test">>,
     SortedTypes = lists:sort(types()),
     Subset = [{K,V} || {K,V} <- SortedTypes,
 		       is_tuple(binary:match(K, Prefix))],
-    ?debugVal(Subset),
-    ?match(Db, {SortedTypes, _}, catch kvdb:prefix_match(Db, type, <<>>)),
     ?match(Db, {Subset, _}, catch kvdb:prefix_match(Db, type, Prefix)),
+    {[{K1,_} = O1],_} = kvdb:prefix_match(Db, type, Prefix, 1),
+    {[{K2,_} = O2],_} = kvdb:prefix_match_rel(Db,type,Prefix,K1,1),
+    {[{_,_}  = O3],_} = kvdb:prefix_match_rel(Db,type,Prefix,K2,1),
+    ?match(Db, Subset, [O1,O2,O3]),
     ok.
+
 
 add_delete_add_tab(Db) ->
     add_delete_tab(Db),
@@ -408,12 +481,14 @@ word_index(Db) ->
     Txt1 = <<"a b c 123">>,
     Txt2 = <<"c 123">>,
     Obj1 = {1,[{c,Txt1}],a},
+    Obj2 = {1,[{c, Txt2}],[a,b,c]},
+    Obj3 = {2,[{c,Txt1}],b},
     ?match(M, ok, kvdb:put(Db, T, Obj1)),
     ?match(M, [Obj1], kvdb:index_get(Db, T, {c}, <<"a">>)),
     ?match(M, [Obj1], kvdb:index_get(Db, T, {c}, <<"b">>)),
     ?match(M, [Obj1], kvdb:index_get(Db, T, {c}, <<"123">>)),
     ?match(M, [Obj1], kvdb:index_get(Db, T, val, a)),
-    ?match(M, ok, kvdb:put(Db, T, Obj2 = {1,[{c, Txt2}],[a,b,c]})),
+    ?match(M, ok, kvdb:put(Db, T, Obj2)),
     ?match(M, [Obj2], kvdb:index_get(Db, T, {c}, <<"c">>)),
     ?match(M, [], kvdb:index_get(Db, T, {c}, <<"a">>)),
     ?match(M, [Obj2], kvdb:index_get(Db, T, v, a)),
@@ -421,7 +496,7 @@ word_index(Db) ->
     ?match(M, [Obj2], kvdb:index_get(Db, T, v, c)),
     ?match(M, [], kvdb:index_get(Db, T, {c}, <<"a">>)),
     ?match(M, [], kvdb:index_get(Db, T, {c}, <<"a">>)),
-    ?match(M, ok, kvdb:put(Db, T, Obj3 = {2,[{c,Txt1}],b})),
+    ?match(M, ok, kvdb:put(Db, T, Obj3)),
     ?match(M, [{2,[{c,Txt1}],b}], kvdb:index_get(Db, T, {c}, <<"a">>)),
     ?match(M, [Obj2, Obj3], kvdb:index_get(Db, T, {c}, <<"c">>)),
     ?match(M, ok, kvdb:delete(Db, T, 1)),

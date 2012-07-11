@@ -1,3 +1,13 @@
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
 -module(kvdb_trans).
 -behaviour(kvdb).
 
@@ -32,7 +42,9 @@
 	 first/2,
 	 last/2,
 	 next/3,
-	 prev/3
+	 prev/3,
+	 prefix_match/4,
+	 prefix_match_rel/5
 	]).
 
 %% debug_function
@@ -412,6 +424,66 @@ merge_sets([_|_] = S1, [H2|T2], Type, M, Db, Tab, AnyDel) ->
 merge_sets(S1, [], _, _, _, _, _) ->
     S1.
 
+-record(set_merge, {c1, c2, type, mod, db, tab, anydel}).
+merge_sets(S1, S2, SM, Limit) ->
+    merge_sets(S1, S2, SM, Limit, []).
+
+merge_sets(done, [H|T], #set_merge{anydel = AnyDel,
+				   type = Type,
+				   mod = Mod,
+				   db = Db,
+				   tab = Tab} = SM, Limit, Acc) ->
+    case AnyDel andalso obj_deleted(H, Type, Mod, Db, Tab) of
+       false ->
+	    merge_set_acc(H, done, T, SM, Limit, Acc);
+       true ->
+	    merge_sets(done, T, SM, Limit, Acc)
+    end;
+merge_sets([H|T], done, SM, Limit, Acc) ->
+    merge_set_acc(H, T, done, SM, Limit, Acc);
+merge_sets([H|T1], [H|T2], SM, Limit, Acc) ->
+    merge_set_acc(H, T1, T2, SM, Limit, Acc);
+merge_sets([H1|T1], [H2|_] = S2, #set_merge{type = obj} = SM, Limit, Acc)
+  when element(1,H1) < element(1,H2) ->
+    merge_set_acc(H1, T1, S2, SM, Limit, Acc);
+merge_sets([H1|T1], [H2|_] = S2, #set_merge{type = key} = SM,
+	   Limit, Acc) when H1 < H2 ->
+    merge_set_acc(H1, T1, S2, SM, Limit, Acc);
+merge_sets([_|_] = S1, [H2|T2], SM, Limit, Acc) ->
+    #set_merge{anydel=AnyDel, type=Type, mod=Mod, db=Db, tab=Tab} = SM,
+    case AnyDel andalso obj_deleted(H2, Type, Mod, Db, Tab) of
+	false ->
+	    merge_set_acc(H2, S1, T2, SM, Limit, Acc);
+	true ->
+	    merge_sets(S1, T2, SM, Limit, Acc)
+    end;
+merge_sets([], S2, #set_merge{c1 = C1} = SM, Limit, Acc) ->
+    {S1, NewC1} = case C1() of
+		      done -> {done, done};
+		      {_, _} = Res -> Res
+		  end,
+    merge_sets(S1, S2, #set_merge{c1 = NewC1} = SM, Limit, Acc);
+merge_sets(S1, [], #set_merge{c2 = C2} = SM, Limit, Acc) ->
+    {S2, NewC2} = case C2() of
+		      done -> {done, done};
+		      {_,_} = Res -> Res
+		  end,
+    merge_sets(S1, S2, SM#set_merge{c2 = NewC2}, Limit, Acc);
+merge_sets(done, done, SM, _Limit, Acc) ->
+    {lists:reverse(Acc), SM, stop}.
+
+merge_set_acc(X, S1, S2, SM, Limit, Acc) ->
+    Acc1 = [X|Acc],
+    case decr(Limit) of
+	0 ->
+	    #set_merge{c1 = C1, c2 = C2} = SM,
+	    SM1 = SM#set_merge{c1 = set_cont_(S1, C1),
+			       c2 = set_cont_(S2, C2)},
+	    {lists:reverse(Acc1), SM1, 0};
+	Limit1 ->
+	    merge_sets(S1, S2, SM, Limit1, Acc1)
+    end.
+
 -record(q_merge, {c1, c2, m, db, tab, filter, heedblock, anydel}).
 merge_q_sets(S1, S2, QM, Acc) ->
     merge_q_sets(S1, S2, QM, Acc, []).
@@ -468,7 +540,7 @@ merge_q_acc(K,St,O, S1,S2, #q_merge{heedblock = Heed,
 				skip      -> {Acc, Limit}
 			    end,
 	    if Limit1 == 0 ->
-		    {lists:reverse(Acc1), set_cont(S1,S2, QM), 0};
+		    {lists:reverse(Acc1), set_q_cont(S1,S2, QM), 0};
 	       Limit1 == stop ->
 		    {lists:reverse(Acc1), QM, stop};
 	       true ->
@@ -476,11 +548,14 @@ merge_q_acc(K,St,O, S1,S2, #q_merge{heedblock = Heed,
 	    end
     end.
 
-set_cont(S1, S2, #q_merge{c1 = C1, c2 = C2} = QM) ->
-    QM#q_merge{c1 = set_cont_(S1, C1), c2 = set_cont_(S2, C2)}.
+set_q_cont(S1, S2, #q_merge{c1 = C1, c2 = C2} = QM) ->
+    QM#q_merge{c1 = set_q_cont_(S1, C1), c2 = set_q_cont_(S2, C2)}.
+
+set_q_cont_(blocking, _) -> fun() -> blocking end;
+set_q_cont_(S, C) ->
+    set_cont_(S, C).
 
 set_cont_(done, _) -> fun() -> done end;
-set_cont_(blocking, _) -> fun() -> blocking end;
 set_cont_([], C) -> C;
 set_cont_([_|_] = S, C) -> fun() -> {S, C} end.
 
@@ -574,7 +649,9 @@ list_queue_(R1, R2, _, _, _) when ?q_done(R1), ?q_done(R2) ->
     most_done(R1, R2);
 list_queue_(blocked, _, _, _, _) ->
     blocked;
-list_queue_({S1,C1}, {S2,C2}, QM, Limit0, Limit) ->
+list_queue_(R1, R2, QM, Limit0, Limit) ->
+    {S1,C1} = initial_set(R1),
+    {S2,C2} = initial_set(R2),
     case merge_q_sets(S1,S2, QM#q_merge{c1 = C1, c2 = C2}, Limit) of
 	{blocked, _, _} -> blocked;
 	{done, _, _}    -> done;
@@ -586,6 +663,9 @@ list_queue_({S1,C1}, {S2,C2}, QM, Limit0, Limit) ->
 		     list_queue_(NewC1(), NewC2(), QM1, Limit0, Limit0)
 	     end}
     end.
+
+initial_set(done) -> {done, done};
+initial_set({_,_} = R) -> R.
 
 
 list_queue_(done,done, _,_, _,_, _, _, _, _, _, _, _) ->
@@ -751,6 +831,49 @@ prev(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 	{_, {ok, _} = Res} ->
 	    check_prev(Res, R1, Tab, M1,Db1, M2,Db2)
     end.
+
+prefix_match(#db{ref = {K1, K2}} = Ref, Tab, Prefix, Limit) ->
+    ensure_table(Tab, K1, K2),
+    do_prefix_match(Ref, Tab, Prefix, Limit).
+
+do_prefix_match(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
+			   #kvdb_ref{mod=M2,db=Db2}}},
+		Tab, Prefix, Limit) ->
+    SM = #set_merge{mod = M1, db = Db1, tab = Tab, type = obj,
+		    anydel = any_deleted(Db1, Tab)},
+    prefix_match_(M1:prefix_match(Db1, Tab, Prefix, Limit),
+		  M2:prefix_match(Db2, Tab, Prefix, Limit),
+		  SM, Limit, Limit).
+
+prefix_match_rel(#db{ref = {K1, K2}} = Ref, Tab, Prefix, Start, Limit) ->
+    ensure_table(Tab, K1, K2),
+    do_prefix_match_rel(Ref, Tab, Prefix, Start, Limit).
+
+do_prefix_match_rel(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
+			   #kvdb_ref{mod=M2,db=Db2}}},
+		    Tab, Prefix, Start, Limit) ->
+    SM = #set_merge{mod = M1, db = Db1, tab = Tab, type = obj,
+		    anydel = any_deleted(Db1, Tab)},
+    prefix_match_(M1:prefix_match_rel(Db1, Tab, Prefix, Start, Limit),
+		  M2:prefix_match_rel(Db2, Tab, Prefix, Start, Limit),
+		  SM, Limit, Limit).
+
+prefix_match_(done, done, _, _, _) ->
+    done;
+prefix_match_(R1, R2, SM, Limit0, Limit) ->
+    {S1,C1} = initial_set(R1),
+    {S2,C2} = initial_set(R2),
+    case merge_sets(S1, S2, SM#set_merge{c1 = C1, c2 = C2}, Limit) of
+	{done, _, _} -> done;
+	{RetSet, _, stop} ->
+	    {RetSet, fun() -> done end};
+	{RetSet, #set_merge{c1 = NewC1, c2 = NewC2} = SM1, 0} ->
+	    {RetSet,
+	     fun() ->
+		     prefix_match_(NewC1(), NewC2(), SM1, Limit0, Limit0)
+	     end}
+    end.
+
 
 push(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}}, Tab, Q, Obj) ->
     ensure_table(Tab, K1, K2),

@@ -1,5 +1,14 @@
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
+%%% @author Ulf Wiger <ulf@wiger.net>
 %%% @author Tony Rogvall <tony@rogvall.se>
-%%% @copyright (C) 2012, Tony Rogvall
 %%% @doc
 %%%     Simple diff algorithm 
 %%% @end
@@ -36,7 +45,7 @@ tree_obj(Ax, {A,AObj={Ak,_As,Av}}, Bx, {B,BObj={Bk,Bs,Bv}}, Acc) ->
     end;
 tree_obj(_Ax, done, _Bx, done, Acc) ->
     Acc;
-tree_obj(Ax, done, Bx, {B,BObj={Bk,Bs,Bv}}, Acc) ->
+tree_obj(Ax, done, Bx, {B,{Bk,Bs,Bv}}, Acc) ->
     tree_obj(Ax, done, Bx, prefix_next(Bx,Bk),[{add,{B,Bs,Bv}}|Acc]);
 tree_obj(Ax, {A,{Ak,_,_}}, Bx, done, Acc) ->
     tree_obj(Ax, prefix_next(Ax,Ak), Bx, done, [{delete,A}|Acc]).

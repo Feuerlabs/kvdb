@@ -1,5 +1,13 @@
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
-%%% @copyright (C) 2011, Tony Rogvall
 %%% @doc
 %%%    LevelDB backend to kvdb
 %%% @end
@@ -16,7 +24,8 @@
 	 list_queue/3, list_queue/6, is_queue_empty/3,
 	 queue_read/3, queue_insert/5, queue_delete/3, mark_queue_object/4]).
 -export([first_queue/2, next_queue/3]).
--export([first/2, last/2, next/3, prev/3, prefix_match/3, prefix_match/4]).
+-export([first/2, last/2, next/3, prev/3,
+	 prefix_match/3, prefix_match/4, prefix_match_rel/5]).
 -export([get_schema_mod/2]).
 -export([info/2, is_table/2]).
 
@@ -961,17 +970,31 @@ get_attrs_iter_(done, _, _, _) ->
 prefix_match(Db, Table, Prefix) ->
     prefix_match(Db, Table, Prefix, 100).
 
-prefix_match(#db{ref = Ref} = Db, Table, Prefix, Limit)
+prefix_match(#db{} = Db, Table, Prefix, Limit)
+  when (is_integer(Limit) orelse Limit == infinity) ->
+    prefix_match(Db, Table, Prefix, false, Limit).
+
+prefix_match_rel(#db{} = Db, Table, Prefix, StartPoint, Limit) ->
+    prefix_match(Db, Table, Prefix, {true, StartPoint}, Limit).
+
+prefix_match(#db{ref = Ref} = Db, Table, Prefix, Rel, Limit)
   when (is_integer(Limit) orelse Limit == infinity) ->
     Enc = encoding(Db, Table),
     EncPrefix = kvdb_lib:enc_prefix(key, Prefix, Enc),
+    EncStart = case Rel of
+		   false ->
+		       EncPrefix;
+		   {true, StartPoint} ->
+		       enc(key, StartPoint, Enc)
+	       end,
     TablePrefix = make_table_key(Table),
     TabPfxSz = byte_size(TablePrefix),
     MatchKey = make_table_key(Table, EncPrefix),
+    StartKey = make_table_key(Table, EncStart),
     with_iterator(
       Ref,
       fun(I) ->
-	      if EncPrefix == <<>> ->
+	      if Rel==false, EncStart == <<>> ->
 		      case eleveldb:iterator_move(I, TablePrefix) of
 			  {ok, <<TablePrefix:TabPfxSz/binary>>, _} ->
 			      prefix_match_(I, next, Db, Table, MatchKey, TablePrefix,
@@ -979,9 +1002,20 @@ prefix_match(#db{ref = Ref} = Db, Table, Prefix, Limit)
 			  _ ->
 			      done
 		      end;
+		 Rel=/=false ->
+		      case eleveldb:iterator_move(I, StartKey) of
+			  {ok, StartKey, _} ->
+			      prefix_match_(I, next, Db, Table, MatchKey,
+					    TablePrefix, Prefix, Enc,
+					    Limit, Limit, []);
+			  {ok, _, _} ->
+			      prefix_match_(I, StartKey, Db, Table, MatchKey,
+					    TablePrefix, Prefix, Enc,
+					    Limit, Limit, [])
+		      end;
 		 true ->
-		      prefix_match_(I, MatchKey, Db, Table, MatchKey, TablePrefix,
-				    Prefix, Enc, Limit, Limit, [])
+		      prefix_match_(I, StartKey, Db, Table, MatchKey,
+				    TablePrefix, Prefix, Enc, Limit, Limit, [])
 	      end
       end).
 

@@ -1,4 +1,14 @@
-
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
+%%% @author Ulf Wiger <ulf@wiger.net>
+%%%
 -module(kvdb_sup).
 
 -behaviour(supervisor).
@@ -36,25 +46,3 @@ init([]) ->
 start_child(Name, Opts) ->
     supervisor:start_child(?MODULE, [Name, Opts]).
 
-childspecs(DBs) ->
-    [childspec(DB) || DB <- lists:concat(DBs)].
-
-childspec({Name, Opts}) ->
-    {Name, {kvdb, start_link, [Name, Opts]},
-     transient, 5000, worker, [kvdb]}.
-
-%% get_databases() ->
-%%     %% If 'setup' is available, query for other databases
-%%     OtherDBs =
-%% 	case lists:keymember(setup, 1, application:loaded_applications()) of
-%% 	    true ->
-%% 		[DB || {_, DB} <- setup:find_env_vars(kvdb_databases)];
-%% 	    false ->
-%% 		[]
-%% 	end,
-%%     case application:get_env(databases) of
-%% 	{ok, DBs} when is_list(DBs) ->
-%% 	    [DBs | OtherDBs];
-%% 	_ ->
-%% 	    OtherDBs
-%%     end.

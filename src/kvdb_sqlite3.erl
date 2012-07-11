@@ -1,5 +1,13 @@
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
-%%% @copyright (C) 2011, Tony Rogvall
 %%% @doc
 %%%    SQLITE3 backend to kvdb
 %%% @end
@@ -23,12 +31,12 @@
 	 mark_queue_object/4,
 	 queue_insert/5, queue_delete/3, queue_read/3]).
 -export([first/2, last/2, next/3, prev/3]).
--export([prefix_match/3, prefix_match/4]).
+-export([prefix_match/3, prefix_match/4, prefix_match_rel/5]).
 -export([info/2, get_schema_mod/2, dump_tables/1]).
 -export([is_table/2]).
 
 %% for testing
--export([prefix_match/5]).
+%% -export([prefix_match/5]).
 
 -import(kvdb_lib, [enc/3, dec/3, enc_prefix/3]).
 -include("kvdb.hrl").
@@ -604,11 +612,11 @@ do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
 	   end,
     case case Type of
 	     _ when Type==fifo; element(2, Type) == fifo ->
-		 prefix_match(Db, Table, EncQPfx, QPfx, Enc,
-			      Fltr, true, 2, asc);
+		 prefix_match_(Db, Table, EncQPfx, false, QPfx, Enc,
+			       Fltr, true, 2, asc);
 	     _ when Type==lifo; element(2, Type) == lifo ->
-		 prefix_match(Db, Table, EncQPfx, QPfx, Enc,
-			      Fltr, true, 2, desc);
+		 prefix_match_(Db, Table, EncQPfx, false, QPfx, Enc,
+			       Fltr, true, 2, desc);
 	     _ -> error(illegal)
 	 end of
 	{[{RawKey,Obj}|More], _} ->
@@ -627,7 +635,7 @@ do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
 	    Error
     end.
 
-extract(#db{} = Db, Table, #q_key{queue = Q, key = K} = QKey) ->
+extract(#db{} = Db, Table, #q_key{queue = Q} = QKey) ->
     Type = type(Db, Table),
     Enc = encoding(Db, Table),
     if Type == fifo; Type == lifo; element(1, Type) == keyed ->
@@ -695,7 +703,8 @@ list_queue(Db, Table, Q, Fltr, HeedBlock, Order, Limit)
     Enc = encoding(Db, Table),
     QPfx = kvdb_lib:queue_prefix(Enc, Q),
     EncQPfx = kvdb_lib:enc_prefix(key, QPfx, Enc),
-    prefix_match(Db, Table, EncQPfx, QPfx, Enc, Fltr, HeedBlock, Limit, Order);
+    prefix_match_(Db, Table, EncQPfx, false, QPfx, Enc, Fltr,
+		  HeedBlock, Limit, Order);
 list_queue(_, _, _, _, _, _, 0) ->
     [].
 
@@ -791,21 +800,34 @@ prefix_match(Db, Table, Prefix) ->
     prefix_match(Db, Table, Prefix, 100).
 
 prefix_match(Db, Table, Prefix, Limit) ->
-    prefix_match(Db, Table, Prefix, Limit, asc).
+    prefix_match_(Db, Table, Prefix, false, Limit, asc).
 
-prefix_match(Db, Table, Prefix, Limit, Dir) ->
+prefix_match_rel(Db, Table, Prefix, StartPoint, Limit) ->
+    prefix_match_(Db, Table, Prefix, {true, StartPoint}, Limit, asc).
+
+prefix_match_(Db, Table, Prefix, Rel, Limit, Dir) ->
     Enc = encoding(Db, Table),
     EncPrefix = enc_prefix(key, Prefix, Enc),
-    prefix_match(Db, Table, EncPrefix, Prefix, Enc,
-		 fun(_,_,O) -> {keep,O} end, false, Limit, Dir).
+    EncStart = case Rel of
+		   false -> false;
+		   {true,StartPoint} ->
+		       {true, enc(key, StartPoint, Enc)}
+	       end,
+    prefix_match_(Db, Table, EncPrefix, EncStart, Prefix, Enc,
+		  fun(_,_,O) -> {keep,O} end, false, Limit, Dir).
 
-prefix_match(#db{ref = Ref} = Db, Table, EncPrefix, Prefix,
-	     Enc, Fltr, HeedBlock, Limit, Dir)
+prefix_match_(#db{ref = Ref} = Db, Table, EncPrefix, Rel, Prefix,
+	      Enc, Fltr, HeedBlock, Limit, Dir)
   when (is_integer(Limit) orelse Limit==infinity) ->
     DirS = case Dir of
 	       asc  -> "ASC";
 	       desc -> "DESC"
 	   end,
+    AndStart = case Rel of
+		   false -> "";
+		   {true, _} ->
+		       " AND key > ?"
+	       end,
     AndActive = case {HeedBlock, type(Db, Table)} of
 		    {_, set} -> "";
 		    {true,_} -> " AND active >= 1";
@@ -813,10 +835,16 @@ prefix_match(#db{ref = Ref} = Db, Table, EncPrefix, Prefix,
 		end,
     Type = type(Db, Table),
     SQL = ["SELECT ", sel_cols(Enc,Type), " FROM ", Table,
-	   " WHERE key >= ?", AndActive,
+	   " WHERE key >= ?", AndStart, AndActive,
 	   " ORDER BY key ", DirS],
     {ok, Handle} = sqlite3:prepare(Ref, SQL),
-    ok = sqlite3:bind(Ref, Handle, [{blob, EncPrefix}]),
+    Args = case Rel of
+	       false ->
+		   [{blob, EncPrefix}];
+	       {true, StartPoint} ->
+		   [{blob, EncPrefix}, {blob, StartPoint}]
+	   end,
+    ok = sqlite3:bind(Ref, Handle, Args),
     SH = track_resource(Ref, Handle),
     prefix_match_([], Dir, Ref, SH, Table, EncPrefix, Prefix, AndActive,
 		  Enc, Fltr, HeedBlock, Type, Limit, Limit, []).

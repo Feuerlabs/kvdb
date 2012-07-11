@@ -1,6 +1,14 @@
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
 %%% @author Ulf Wiger <ulf@feuerlabs.com>
-%%% @copyright (C) 2011-12, Feuerlabs, Inc
 %%% @doc
 %%%    ETS backend to kvdb
 %%% @end
@@ -20,7 +28,7 @@
 -export([first_queue/2, next_queue/3]).
 -export([mark_queue_object/4]).
 -export([first/2, last/2, next/3, prev/3]).
--export([prefix_match/3, prefix_match/4]).
+-export([prefix_match/3, prefix_match/4, prefix_match_rel/5]).
 -export([get_schema_mod/2]).
 -export([info/2,
 	 is_table/2,
@@ -897,32 +905,61 @@ prev(#db{ref = Ets} = Db, Table, Rel) ->
 prefix_match(Db, Table, Prefix) ->
     prefix_match(Db, Table, Prefix, 100).
 
-prefix_match(#db{ref = Ets} = Db, Table, Prefix0, Limit)
+prefix_match(Db, Table, Prefix, Limit) ->
+    prefix_match_(Db, Table, Prefix, false, Limit).
+
+prefix_match_rel(Db, Table, Prefix, StartPoint, Limit) ->
+    prefix_match_(Db, Table, Prefix, {true, StartPoint}, Limit).
+
+prefix_match_(#db{ref = Ets} = Db, Table, Prefix0, Rel, Limit)
   when (is_integer(Limit) orelse Limit == infinity) ->
     Enc = encoding(Db, Table),
     KeyEnc = key_encoding(Enc),
-    {Mode, Prefix} = case KeyEnc of
-			 raw when is_binary(Prefix0) -> {raw, Prefix0};
-			 sext ->
-			     if is_binary(Prefix0) -> {dec, Prefix0};
-				true ->
-				     EncPfx = kvdb_lib:enc_prefix(
-						key, Prefix0, sext),
-				     {raw, EncPfx}
-			     end;
-			 _ ->
-			     error(badarg)
-		     end,
+    {Mode, Prefix} = enc_match_prefix(KeyEnc, Prefix0),
     Pat = if tuple_size(Enc) == 3 ->
 		  %% attributes
-		  [{ {#k{t=Table, k='$1'}, '$2', '$3'}, [],
+		  [{ {#k{t=Table, k='$1'}, '$2', '$3'}, match_guard(Rel, KeyEnc),
 		     [{{ '$1', '$2', '$3' }}] }];
 	     true ->
-		  [{ {#k{t=Table, k='$1'}, '$2'}, [],
+		  [{ {#k{t=Table, k='$1'}, '$2'}, match_guard(Rel, KeyEnc),
 		     [{{ '$1', '$2' }}] }]
 	  end,
     prefix_match_(ets_select(Ets, Pat, Limit), Prefix, Mode, KeyEnc,
 		  [], Limit, Limit).
+
+enc_match_prefix(raw, Prefix) -> {raw, Prefix};
+enc_match_prefix(sext, Prefix) when is_binary(Prefix) ->
+    %% can't match binary prefixes with a match spec
+    {dec, Prefix};
+enc_match_prefix(sext, Prefix) ->
+    {ms, {match_spec([{Prefix, [], ['$_']}]),
+	  not is_ms_var(Prefix),
+	  Prefix}};
+enc_match_prefix(_, _) ->
+    error(badarg).
+
+is_ms_var('_') -> true;
+is_ms_var(A) when is_atom(A) ->
+    case atom_to_list(A) of
+	[$$ | Rest] ->
+	    try  _ = list_to_integer(Rest),
+		 true
+	    catch
+		error:_ -> false
+	    end;
+	_ -> false
+    end;
+is_ms_var(_) ->
+    false.
+
+match_spec(Ms) ->
+    ets:match_spec_compile(Ms).
+
+match_guard(false, _) -> [];
+match_guard({true, StartP}, Enc) ->
+    Prefix = enc(key, StartP, Enc),
+    [{'>', '$1', Prefix}].
+
 
 ets_select(Ets, Pat, infinity) ->
     {ets:select(Ets, Pat), '$end_of_table'};
@@ -930,7 +967,8 @@ ets_select(Ets, Pat, Limit) when is_integer(Limit) ->
     ets:select(Ets, Pat, Limit).
 
 
-prefix_match_('$end_of_table', _, _, _, Acc, _, _) ->
+prefix_match_(End, _, _, _, Acc, _, _)
+  when End=='$end_of_table'; End=={[], '$end_of_table'} ->
     if Acc == [] -> done;
        true ->
 	    {lists:reverse(Acc), fun() -> done end}
@@ -972,15 +1010,33 @@ prefix_match_sel_cont([_|_] = Cands, Cont, Pfx, Mode, Enc, Acc, Limit0, Limit) -
 match_prefix(K, Pfx, raw, _) ->
     case kvdb_lib:binary_match(K, Pfx) of
 	true -> true;
-	false ->
-	    if K > Pfx ->
-		    done;
-	       true ->
-		    false
-	    end
+	false -> maybe_done(K, Pfx)
+    end;
+match_prefix(K, {Ms,Comparable,Pfx}, ms, Enc) ->
+    DecK = dec(key, K, Enc),
+    case ets:match_spec_run([DecK], Ms) of
+	[_] -> true;
+	[]  -> if Comparable -> maybe_done(K, Pfx);
+		  true -> false
+	       end
     end;
 match_prefix(K, Pfx, dec, Enc) ->
-    match_prefix(dec(key, K, Enc), Pfx, raw, Enc).
+    case dec(key, K, Enc) of
+	DecK when is_binary(DecK) ->
+	    case kvdb_lib:binary_match(DecK, Pfx) of
+		true -> true;
+		false ->
+		    maybe_done(DecK, Pfx)
+	    end;
+	Other -> maybe_done(Other, Pfx)
+    end.
+
+maybe_done(K, Pfx) when K > Pfx -> done;
+maybe_done(_, _) ->
+    false.
+
+%% match_prefix(K, Pfx, dec, Enc) ->
+%%     match_prefix(dec(key, K, Enc), Pfx, raw, Enc).
 
 
 match_cands(Cands, Cont, Pfx, Mode, Enc, Acc, Limit0, Limit) ->

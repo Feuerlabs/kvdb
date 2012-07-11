@@ -1,34 +1,42 @@
-%% @author Ulf Wiger <ulf@feuerlabs.com>
-%% @author Tony Rogvall <tony@rogvall.se>
-%% @copyright 2011-2012, Feuerlabs Inc
-%% @doc
-%% Key-value database frontend
-%%
-%% Kvdb is a key-value database library, supporting different backends
-%% (currently: sqlite3 and leveldb), and a number of different table types.
-%%
-%% Feature overview:
-%%
-%% - Multiple logical tables per database
-%%
-%% - Persistent ordered-set semantics
-%%
-%% - `{Key, Value}' or `{Key, Attributes, Value}' structure (per-table)
-%%
-%% - Table types: set (normal) or queue (FIFO, LIFO or keyed FIFO or LIFO)
-%%
-%% - Attributes can be indexed
-%%
-%% - Schema-based validation (per-database) with update triggers
-%%
-%% - Prefix matching
-%%
-%% - ETS-style select() operations
-%%
-%% - Configurable encoding schemes (raw, sext or term_to_binary)
-%%
-%% @end
-%% Created : 29 Dec 2011 by Tony Rogvall <tony@rogvall.se>
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
+%%% @author Tony Rogvall <tony@rogvall.se>
+%%% Created : 29 Dec 2011 by Tony Rogvall <tony@rogvall.se>
+%%% @doc
+%%% Key-value database frontend
+%%%
+%%% Kvdb is a key-value database library, supporting different backends
+%%% (currently: sqlite3 and leveldb), and a number of different table types.
+%%%
+%%% Feature overview:
+%%%
+%%% - Multiple logical tables per database
+%%%
+%%% - Persistent ordered-set semantics
+%%%
+%%% - `{Key, Value}' or `{Key, Attributes, Value}' structure (per-table)
+%%%
+%%% - Table types: set (normal) or queue (FIFO, LIFO or keyed FIFO or LIFO)
+%%%
+%%% - Attributes can be indexed
+%%%
+%%% - Schema-based validation (per-database) with update triggers
+%%%
+%%% - Prefix matching
+%%%
+%%% - ETS-style select() operations
+%%%
+%%% - Configurable encoding schemes (raw, sext or term_to_binary)
+%%%
+%%% @end
 
 -module(kvdb).
 
@@ -58,6 +66,7 @@
 	 prev/3,
 	 prefix_match/3,
 	 prefix_match/4,
+	 prefix_match_rel/5,
 	 select/3,
 	 select/4]).
 %% queue operations
@@ -645,6 +654,14 @@ prefix_match(Name, Table, Prefix, Limit)
        kvdb_direct:prefix_match(Ref, Table, Prefix, Limit),
        kvdb_direct:prefix_match(db(Name), Table, Prefix, Limit),
        [Name, Table, Prefix, Limit]).
+
+prefix_match_rel(Name, Table, Prefix, StartPoint, Limit)
+  when Limit==infinity orelse (is_integer(Limit) andalso Limit >= 0) ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:prefix_match_rel(Ref, Table, Prefix, StartPoint, Limit),
+       kvdb_direct:prefix_match_rel(db(Name), Table, Prefix, StartPoint, Limit),
+       [Name, Table, Prefix, StartPoint, Limit]).
 
 default_limit() ->
     100.
