@@ -68,6 +68,7 @@ dump_tables(#db{ref = Ref} = Db) ->
 
 dump_tables_({ok, K, V}, I, Db) ->
     Type = bin_match([{$:, obj}, {$=, attr}, {$?, index}], K),
+    io:fwrite("Type = ~p: K=~p; V=~p~n", [Type, K, V]),
     Obj = case Type of
 	      obj ->
 		  [T, Key] = binary:split(K, <<":">>),
@@ -102,8 +103,9 @@ dump_tables_({ok, K, V}, I, Db) ->
 	      attr ->
 		  [T, AKey] = binary:split(K, <<"=">>),
 		  %% io:fwrite("attr: T=~p; AKey=~p~n", [T, AKey]),
-		  {OKey, Rest} = sext:decode_next(AKey),
-		  Attr = sext:decode(Rest),
+		  %% {OKey, Rest} = sext:decode_next(AKey),
+		  %% Attr = sext:decode(Rest),
+		  {OKey, Attr} = decode_attr_key(Db, T, AKey),
 		  {attr, T, OKey, Attr, binary_to_term(V)};
 	      index ->
 		  [T, IKey] = binary:split(K, <<"?">>),
@@ -118,6 +120,41 @@ dump_tables_({error, _}, _, _) ->
     [];
 dump_tables_(Other, _, _) ->
     io:fwrite("dump_tables_(~p, _, _)~n", [Other]).
+
+%% <<Key/binary, (sext:encode(AttrName))/binary>>
+decode_attr_key(Db, Tab, K) ->
+    case key_encoding(Db, Tab) of
+	sext ->
+	    [Kdec, Rest] = sext:decode_next(K),
+	    {Kdec, sext:decode(Rest)};
+	raw ->
+	    %% This is the hard part
+	    %% since the first part is an arbitrary binary, we must guess where
+	    %% the sext-encoded attribute name starts. We know what the start
+	    %% codes of a sext-encoded term can be. Try each, in order.
+	    {match, Ps} =
+		re:run(K,<<"[",8,9,10,11,12,13,14,15,16,17,18,19,"]">>,
+		       [global]),
+	    {P, AName} = try_sext_decode(lists:flatten(Ps), K),
+	    <<Key:P/binary, _/binary>> = K,
+	    {Key, AName}
+    end.
+
+key_encoding(Db, T) ->
+    case encoding(Db, T) of
+	E when is_atom(E) -> E;
+	E when is_tuple(E) -> element(1, E)
+    end.
+
+try_sext_decode([{P,_}|Ps], K) ->
+    <<_:P/binary, Rest/binary>> = K,
+    try   A = sext:decode(Rest),
+	  {P, A}
+    catch
+	error:_ ->
+	    try_sext_decode(Ps, K)
+    end.
+
 
 
 bin_match([], _) -> unknown;
@@ -260,7 +297,7 @@ put(#db{ref = Ref} = Db, Table, {K, Attrs, V}) ->
 	    Ix = index(Db, Table),
 	    Key = enc(key, K, Enc),
 	    Val = enc(value, V, Enc),
-	    OldAttrs = get_attrs(Db, Table, K, all),
+	    OldAttrs = get_attrs_(Db, Table, Key, all),
 	    IxOps = case Ix of
 			[_|_] ->
 			    OldIxVals = kvdb_lib:index_vals(
@@ -883,27 +920,17 @@ attrs_to_delete(Table, Key, Attrs) when is_list(Attrs), is_binary(Key) ->
 		       <<Key/binary,
 			 (sext:encode(A))/binary>>)} || {A,_} <- Attrs].
 
-%% old_ixes_to_delete(Ref, Table, Enc, EncKey, true) ->
-%%     TableKey = make_key(Table, $=, EncKey),
-%%     with_iterator(
-%%       Ref,
-%%       fun(I) ->
-%% 	      ixes_to_delete_(prefix_move(I, TableKey, TableKey), I, Table,
-%% 			      Enc, TableKey)
-%%       end);
-%% old_ixes_to_delete(_, _, _, false) ->
-%%     [].
 
-%% ixes_to_delete({ok, K, V}, I, Table, Enc, Prefix) ->
-%%     {Kd,Vd} = {sext:decode(K), binary_to_term(V)},
-%%     exit(nyi).
-
-
-get_attrs(#db{} = Db, Table, Key, As) ->
+get_attrs(#db{ref = Ref} = Db, Table, Key, As) ->
     case encoding(Db, Table) of
-	{_, _, _} ->
-	    EncKey = sext:encode(Key),
-	    get_attrs_(Db, Table, EncKey, As);
+	{_, _, _} = Enc ->
+	    EncKey = enc(key, Key, Enc),
+	    case eleveldb:get(Ref, make_table_key(Table, EncKey), []) of
+		{ok, _} ->
+		    {ok, get_attrs_(Db, Table, EncKey, As)};
+		_ ->
+		    {error, not_found}
+	    end;
 	_ ->
 	    error(badarg)
     end.
@@ -929,42 +956,6 @@ get_attrs_iter_({ok, K, V}, I, Prefix, As) ->
 get_attrs_iter_(done, _, _, _) ->
    [].
 
-%% delete_attrs(#db{ref = Ref} = Db, Table, Key) ->
-%%     case encoding(Db, Table) of
-%% 	{_, _, _}  = Enc ->
-%% 	    DelAs = attrs_to_delete(Db, Table, Key),
-%% 	    eleveldb:write(Ref, DelAs, []);
-%% 	_ ->
-%% 	    ok
-%%     end.
-
-%% attrs_to_delete(#db{ref = Ref} = Db, Table, Key, Ix) ->
-%%     case encoding(Db, Table) of
-%% 	{_, _, _} = Enc ->
-%% 	    EncKey = enc(key, Key, Enc),
-%% 	    TableKey = make_key(Table, $=, EncKey),
-%% 	    with_iterator(
-%% 	      Ref,
-%% 	      fun(I) ->
-%% 		      attrs_to_delete_(eleveldb:iterator_move(I, TableKey, Ix),
-%% 				       I, TableKey, Ref)
-%% 	      end);
-%% 	_ ->
-%% 	    ok
-%%     end.
-
-%% attrs_to_delete_({ok, K, _V}, I, Prefix, Ref, Ix) ->
-%%     Sz = byte_size(Prefix),
-%%     case K of
-%% 	<<Prefix:Sz/binary, _/binary>> ->
-%% 	    [{delete, K}|
-%% 	     attrs_to_delete_(eleveldb:iterator_move(I, Prefix, next),
-%% 			      I, Prefix, Ref, Ix)];
-%% 	_ ->
-%% 	    []
-%%     end;
-%% attrs_to_delete_(done, _, _, _, _) ->
-%%     [].
 
 prefix_match(Db, Table, Prefix) ->
     prefix_match(Db, Table, Prefix, 100).

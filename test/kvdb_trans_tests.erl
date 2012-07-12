@@ -78,6 +78,7 @@ fill_test_() ->
 			    [?_t(?dbg(fill_db(N, Db, Opts, D)))
 			     , ?_t(?dbg(update_counter(N)))
 			     , ?_t(?dbg(first_next(N)))
+			     , ?_t(?dbg(get_attrs(N)))
 			     , ?_t(?dbg(q(N)))
 			     , ?_t(?dbg(q_push_pop(N)))
 			     , ?_t(?dbg(q_push_prel_pop(N)))
@@ -184,6 +185,31 @@ first_next(Name) ->
 	[kvdb:delete_table(Name, T) || T <- [T1,T2,T3]],
     ok.
 
+get_attrs(Name) ->
+    T1 = ?tab,
+    T2 = ?tab,
+    ok = kvdb:add_table(Name, T1, [{encoding,{raw,sext,term}}]),
+    ok = kvdb:add_table(Name, T2, [{encoding,{sext,sext,term}}]),
+    As = [{a,1}, {b,2}, {c,3}],
+    ok = kvdb:put(Name, T1,{<<"a">>,As,1}),
+    ok = kvdb:put(Name, T2,{a,As,1}),
+    kvdb:transaction(
+      Name,
+      fun(_) ->
+	      {ok, [{a,1},{b,2}]} = kvdb:get_attrs(Name,T1,<<"a">>,[a,b]),
+	      {ok, [{a,1},{b,2}]} = kvdb:get_attrs(Name,T2,a,[a,b]),
+	      {ok, [{a,1},{b,2},{c,3}]} =
+		  kvdb:get_attrs(Name,T1,<<"a">>,all),
+	      {ok, [{a,1},{b,2},{c,3}]} =
+		  kvdb:get_attrs(Name,T2,a,all),
+	      ok = kvdb:put(Name, T1, {<<"a">>,[{a,10}],1}),
+	      ok = kvdb:put(Name, T2, {a,[{a,10}],1}),
+	      {ok, [{a,10}]} = kvdb:get_attrs(Name,T1,<<"a">>,[a,b]),
+	      {ok, [{a,10}]} = kvdb:get_attrs(Name,T2,a,[a,b])
+      end),
+    ok = kvdb:delete_table(Name, T1),
+    ok = kvdb:delete_table(Name, T2).
+
 
 q(Name) ->
     T = ?tab,
@@ -194,7 +220,6 @@ q(Name) ->
 	     Name, fun(_) ->
 			   kvdb:list_queue(Name, T, <<>>)
 		   end),
-    ?debugVal(Res1),
     ?assertMatch({[{1,a},{2,b}], _}, Res1),
     kvdb_trans:run(
       Name, fun(_) ->
@@ -205,7 +230,6 @@ q(Name) ->
 	     Name, fun(_) ->
 			   kvdb:list_queue(Name, T, <<>>)
 		   end),
-    ?debugVal(Res2),
     ?assertMatch({[{1,a},{2,b},{3,c},{4,d}], _}, Res2),
     ok = kvdb:delete_table(Name, T).
 
@@ -232,7 +256,6 @@ q_push_prel_pop(Name) ->
 					kvdb:prel_pop(Name, T, q)),
 			   kvdb:pop(Name, T, q)
 		   end),
-    ?debugHere,
     ?assertMatch(blocked, Res1),
     ok = kvdb:delete_table(Name, T).
 

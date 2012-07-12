@@ -751,10 +751,14 @@ get_attrs(Db0, Table, Key, As) ->
 	    Db = ?cache_meta(Db0, Table, E, type(Db0, Table)),
 	    case get(Db, Table, Key) of
 		{ok, {_, Attrs, _}} ->
-		    [{K,V} || {K, V} <- Attrs,
-			      lists:member(K, As)];
+		    if As == all ->
+			    {ok, Attrs};
+		       is_list(As) ->
+			    {ok, [{K,V} || {K, V} <- Attrs,
+					   lists:member(K, As)]}
+		    end;
 		_ ->
-		    []
+		    {error, not_found}
 	    end;
 	_ ->
 	    error(badarg)

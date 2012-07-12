@@ -77,6 +77,7 @@ basic_test_() ->
 			    ?_test(?dbg(Db,fill_db(Db1)))
 			    , ?_test(?dbg(Db,first_next(Db1)))
 			    , ?_test(?dbg(Db,last_prev(Db1)))
+			    , ?_test(?dbg(Db,get_attrs(Db1)))
 			    , ?_test(?dbg(Db,prefix_match(Db1)))
 			    , ?_test(?dbg(Db,prefix_match2(Db1)))
 			    , ?_test(?dbg(Db,prefix_match_rel(Db1)))
@@ -188,6 +189,13 @@ prev([{K,_},Next|Tail], Db, Tab) ->
     ?assertMatch({K, Next, {ok, Next}}, {K, Next, kvdb:prev(Db, Tab, K)}),
     prev([Next|Tail], Db, Tab).
 
+get_attrs(Db) ->
+    ok = kvdb:add_table(Db, ta, [{encoding, {raw,sext,term}}]),
+    ok = kvdb:put(Db, ta, {<<"a">>, [{a,1},{b,2},{c,3}], 1}),
+    {ok, [{a,1},{c,3}]} = kvdb:get_attrs(Db, ta, <<"a">>, [a,c]),
+    {ok, [{a,1},{b,2},{c,3}]} = kvdb:get_attrs(Db, ta, <<"a">>, all),
+    kvdb:delete_table(Db, ta).
+
 prefix_match(Db) ->
     kvdb:add_table(Db, tr, [{encoding, raw}]),
     kvdb:put(Db, tr, {<<"aabb">>, <<"1">>}),
@@ -201,7 +209,8 @@ prefix_match(Db) ->
 	done -> ok;
 	Other ->
 	    error({badmatch, Other})
-    end.
+    end,
+    kvdb:delete_table(Db, tr).
 
 prefix_match2(Db) ->
     kvdb:add_table(Db, ts, [{encoding, sext}]),
