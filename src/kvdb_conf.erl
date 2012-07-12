@@ -185,7 +185,7 @@ all(Tab) ->
     all_(kvdb:first(instance_(), Tab), Tab).
 
 all_({ok, {K,_,_} = Obj}, Tab) ->
-    [Obj | all_(kvdb:next(instance_(), data, K), Tab)];
+    [Obj | all_(kvdb:next(instance_(), Tab, K), Tab)];
 all_(done, _) ->
     [].
 
