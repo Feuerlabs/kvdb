@@ -71,7 +71,6 @@
 -export([open/1, open/2, close/0, options/1,
 	 add_table/1, add_table/2]).
 
-
 -type key() :: binary().
 -type attrs() :: [{atom(), any()}].
 -type data() :: binary().
@@ -105,18 +104,37 @@ options(File) ->
      {tables, [data]},
      {encoding, {raw,term,raw}}].
 
+-spec add_table(kvdb:table()) -> ok.
+%% @equiv add_table(T, [])
+%%
 add_table(T) ->
     add_table(T, []).
 
+-spec add_table(kvdb:table(), kvdb:options()) -> ok.
+%% @doc Adds a table to the `kvdb_conf' database. By default, `kvdb_conf'
+%% uses a table called `data', which is created when the database is first
+%% created. Additional tables can opt for different types of indexing, or
+%% encoding of the `Value' part. The `Key' part must always be `raw', since
+%% the `kvdb_conf' API requires the keys to be of type `binary()', and the
+%% object structure must be `{Key, Attributes, Value}'. The default encoding
+%% is `{raw, term, raw}'.
+%%
+%% (While it is of course possible to store binary keys with any type of
+%% encoding, enforcing `raw' encoding ensures that this restriction is not
+%% subverted through the normal `kvdb' API).
+%%
+%% All other table options supported by {@link kvdb:add_table/3} are also
+%% supported here.
+%% @end
 add_table(T, Opts) ->
-    %% Currently, we don't check options. The representation must be
-    %% {Key, Attrs, Value} for the kvdb_conf API to work.
     Opts1 =
 	case lists:keyfind(encoding, 1, Opts) of
 	    false ->
 		[{encoding, {raw,term,raw}}|Opts];
-	    _ ->
-		Opts
+	    {raw,_,_} ->
+		Opts;
+	    Other ->
+		error({illegal_encoding, Other})
 	end,
     kvdb:add_table(instance_(), T, Opts1).
 
@@ -139,14 +157,16 @@ read(Tab, Key) when is_binary(Key) ->
 -spec write(conf_obj()) -> ok.
 %% @doc Writes a configuration object into the database.
 %%
-%% Each node or leaf in the tree is stored as a separate object, so updating or inserting
-%% a node or leaf in the tree is a very cheap operation.
+%% Each node or leaf in the tree is stored as a separate object, so updating
+%% or inserting a node or leaf in the tree is a very cheap operation.
+%%
+%% Note that the `kvdb_conf' API only accepts keys of type `binary()',
+%% even though it allows kvdb_conf tables to select a different key encoding.
 %% @end
-write({K, As, Data} = Obj) when is_binary(K), is_list(As), is_binary(Data) ->
+write({K, _As, _Data} = Obj) when is_binary(K) ->
     write(data, Obj).
 
-write(Tab, {K, As, Data} = Obj) when
-      is_binary(K), is_list(As), is_binary(Data) ->
+write(Tab, {K, _As, _Data} = Obj) when is_binary(K) ->
     case kvdb:put(instance_(), Tab, Obj) of
 	ok ->
 	    ok;
@@ -191,13 +211,13 @@ all_(done, _) ->
 
 first() -> first(data).
 last () -> last(data).
-next(K) -> next(data, K).
-prev(K) -> prev(data, K).
+next(K) when is_binary(K) -> next(data, K).
+prev(K) when is_binary(K) -> prev(data, K).
 
 first(Tab) -> kvdb:first(instance_(), Tab).
 last (Tab) -> kvdb:last(instance_(), Tab).
-next(Tab, K) -> kvdb:next(instance_(), Tab, K).
-prev(Tab, K) -> kvdb:prev(instance_(), Tab, K).
+next(Tab, K) when is_binary(K) -> kvdb:next(instance_(), Tab, K).
+prev(Tab, K) when is_binary(K) -> kvdb:prev(instance_(), Tab, K).
 
 first_tree() ->
     first_tree(data).
@@ -222,10 +242,10 @@ last_tree(Tab) ->
 	    []
     end.
 
-next_tree(K) ->
+next_tree(K) when is_binary(K) ->
     next_tree(data, K).
 
-next_tree(Tab, K) ->
+next_tree(Tab, K) when is_binary(K) ->
     case next_at_level(Tab, K) of
 	{ok, Next} ->
 	    read_tree(Tab, Next);
@@ -233,10 +253,10 @@ next_tree(Tab, K) ->
 	    []
     end.
 
-next_at_level(K) ->
+next_at_level(K) when is_binary(K) ->
     next_at_level(data, K).
 
-next_at_level(Tab, K) ->
+next_at_level(Tab, K) when is_binary(K) ->
     Len = length(split_key(K)),
     Sz = byte_size(K),
     case next(Tab, << K:Sz/binary, $+ >>) of
@@ -270,10 +290,10 @@ first_top_key(Tab) ->
 %% This function does a prefix match on the configuration database, and builds a tree
 %% from the result. The empty binary will result in the whole tree being built.
 %% @end
-read_tree(Prefix) ->
+read_tree(Prefix) when is_binary(Prefix) ->
     read_tree(data, Prefix).
 
-read_tree(Tab, Prefix) ->
+read_tree(Tab, Prefix) when is_binary(Prefix) ->
     {Objs,_} = kvdb:prefix_match(instance_(), Tab, Prefix, infinity),
     make_tree(Objs).
 
