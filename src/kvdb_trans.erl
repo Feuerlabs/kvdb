@@ -85,12 +85,13 @@ require(#kvdb_ref{tref = TRef} = Ref, F) when is_function(F, 1) ->
 	    end
     end.
 
-run(#kvdb_ref{schema = Schema} = KR0, F) when is_function(F,1) ->
+run(#kvdb_ref{schema = Schema, db = Db0} = KR0, F) when is_function(F,1) ->
     %% - find the name of the original DB
     %% - use the schema of the current level
     Name = name(KR0),  %% finds the original name
     TRef = make_ref(),
-    {ok, DbE} = kvdb_ets:open("trans", []),
+    #db{encoding = Enc0} = Db0,
+    {ok, DbE} = kvdb_ets:open("trans", [{encoding, Enc0}]),
     KR1 = #kvdb_ref{mod = kvdb_ets, db = DbE},
     K = #kvdb_ref{name = Name, schema = Schema,
 		  mod = ?MODULE, tref = TRef,

@@ -185,19 +185,10 @@ close(#db{ref = Ets} = Db) ->
 
 %% flush? to do a save?
 
-add_table(#db{} = Db, Table, Opts) when is_list(Opts) ->
+add_table(#db{encoding = Enc0} = Db, Table, Opts) when is_list(Opts) ->
     TabR0 = check_options(Opts, Db, #table{name = Table}),
-    TabR =
-	case {lists:keyfind(type,1,Opts),
-	      lists:keyfind(encoding,1,Opts)} of
-	    {{_,T}, false} when T==fifo;
-				T==lifo;
-				element(1,T)==fifo;
-				element(1,T)==lifo ->
-		TabR0#table{encoding = {sext,sext,sext}};
-	    _ ->
-		TabR0
-	end,
+    Enc = proplists:get_value(encoding, Opts, Enc0),
+    TabR = TabR0#table{encoding = Enc},
     add_table(Db, Table, TabR);
 add_table(Db, Table, #table{} = TabR) ->
     case schema_lookup(Db, {table, Table}, undefined) of

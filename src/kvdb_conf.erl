@@ -41,6 +41,8 @@
 	 delete_all/2,      %% (Tab, Prefix)
 	 read_tree/1,       %% (Key) -> (data, Key)
 	 read_tree/2,       %% (Tab, Key)
+	 write_tree/2,      %% (Parent, Tree) -> (data, Parent, Tree)
+	 write_tree/3,      %% (Tab, Parent, Tree)
 	 store_tree/1,      %% (Tree) -> (data, Tree)
 	 store_tree/2,      %% (Tab, Tree)
 	 all/0,             %% () -> all(data)
@@ -66,7 +68,14 @@
 	 make_tree/1,
 	 flatten_tree/1,
 	 split_key/1,
-	 join_key/1]).
+	 join_key/1,
+	 list_key/2,
+	 is_list_key/1,
+	 encode_id/1,
+	 decode_id/1,
+	 escape_key/1,
+	 unescape_key/1,
+	 escape_prefix/1]).
 
 -export([open/1, open/2, close/0, options/1,
 	 add_table/1, add_table/2]).
@@ -77,6 +86,36 @@
 -type conf_tree() :: [conf_node() | conf_obj()].
 -type conf_obj() :: {key(), attrs(), data()}.
 -type conf_node() :: {key(), attrs(), data(), conf_tree()}.
+
+
+%% Macros for kvdb key escaping
+%%
+%% fixme: bitmap version is actually not that fast as I tought
+%% break even is plenty of tests.
+%%
+-define(bm(A,B), (((1 bsl (((B)-(A))+1))-1) bsl (A))).
+
+-define(bit(A),  (1 bsl (A))).
+
+-define(is_set(BM,A), ((((BM) bsr (A)) band 1) =:= 1)).
+
+-define(bm_lower,   ?bm($a,$z)).
+-define(bm_upper,   ?bm($A,$Z)).
+-define(bm_digit,   ?bm($0,$9)).
+-define(bm_xdigit,  (?bm($0,$9) bor ?bm($A,$F) bor ?bm($a,$f))).
+-define(bm_alpha,   (?bm($A,$Z) bor ?bm($a,$z))).
+-define(bm_alnum,   (?bm_alpha bor ?bm_digit)).
+-define(bm_wsp,     (?bit($\s) bor ?bit($\t))).
+-define(bm_space,   (?bm_wsp bor ?bit($\r) bor ?bit($\n))).
+
+-define(bm_id1, (?bm_alpha bor ?bit($_))).
+-define(bm_id2, (?bm_id1 bor ?bm_digit bor ?bit($.) bor ?bit($-))).
+-define(bm_id3, (?bm_id1 bor ?bm_digit bor ?bit($.) bor ?bit($-) bor ?bit($:))).
+
+-define(is_id1(X), ?is_set(?bm_id1,(X))).
+-define(is_id2(X), ?is_set(?bm_id2,(X))).
+-define(is_id3(X), ?is_set(?bm_id3,(X))).
+
 
 instance_() ->
     case get(kvdb_conf) of
@@ -91,18 +130,25 @@ open(File, Options) ->
     case proplists:lookup(name, Options) of
 	none ->
 	    put(kvdb_conf,?MODULE),
-	    kvdb:open_db(?MODULE, Options++options(File));
+	    kvdb:open(?MODULE, Options++options(File, Options));
 	{name,Name} ->
 	    put(kvdb_conf,Name),
 	    Options1 = proplists:delete(name, Options),
-	    kvdb:open_db(Name, Options1++options(File))
+	    kvdb:open(Name, Options1++options(File, Options))
     end.
 
+options(undefined) ->
+    options_();
 options(File) ->
-    [{file, File},
-     {backend, sqlite},
+    [{file, File}|options_()].
+
+options_() ->
+    [{backend, sqlite},
      {tables, [data]},
      {encoding, {raw,term,raw}}].
+
+options(File, Opts) ->
+    [O || {K,_} = O <- options(File), not lists:keymember(K,1,Opts)].
 
 -spec add_table(kvdb:table()) -> ok.
 %% @equiv add_table(T, [])
@@ -127,15 +173,16 @@ add_table(T) ->
 %% supported here.
 %% @end
 add_table(T, Opts) ->
-    Opts1 =
-	case lists:keyfind(encoding, 1, Opts) of
-	    false ->
-		[{encoding, {raw,term,raw}}|Opts];
-	    {raw,_,_} ->
-		Opts;
-	    Other ->
-		error({illegal_encoding, Other})
-	end,
+    {Enc, Opts1} = case lists:keyfind(encoding, 1, Opts) of
+		       {_, E} -> {E, Opts};
+		       false ->
+			   Edef = kvdb:info(instance_(), encoding),
+			   {Edef, [{encoding, Edef}|Opts]}
+		   end,
+    case Enc of
+	{raw,_,_} -> ok;
+	Other -> error({illegal_encoding, [T, Other]})
+    end,
     kvdb:add_table(instance_(), T, Opts1).
 
 close() ->
@@ -186,6 +233,7 @@ delete(K) when is_binary(K) ->
 delete(Tab, K) when is_binary(K) ->
     kvdb:delete(instance_(), Tab, K).
 
+
 delete_all(Prefix) when is_binary(Prefix) ->
     delete_all(data, Prefix).
 
@@ -216,6 +264,7 @@ prev(K) when is_binary(K) -> prev(data, K).
 
 first(Tab) -> kvdb:first(instance_(), Tab).
 last (Tab) -> kvdb:last(instance_(), Tab).
+
 next(Tab, K) when is_binary(K) -> kvdb:next(instance_(), Tab, K).
 prev(Tab, K) when is_binary(K) -> kvdb:prev(instance_(), Tab, K).
 
@@ -236,7 +285,7 @@ last_tree() ->
 last_tree(Tab) ->
     case last(Tab) of
 	{ok, {K,_,_}} ->
-	    Top = hd(split_key(K)),
+	    Top = hd(raw_split_key(K)),
 	    read_tree(Tab, Top);
 	done ->
 	    []
@@ -257,15 +306,15 @@ next_at_level(K) when is_binary(K) ->
     next_at_level(data, K).
 
 next_at_level(Tab, K) when is_binary(K) ->
-    Len = length(split_key(K)),
+    Len = length(raw_split_key(K)),
     Sz = byte_size(K),
     case next(Tab, << K:Sz/binary, $+ >>) of
 	{ok, {Next,_,_}} ->
-	    case length(SplitNext = split_key(Next)) of
+	    case length(SplitNext = raw_split_key(Next)) of
 		Len ->
 		    {ok, Next};
 		L when L > Len ->
-		    {ok, join_key(lists:sublist(SplitNext, 1, Len))};
+		    {ok, raw_join_key(lists:sublist(SplitNext, 1, Len))};
 		_ ->
 		    done
 	    end;
@@ -294,7 +343,8 @@ read_tree(Prefix) when is_binary(Prefix) ->
     read_tree(data, Prefix).
 
 read_tree(Tab, Prefix) when is_binary(Prefix) ->
-    {Objs,_} = kvdb:prefix_match(instance_(), Tab, Prefix, infinity),
+    {Objs,_} = kvdb:prefix_match(instance_(), Tab,
+				 escape_prefix(Prefix), infinity),
     make_tree(Objs).
 
 -spec make_tree([conf_obj()]) -> conf_tree().
@@ -314,6 +364,10 @@ split_key_part({K,A,V}) ->
 %% @end
 %%
 split_key(K) when is_binary(K) ->
+    [decode_list_key(Id) || Id <- re:split(K, "\\*", [{return,binary}])].
+
+%% Used when we don't care about escaping/unescaping, or know it doesn't matter.
+raw_split_key(K) when is_binary(K) ->
     re:split(K, "\\*", [{return,binary}]).
 
 -spec join_key([binary()]) -> binary().
@@ -324,12 +378,159 @@ split_key(K) when is_binary(K) ->
 %% Example: `join_key([<<"a">>, <<"b">>, <<"c">>]) -> <<"a*b*c">>'
 %% @end
 %%
-join_key([H|T]) ->
+join_key([{K,I}|T]) when is_binary(K), is_integer(I) ->
+    join_key(T, list_key(K,I));
+join_key([H|T]) when is_binary(H) ->
+    join_key(T, encode_id(H));
+join_key([]) ->
+    <<>>.
+
+join_key([{K,I}|T], Acc) when is_binary(K), is_integer(I) ->
+    join_key(T, <<Acc/binary, "*", (list_key(K,I))/binary>>);
+join_key([H|T], Acc) ->
+    join_key(T, <<Acc/binary, "*", (encode_id(H))/binary>>);
+join_key([], Acc) ->
+    Acc.
+
+
+
+%% Used when we don't care about escaping/unescaping, or know it doesn't matter.
+raw_join_key([H|T]) when is_binary(H) ->
     Rest = << <<"*", B/binary>> || <<B/binary>> <- T >>,
     << H/binary, Rest/binary >>.
 
+escape_key(K) ->
+    join_key(split_key(K)).
+
+unescape_key(K) ->
+    [H|T] = split_key(K),
+    iolist_to_binary([H | [[$*,X] || X <- T]]).
+
+escape_prefix(<<>>) -> <<>>;
+escape_prefix(P) ->
+    escape_key(P).
+
+%% Encoding users @ as an escape character followed by the escaped char
+%% hex-coded (e.g. "@" -> "@40", "/" -> "@2F"). In order to know that the
+%% id has been encoded - so we don't encode it twice - we prepend a '='
+%% to the encoded id. Since '=' lies between ASCII numbers and letters
+%% (just as '@' does), it won't upset the kvdb sort order.
+%%
+%% As a consequence, no unescaped ID string may begin with '='.
+%%
+encode_id(L) when is_list(L) ->
+    encode_id(list_to_binary(L));
+encode_id(<<$=, _/binary>> = Enc) ->
+    Enc;
+encode_id(I) when is_integer(I) ->
+    encode_id(list_to_binary(integer_to_list(I)));
+encode_id(Bin) when is_binary(Bin) ->
+    Enc = << <<(id_char(C))/binary>> || <<C>> <= Bin >>,
+    <<$=, Enc/binary>>.
+
+decode_id(<<$=, Enc/binary>>) ->
+    decode_id_(Enc);
+decode_id(Bin) when is_binary(Bin) ->
+    Bin.
+
+decode_id_(<<$@, A, B, Rest/binary>>) ->
+    <<(list_to_integer([A,B], 16)):8/integer, (decode_id_(Rest))/binary>>;
+decode_id_(<<C, Rest/binary>>) ->
+    <<C, (decode_id_(Rest))/binary>>;
+decode_id_(<<>>) ->
+    <<>>.
+
+decode_list_key(<<$=, Enc/binary>>) ->
+    decode_list_key_(Enc);
+decode_list_key(Bin) ->
+    case is_list_key(Bin) of
+	{true, Base, Pos} ->
+	    {Base, Pos};
+	false ->
+	    Bin
+    end.
+
+%% very similar to decode_id_/1 above.
+decode_list_key_(K) ->
+    decode_list_key_(K, <<>>).
+
+decode_list_key_(<<"@", A, B, Rest/binary>>, Acc) ->
+    decode_list_key_(
+      Rest, <<Acc/binary, (list_to_integer([A,B], 16)):8/integer>>);
+decode_list_key_(<<"[", Rest/binary>>, Acc) ->
+    Sz = byte_size(Rest),
+    N = Sz - 1,
+    case Rest of
+	<<Pb:N/binary, "]">> ->
+	    {Acc, list_to_integer(binary_to_list(Pb))};
+	_ ->
+	    decode_list_key_(Rest, <<Acc/binary, "]">>)
+    end;
+decode_list_key_(<<C, Rest/binary>>, Acc) ->
+    decode_list_key_(Rest, << Acc/binary, C:8 >>);
+decode_list_key_(<<>>, Acc) ->
+    Acc.
+
+
+id_char(C) ->
+    case ?is_id2(C) of
+	true -> <<C>>;
+	false when C =< 255 ->
+	    <<$@, (to_hex(C bsr 4)):8/integer, (to_hex(C)):8/integer >>
+    end.
+
+to_hex(C) ->
+    element((C band 16#f)+1, {$0,$1,$2,$3,$4,$5,$6,$7,$8,$9,
+			      $A,$B,$C,$D,$E,$F}).
+
+
+list_key(Name, Pos) when is_binary(Name), is_integer(Pos), Pos >= 0 ->
+    %% IX = list_to_binary(integer_to_list(Pos, 19)),
+    IX = list_to_binary(pos_key(Pos)),
+    <<(encode_id(Name))/binary, "[", IX/binary, "]">>.
+
+pos_key(ID) when is_integer(ID), ID >= 0, ID =< 16#ffffffff ->
+    tl(integer_to_list(16#100000000+ID,16));
+pos_key(<<ID:32/integer>>) ->
+    tl(integer_to_list(16#100000000+ID,16)).
+
+
+is_list_key(I) when is_integer(I) -> false;
+is_list_key(K) ->
+    case re:run(K, <<"\\[">>, [global]) of
+	{match, Ps} ->
+	    {P,_} = lists:last(lists:flatten(Ps)),
+	    Sz = byte_size(K),
+	    N = Sz - P -2,
+	    case K of
+		<<Base:P/binary, "[", Ib:N/binary, "]">> ->
+		    Pos = list_to_integer(binary_to_list(Ib), 16),
+		    {true, Base, Pos};
+		_ ->
+		    false
+	    end;
+	_ ->
+	    false
+    end.
+
+
 make_tree_([]) ->
     [];
+make_tree_([{[{B,I} = H], A, V}|Rest]) ->
+    {Rest1, Rest2} = lists:splitwith(fun({[{X,_}|_], _, _}) -> X == B;
+					(_) -> false
+				     end,
+				     Rest),
+    {Children, Next} = children(H, Rest1),
+    case Children of
+	[] ->
+	    [{B,[{I, A, V} | make_tree_i(B,pad_levels(Next))]} |
+	     make_tree_(Rest2)];
+	[_|_] ->
+	    [{B,[{I, A, V, make_tree_(pad_levels(Children))}
+		 | make_tree_i(B, pad_levels(Next))]}
+	     | make_tree_(Rest2)]
+    end;
 make_tree_([{[H], A, V}|Rest]) ->
     {Children, Next} = children(H, Rest),
     case Children of
@@ -341,6 +542,28 @@ make_tree_([{[H], A, V}|Rest]) ->
 make_tree_([{[_,_|_],_,_}|_] = Tree) ->
     make_tree_(pad_levels(Tree)).
 
+make_tree_i(B, [{[{B, I} = H], A, V}|Rest]) ->
+    {Children, Next} = children(H, Rest),
+    case Children of
+	[] ->
+	    [{I, A, V} | make_tree_i(B, Next)];
+	[_|_] ->
+	    [{I, A, V, make_tree_(pad_levels(Children))} |
+	     make_tree_i(B, Next)]
+    end;
+make_tree_i(_, []) ->
+    [].
+
+
+-spec write_tree(_Parent::key(), conf_tree()) -> ok.
+%% @doc Writes a configuration tree under the given parent.
+write_tree(Parent, Tree) ->
+    write_tree(data, Parent, Tree).
+
+write_tree(Table, Parent, Tree) when is_binary(Parent) ->
+    Objs = lists:flatten([flatten_tree(T, Parent) || T <- Tree]),
+    [write(Table, Obj) || Obj <- Objs],
+    ok.
 
 -spec flatten_tree(conf_tree()) -> [conf_obj()].
 %% @doc Converts a configuration tree into an ordered list of configuration objects.
@@ -349,12 +572,29 @@ make_tree_([{[_,_|_],_,_}|_] = Tree) ->
 flatten_tree(Tree) when is_list(Tree) ->
     lists:flatten([flatten_tree(T, <<>>) || T <- Tree]).
 
+flatten_tree({K, C}, Parent) ->
+    C1 = lists:map(fun({I,A,V}) ->
+			   {list_key(K, I), A, V};
+		      ({I,A,V,C1}) ->
+			   {list_key(K, I), A, V, C1}
+		   end, C),
+    [flatten_tree(Ch, Parent) || Ch <- C1];
 flatten_tree({K, A, V}, Parent) ->
-    Key = next_key(Parent, K),
-    [{Key, A, V}];
+    case lists:member({1,1}, A) of
+	true ->
+	    [];
+	false ->
+	    Key = next_key(Parent, K),
+	    [{Key, A, V}]
+    end;
 flatten_tree({K, A, V, C}, Parent) ->
     Key = next_key(Parent, K),
-    [{Key, A, V} | [flatten_tree(Ch, Key) || Ch <- C]].
+    case lists:member({1,1}, A) of
+	false ->
+	    [{Key, A, V} | [flatten_tree(Ch, Key) || Ch <- C]];
+	true  ->
+	    [flatten_tree(Ch, Key) || Ch <- C]
+    end.
 
 %% there may be missing top- or intermediate nodes in the tree.
 %% If so, insert an empty node.
@@ -362,7 +602,7 @@ flatten_tree({K, A, V, C}, Parent) ->
 pad_levels([{[_],_,_}|_] = Children) ->
     Children;
 pad_levels([{[H,_|_],_,_}|_] = Children) ->
-    [{[H], [], <<>>}|Children].
+    [{[H], [{1,1}], <<>>}|Children].
 
 children(H, Objs) ->
     children(H, Objs, []).
@@ -400,5 +640,5 @@ store_node(Tab, {K, Attrs, Data}, Children, Parent) when is_binary(K) ->
 next_key(<<>>, Key) ->
     Key;
 next_key(Parent, Key) ->
-    << Parent/binary, "*", Key/binary >>.
-
+    join_key([Parent,Key]).
+    %% << Parent/binary, "*", Key/binary >>.
