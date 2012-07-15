@@ -84,9 +84,10 @@
 -type attrs() :: [{atom(), any()}].
 -type data() :: binary().
 -type conf_tree() :: [conf_node() | conf_obj()].
--type conf_obj() :: {key(), attrs(), data()}.
--type conf_node() :: {key(), attrs(), data(), conf_tree()}.
-
+-type node_key()  :: key() | integer().
+-type conf_obj() :: {node_key(), attrs(), data()}.
+-type conf_node() :: {node_key(), attrs(), data(), conf_tree()}
+		     | {node_key(), conf_tree()}.
 
 %% Macros for kvdb key escaping
 %%
@@ -531,6 +532,26 @@ make_tree_([{[{B,I} = H], A, V}|Rest]) ->
 		 | make_tree_i(B, pad_levels(Next))]}
 	     | make_tree_(Rest2)]
     end;
+make_tree_([{B,I}|Rest]) when is_binary(B), is_integer(I) ->
+    {Rest1, Rest2} = lists:splitwith(fun({[{X,_}|_], _, _}) -> X == B;
+					(_) -> false
+				     end,
+				     Rest),
+    {Children, Next} = children({B,I}, Rest1),
+    case Children of
+	[_|_] ->
+	    [{B, [{I, make_tree_(pad_levels(Children))}
+		  | make_tree_i(B, pad_levels(Next))]}
+	     | make_tree_(Rest2)]
+    end;
+make_tree_([H | Rest]) when is_binary(H) ->
+    {Children, Next} = children(H, Rest),
+    case Children of
+	[] ->
+	    make_tree_(Next);
+	[_|_] ->
+	    [{H, make_tree_(pad_levels(Children))} | make_tree_(Next)]
+    end;
 make_tree_([{[H], A, V}|Rest]) ->
     {Children, Next} = children(H, Rest),
     case Children of
@@ -542,6 +563,12 @@ make_tree_([{[H], A, V}|Rest]) ->
 make_tree_([{[_,_|_],_,_}|_] = Tree) ->
     make_tree_(pad_levels(Tree)).
 
+make_tree_i(B, [{B, I} = H|Rest]) ->
+    {Children, Next} = children(H, Rest),
+    case Children of
+	[_|_] ->
+	    [{I, make_tree_(pad_levels(Children))} | make_tree_i(B, Next)]
+    end;
 make_tree_i(B, [{[{B, I} = H], A, V}|Rest]) ->
     {Children, Next} = children(H, Rest),
     case Children of
@@ -573,10 +600,12 @@ flatten_tree(Tree) when is_list(Tree) ->
     lists:flatten([flatten_tree(T, <<>>) || T <- Tree]).
 
 flatten_tree({K, C}, Parent) ->
-    C1 = lists:map(fun({I,A,V}) ->
-			   {list_key(K, I), A, V};
-		      ({I,A,V,C1}) ->
-			   {list_key(K, I), A, V, C1}
+    C1 = lists:map(fun(X) when is_integer(element(1,X)) ->
+			   Kl = list_key(K, element(1,X)),
+			   setelement(1, X, Kl);
+		      (X) when is_binary(element(1, X)) ->
+			   K1 = next_key(K, element(1, X)),
+			   setelement(1, X, K1)
 		   end, C),
     [flatten_tree(Ch, Parent) || Ch <- C1];
 flatten_tree({K, A, V}, Parent) ->
@@ -602,7 +631,9 @@ flatten_tree({K, A, V, C}, Parent) ->
 pad_levels([{[_],_,_}|_] = Children) ->
     Children;
 pad_levels([{[H,_|_],_,_}|_] = Children) ->
-    [{[H], [{1,1}], <<>>}|Children].
+    [H | Children].
+%% pad_levels([{[H,_|_],_,_}|_] = Children) ->
+%%     [{[H], [{1,1}], <<>>}|Children].
 
 children(H, Objs) ->
     children(H, Objs, []).
