@@ -68,9 +68,10 @@
 	 read_tree/2,       %% (Tab, Key)
 	 write_tree/2,      %% (Parent, Tree) -> (data, Parent, Tree)
 	 write_tree/3,      %% (Tab, Parent, Tree)
+	 get_root/1,        %% (ConfTree)
 	 shift_root/2,      %% (up | down | top | bottom, #conf_tree{})
-	 store_tree/1,      %% (Tree) -> (data, Tree)
-	 store_tree/2,      %% (Tab, Tree)
+	 %% store_tree/1,      %% (Tree) -> (data, Tree)
+	 %% store_tree/2,      %% (Tab, Tree)
 	 prefix_match/1,    %% (Prefix) -> (data, Prefix)
 	 prefix_match/2,    %% (Tab, Prefix)
 	 all/0,             %% () -> all(data)
@@ -99,25 +100,28 @@
 	 join_key/1,
 	 join_key/2,
 	 list_key/2,
-	 is_list_key/1,
-	 encode_id/1,
-	 decode_id/1,
+	 %% is_list_key/1,
+	 escape_key_part/1,
+	 unescape_key_part/1,
 	 escape_key/1,
-	 unescape_key/1,
-	 escape_prefix/1]).
+	 unescape_key/1]).
 
--export([open/1, open/2, close/0, options/1,
+-export([open/1, open/2, close/0, % options/1,
 	 add_table/1, add_table/2]).
 
 -include("kvdb_conf.hrl").
-%% -type key() :: binary().
-%% -type attrs() :: [{atom(), any()}].
-%% -type data() :: binary().
-%% -type conf_tree() :: [conf_node() | conf_obj()].
-%% -type node_key()  :: key() | integer().
-%% -type conf_obj() :: {node_key(), attrs(), data()}.
-%% -type conf_node() :: {node_key(), attrs(), data(), conf_tree()}
-%% 		     | {node_key(), conf_tree()}.
+
+-type key_part()  :: binary() | {binary(), integer()}.
+-type key()       :: binary().
+-type attrs()     :: [{atom(), any()}].
+-type value()     :: any().
+-type conf_tree() :: [conf_node() | conf_obj()].
+-type node_key()  :: key() | integer().
+-type conf_obj()  :: {node_key(), attrs(), value()}.
+-type conf_node() :: {node_key(), attrs(), value(), conf_tree()}
+		   | {node_key(), conf_tree()}.
+
+-export_types([key_part/0, key/0, attrs/0, value/0, conf_obj/0]).
 
 %% Macros for kvdb key escaping
 %%
@@ -335,7 +339,7 @@ delete_all(Prefix) when is_binary(Prefix) ->
 %% @doc Deletes all objects with a key matching `Prefix'. Always returns `ok'.
 delete_all(Tab, Prefix) when is_binary(Prefix) ->
     delete_all_(Tab, kvdb:prefix_match(
-		       instance_(), Tab, escape_prefix(Prefix), 100)).
+		       instance_(), Tab, escape_key(Prefix), 100)).
 
 delete_all_(Tab, {Objs, Cont}) ->
     _ = [delete(Tab, K) || {K,_,_} <- Objs],
@@ -356,14 +360,22 @@ prefix_match(Prefix) ->
 %% `kvdb_conf' escaping rules.
 %% @end
 prefix_match(Tab, Prefix) ->
-    kvdb:prefix_match(instance_(), Tab, escape_prefix(Prefix)).
+    kvdb:prefix_match(instance_(), Tab, escape_key(Prefix)).
 
 -spec all() -> [conf_obj()].
 %% @equiv all(<<"data">>)
 all() ->
     all(data).
 
-
+-spec all(kvdb:table()) -> [conf_obj()].
+%% @doc Returns a list of all configuration objects in the given table.
+%%
+%% Note: this function returns <em>all</em> objects in one sweep. It doesn't
+%% return a subset together with a continuation. Thus, this function is more
+%% suited to debugging (given that the data set is small!). For safer
+%% semantics, see {@link prefix_match/2} - An equivalent version to this
+%% function would be `prefix_match(Tab, <<>>)'.
+%% @end
 all(Tab) ->
     all_(kvdb:first(instance_(), Tab), Tab).
 
@@ -372,43 +384,100 @@ all_({ok, {K,_,_} = Obj}, Tab) ->
 all_(done, _) ->
     [].
 
+-spec first() -> {ok, conf_obj()} | {error, not_found}.
+%% @equiv first(<<"data">>)
 first() -> first(data).
+
+-spec last() -> {ok, conf_obj()} | {error, not_found}.
+%% @equiv last(<<"data">>)
 last () -> last(data).
+
+-spec next(kvdb:key()) -> {ok, conf_obj()} | {error, not_found}.
+%% @equiv next(<<"data">>, K)
 next(K) when is_binary(K) -> next(data, K).
+
+-spec prev(kvdb:key()) -> {ok, conf_obj()} | {error, not_found}.
+%% @equiv prev(<<"data">>, K)
 prev(K) when is_binary(K) -> prev(data, K).
 
+-spec first(kvdb:table()) -> {ok, conf_obj()} | {error, not_found}.
+%% @doc Returns the first object in `Tab', if there is one; otherwise
+%% `{error, not_found}'.
+%% @end
 first(Tab) -> kvdb:first(instance_(), Tab).
+
+-spec last(kvdb:table()) -> {ok, conf_obj()} | {error, not_found}.
+%% @doc Returns the last object in `Tab', if there is one; otherwise
+%% `{error, not_found}'.
+%% @end
 last (Tab) -> kvdb:last(instance_(), Tab).
 
+-spec next(kvdb:table(), kvdb:key()) -> {ok, conf_obj()} | {error, not_found}.
+%% @doc Returns the next object in `Tab' following the key `K',
+%% if there is one; otherwise `{error, not_found}'.
+%% @end
 next(Tab, K) when is_binary(K) -> kvdb:next(instance_(), Tab, escape_key(K)).
+
+-spec prev(kvdb:table(), kvdb:key()) -> {ok, conf_obj()} | {error, not_found}.
+%% @doc Returns the previous object in `Tab' before the key `K',
+%% if there is one; otherwise `{error, not_found}'.
+%% @end
 prev(Tab, K) when is_binary(K) -> kvdb:prev(instance_(), Tab, escape_key(K)).
 
+-spec first_tree() -> #conf_tree{} | [].
+%% @equiv first_tree(<<"data">>)
 first_tree() ->
     first_tree(data).
 
-first_tree(Tab) ->
-    case first(Tab) of
+-spec first_tree(kvdb:table()) -> #conf_tree{} | [].
+%% @doc Reads the first config tree from `Table', returns `[]' if `Table' empty.
+%%
+%% This function returns a `#conf_tree{}' record which, among other things,
+%% can be passed to {@link write_tree/3} or {@link flatten_tree/1}.
+%% @end
+first_tree(Table) ->
+    case first(Table) of
 	{ok, {First, _, _}} ->
-	    read_tree(Tab, First);
+	    read_tree(Table, First);
 	done ->
 	    []
     end.
 
+-spec last_tree() -> #conf_tree{} | [].
+%% @equiv last_tree(<<"data">>)
 last_tree() ->
     last_tree(data).
 
-last_tree(Tab) ->
-    case last(Tab) of
+-spec last_tree(kvdb:table()) -> #conf_tree{} | [].
+%% @doc Reads the last config tree from `Table', returns `[]' if `Table' empty.
+%%
+%% This function returns a `#conf_tree{}' record which, among other things,
+%% can be passed to {@link next_tree/2}, {@link write_tree/3} or
+%% {@link flatten_tree/1}.
+%% @end
+last_tree(Table) ->
+    case last(Table) of
 	{ok, {K,_,_}} ->
 	    Top = hd(raw_split_key(K)),
-	    read_tree(Tab, Top);
+	    read_tree(Table, Top);
 	done ->
 	    []
     end.
 
-next_tree(K) when is_binary(K) ->
+-spec next_tree(kvdb:key()) -> #conf_tree{} | [].
+%% @equiv next_tree(<<"data">>, K)
+next_tree(K) when is_binary(K); is_record(K, conf_tree) ->
     next_tree(data, K).
 
+-spec next_tree(kvdb:table(), kvdb:key() | #conf_tree{}) -> #conf_tree{} | [].
+%% @doc Reads the next config tree in `Table' after `K', returns `[]' not found.
+%%
+%% This function returns a `#conf_tree{}' record which, among other things,
+%% can be passed to {@link write_tree/3} or {@link flatten_tree/1}.
+%%
+%% @end
+next_tree(Tab, #conf_tree{root = R}) ->
+    next_tree(Tab, R);
 next_tree(Tab, K) when is_binary(K) ->
     case next_at_level(Tab, K) of
 	{ok, Next} ->
@@ -417,9 +486,13 @@ next_tree(Tab, K) when is_binary(K) ->
 	    []
     end.
 
+-spec next_at_level(kvdb:key()) -> {ok, kvdb:key()} | done.
+%% @equiv next_at_level(<<"data">>, K)
 next_at_level(K) when is_binary(K) ->
     next_at_level(data, K).
 
+-spec next_at_level(kvdb:table(), kvdb:key()) -> {ok, kvdb:key()} | done.
+%% @doc Skips to the next sibling at the same level in the subtree.
 next_at_level(Tab, K) when is_binary(K) ->
     Len = length(raw_split_key(K)),
     Sz = byte_size(K),
@@ -437,32 +510,41 @@ next_at_level(Tab, K) when is_binary(K) ->
 	    done
     end.
 
+-spec first_top_key() -> {ok, key()} | done.
+%% @equiv first_top_key(<<"data">>)
 first_top_key() ->
     first_top_key(data).
 
-first_top_key(Tab) ->
-    case kvdb:first(instance_(), Tab) of
+-spec first_top_key(kvdb:table()) -> {ok, key()} | done.
+%% @doc Returns the first top-level key in `Table', or `done' if empty.
+first_top_key(Table) ->
+    case kvdb:first(instance_(), Table) of
 	{ok, Obj} ->
 	    {ok, element(1, Obj)};
 	_ ->
 	    done
     end.
 
--spec read_tree(Prefix::binary()) -> conf_tree().
-%% @doc Read a configuration (sub-)tree matching Prefix.
-%%
-%% This function does a prefix match on the configuration database, and builds a tree
-%% from the result. The empty binary will result in the whole tree being built.
-%% @end
+-spec read_tree(Prefix::binary()) -> #conf_tree{} | [].
+%% @equiv read_tree(<<"data">>, Prefix)
 read_tree(Prefix) when is_binary(Prefix) ->
     read_tree(data, Prefix).
 
+-spec read_tree(kvdb:table(), binary()) -> #conf_tree{} | [].
+%% @doc Read a configuration (sub-)tree matching Prefix.
+%%
+%% This function does a prefix match on the configuration database, and builds
+%% a tree from the result. The empty binary will result in the whole table
+%% being built as a tree. The returned tree is `[]' if nothing was found, or
+%% a `#conf_tree{}' record, which can be passed to e.g. {@link write_tree/3},
+%% {@link flatten_tree/1}, etc.
+%% @end
 read_tree(Tab, Prefix) when is_binary(Prefix) ->
     {Objs,_} = kvdb:prefix_match(instance_(), Tab,
-				 escape_prefix(Prefix), infinity),
+				 escape_key(Prefix), infinity),
     make_tree(Objs).
 
--spec make_tree([conf_obj()]) -> conf_tree().
+-spec make_tree([conf_obj()]) -> #conf_tree{}.
 %% @doc Converts an ordered list of configuration objects into a configuration tree.
 %% @end
 %%
@@ -483,6 +565,22 @@ normalize_tree([{K,L}], #conf_tree{root = R} = CT) when
 normalize_tree(T, CT) ->
     CT#conf_tree{tree = T}.
 
+-spec get_root(#conf_tree{}) -> key().
+%% @doc Returns the root key of the given config tree.
+get_root(#conf_tree{root = R}) ->
+    R.
+
+-spec shift_root(up|down|top|bottom, #conf_tree{}) -> #conf_tree{} | error.
+%% @doc Shifts the config tree root upwards or downwards if possible.
+%%
+%% This function allows the root of a config tree to be made longer or shorter,
+%% shifting key parts of the root in or out of the actual tree. For
+%% `shift_root(top, Tree)', the root will be shifted into the tree until the
+%% remaining root is `<<>>'. For `shift_root(bottom, Tree)', the root will be
+%% shifted out of the tree, until it is the longest common prefix for all
+%% child nodes in the tree. If the root cannot be shifted any more in a given
+%% direction, `error' is returned.
+%% @end
 shift_root(up, #conf_tree{root = <<>>}) ->
     error;
 shift_root(up, #conf_tree{root = R, tree = T} = CT) ->
@@ -507,40 +605,15 @@ shift_root_full(Dir, #conf_tree{} = CT) ->
 	    shift_root_full(Dir, NewCT)
     end.
 
-
-
-
-
-
-%% Finding the root key.
-%% Let's consider some small trees (using the escaped form):
-%% (1) [{<<"=a">>, [], <<>>}] - a tree of one; the root is trivially <<"=a">>.
-%% (2) [{<<"=a*=b">>, [], <<>>},{<<"=a*=c">>,[],<<>>}] -
-%%    We can use binary:longest_common_prefix/1 on all the keys; this will
-%%    give us a prefix of <<"=a*=">>, i.e. the actual root (<<"=a">>) isn't
-%%    in fact stored in the database.
-%%
-%% We have two distinct cases:
-%% (1) The root has no children, and thus the LCP is a complete key
-%% (2) The root has children, and our LCP ends with <<"*=">>
-%% get_root_key(Objs) ->
-%%     PfxLen = binary:longest_common_prefix([K || {K,_,_} <- Objs]),
-%%     <<Pfx0:PfxLen/binary, _/binary>> = element(1,hd(Objs)),
-%%     L = PfxLen -2,
-%%     case Pfx0 of
-%% 	<<Root:L/binary, "*=">> ->
-%% 	    Root;
-%% 	_ ->
-%% 	    Pfx0
-%%     end.
-
 split_key_part({K,A,V}) ->
     {split_key(K), A, V}.
 
--spec split_key(binary()) -> [binary()].
-%% @doc Splits a `kvdb_conf` key into a list of key parts
+-spec split_key(key()) -> [key_part()].
+%% @doc Splits a `kvdb_conf' key into a list of (unescaped) key parts.
 %%
-%% Example: `split_key(<<"a*b*c">>) -> [<<"a">>,<<"b">>,<<"c">>].'
+%% Examples:
+%% `split_key(<<"=a*=b*=c">>) -> [<<"a">>,<<"b">>,<<"c">>].'
+%% `split_key(<<"=a*=b[00000001]*=c">>) -> [<<"a">>,{<<"b">>,1},<<"c">>]'
 %% @end
 %%
 split_key(K) when is_binary(K) ->
@@ -550,33 +623,37 @@ split_key(K) when is_binary(K) ->
 raw_split_key(K) when is_binary(K) ->
     re:split(K, "\\*", [{return,binary}]).
 
--spec join_key([binary()]) -> binary().
-%% @doc Creates a kvdb_conf key out of a list of key parts
+-spec join_key([key_part()]) -> key().
+%% @doc Joins a list of key parts into one key, ensuring all parts are escaped.
 %%
-%% (See {@link split_key/1}).
-%%
-%% Example: `join_key([<<"a">>, <<"b">>, <<"c">>]) -> <<"a*b*c">>'
+%% A key part can either be a `binary()' or a `{binary(), integer()}' tuple.
+%% The tuple construct corresponds to a "list key", where the first element
+%% is the base key, and the second, a list index.
+%% For example, `{<<"port">>, 1}' is expanded to `<<"port[00000001]">>' and
+%% then escaped.
 %% @end
-%%
 join_key([{K,I}|T]) when is_binary(K), is_integer(I) ->
     join_key_(T, list_key(K,I));
 join_key([H|T]) when is_binary(H) ->
-    join_key_(T, encode_id(H));
+    join_key_(T, escape_key_part(H));
 join_key([]) ->
     <<>>.
 
-join_key(<<>>, K) -> encode_id(K);
-join_key(K, <<>>) -> encode_id(K);
+-spec join_key(key_part(), key_part()) -> key().
+%% @doc Joins two key parts into one key, ensuring both parts are escaped.
+%% See {@link join_key/1}.
+%% @end
+join_key(<<>>, K) -> escape_key_part(K);
+join_key(K, <<>>) -> escape_key_part(K);
 join_key(K1, K2) when is_binary(K1), is_binary(K2) ->
-    <<(encode_id(K1))/binary, "*", (encode_id(K2))/binary>>.
+    <<(escape_key_part(K1))/binary, "*", (escape_key_part(K2))/binary>>.
 
 join_key_([{K,I}|T], Acc) when is_binary(K), is_integer(I) ->
     join_key_(T, <<Acc/binary, "*", (list_key(K,I))/binary>>);
 join_key_([H|T], Acc) ->
-    join_key_(T, <<Acc/binary, "*", (encode_id(H))/binary>>);
+    join_key_(T, <<Acc/binary, "*", (escape_key_part(H))/binary>>);
 join_key_([], Acc) ->
     Acc.
-
 
 
 %% Used when we don't care about escaping/unescaping, or know it doesn't matter.
@@ -584,47 +661,58 @@ raw_join_key([H|T]) when is_binary(H) ->
     Rest = << <<"*", B/binary>> || <<B/binary>> <- T >>,
     << H/binary, Rest/binary >>.
 
+-spec escape_key(key()) -> key().
+%% @doc Escapes a key; leaves it unchanged if already escaped.
+%%
+%% Any key starting with "=" is assumed to be escaped already.
+%%
 escape_key(<<>>) -> <<>>;
 escape_key(<<"=", _/binary>> = K) -> K;
 escape_key(K) ->
     join_key(split_key(K)).
 
+-spec unescape_key(key()) -> key().
+%% @doc Unescapes a key.
+%%
 unescape_key(K) ->
     [H|T] = split_key(K),
     iolist_to_binary([H | [[$*,X] || X <- T]]).
 
-escape_prefix(<<>>) -> <<>>;
-escape_prefix(P) ->
-    escape_key(P).
-
+-spec escape_key_part(key_part()) -> key_part().
+%% @doc Escapes a key part according to `kvdb_conf' escaping rules.
+%%
 %% Encoding users @ as an escape character followed by the escaped char
 %% hex-coded (e.g. "@" -> "@40", "/" -> "@2F"). In order to know that the
 %% id has been encoded - so we don't encode it twice - we prepend a '='
-%% to the encoded id. Since '=' lies between ASCII numbers and letters
+%% to the encoded key part. Since '=' lies between ASCII numbers and letters
 %% (just as '@' does), it won't upset the kvdb sort order.
 %%
-%% As a consequence, no unescaped ID string may begin with '='.
-%%
-encode_id(L) when is_list(L) ->
-    encode_id(list_to_binary(L));
-encode_id(<<$=, _/binary>> = Enc) ->
-    Enc;
-encode_id(I) when is_integer(I) ->
-    encode_id(list_to_binary(integer_to_list(I)));
-encode_id(Bin) when is_binary(Bin) ->
+%% As a consequence, no unescaped key part string may begin with '='.
+%% @end
+escape_key_part(<<$=, _/binary>> = Esc) ->
+    Esc;
+%% escape_key_part(I) when is_integer(I) ->
+%%     escape_key_part(list_to_binary(integer_to_list(I)));
+escape_key_part(Bin) when is_binary(Bin) ->
     Enc = << <<(id_char(C))/binary>> || <<C>> <= Bin >>,
     <<$=, Enc/binary>>.
 
-decode_id(<<$=, Enc/binary>>) ->
-    decode_id_(Enc);
-decode_id(Bin) when is_binary(Bin) ->
+-spec unescape_key_part(key_part()) -> key_part().
+%% @doc Unescapes a key part; leaving it untouched if already escaped.
+%%
+%% See {@link escape_key_part/1}.
+%% @end
+unescape_key_part(<<$=, Enc/binary>>) ->
+    unescape_key_part_(Enc);
+unescape_key_part(Bin) when is_binary(Bin) ->
     Bin.
 
-decode_id_(<<$@, A, B, Rest/binary>>) ->
-    <<(list_to_integer([A,B], 16)):8/integer, (decode_id_(Rest))/binary>>;
-decode_id_(<<C, Rest/binary>>) ->
-    <<C, (decode_id_(Rest))/binary>>;
-decode_id_(<<>>) ->
+unescape_key_part_(<<$@, A, B, Rest/binary>>) ->
+    <<(list_to_integer([A,B], 16)):8/integer,
+      (unescape_key_part_(Rest))/binary>>;
+unescape_key_part_(<<C, Rest/binary>>) ->
+    <<C, (unescape_key_part_(Rest))/binary>>;
+unescape_key_part_(<<>>) ->
     <<>>.
 
 decode_list_key(<<$=, Enc/binary>>) ->
@@ -637,7 +725,7 @@ decode_list_key(Bin) ->
 	    Bin
     end.
 
-%% very similar to decode_id_/1 above.
+%% very similar to unescape_key_part_/1 above.
 decode_list_key_(K) ->
     decode_list_key_(K, <<>>).
 
@@ -671,10 +759,19 @@ to_hex(C) ->
 			      $A,$B,$C,$D,$E,$F}).
 
 
+-spec list_key(binary(), integer()) -> binary().
+%% @doc Creates a "list key" part from a base (binary) and an index (integer).
+%%
+%% List keys are useful for representing list-like data sets. To preserve
+%% sort order, they are encoded as `<<"Base[nnnnnnnn]">>', where Base is the
+%% name of the list, and nnnnnnnn is a zero-padded 8-digit hex number.
+%%
+%% Example: `list_key(<<"port">>, 28) -> <<"=port[0000001C]">>'
+%% @end
 list_key(Name, Pos) when is_binary(Name), is_integer(Pos), Pos >= 0 ->
     %% IX = list_to_binary(integer_to_list(Pos, 19)),
     IX = list_to_binary(pos_key(Pos)),
-    <<(encode_id(Name))/binary, "[", IX/binary, "]">>.
+    <<(escape_key_part(Name))/binary, "[", IX/binary, "]">>.
 
 pos_key(ID) when is_integer(ID), ID >= 0, ID =< 16#ffffffff ->
     tl(integer_to_list(16#100000000+ID,16));
@@ -769,12 +866,20 @@ make_tree_i(_, []) ->
 
 
 -spec write_tree(_Parent::key(), #conf_tree{}) -> ok.
-%% @doc Writes a configuration tree under the given parent.
+%% @equiv write_tree(<<"data">>, Parent, T)
 write_tree(Parent, #conf_tree{} = T) ->
     write_tree_(data, T#conf_tree{root = Parent});
 write_tree(Parent, Tree) ->
     write_tree_(data, #conf_tree{root = Parent, tree = Tree}).
 
+-spec write_tree(kvdb:table(), key(), #conf_tree{}) -> ok.
+%% @doc Writes a configuration tree under the given parent.
+%%
+%% This function inserts a config tree, such as is returned from e.g.
+%% {@link read_tree/3}. The root to insert it under must be made explicit,
+%% but could of course be the same root as in the original tree
+%% (can be retrieved using {@link get_root/1}).
+%% @end
 write_tree(Table, Parent, #conf_tree{} = T) ->
     write_tree_(Table, T#conf_tree{root = Parent});
 write_tree(Table, Parent, Tree) when is_binary(Parent) ->
@@ -840,27 +945,27 @@ children(_, Rest, Acc) ->
 
 
 
--spec store_tree(Tree::conf_tree()) -> ok.
+%% -spec store_tree(Tree::conf_tree()) -> ok.
 %% @doc Store a configuration tree in the database.
 %%
 %% Each node in the tree will be stored as a separate object in the database.
 %%
-store_tree(Tree) when is_list(Tree) ->
-    store_tree(data, Tree).
+%% store_tree(Tree) when is_list(Tree) ->
+%%     store_tree(data, Tree).
 
-store_tree(Tab, Tree) when is_list(Tree) ->
-    [store_tree(Tab, T, <<>>) || T <- Tree],
-    ok.
+%% store_tree(Tab, Tree) when is_list(Tree) ->
+%%     [store_tree(Tab, T, <<>>) || T <- Tree],
+%%     ok.
 
-store_tree(Tab, {_, _, _} = Node, Parent) ->
-    store_node(Tab, Node, [], Parent);
-store_tree(Tab, {K,V,D,C}, Parent) when is_list(C) ->
-    store_node(Tab, {K,V,D}, C, Parent).
+%% store_tree(Tab, {_, _, _} = Node, Parent) ->
+%%     store_node(Tab, Node, [], Parent);
+%% store_tree(Tab, {K,V,D,C}, Parent) when is_list(C) ->
+%%     store_node(Tab, {K,V,D}, C, Parent).
 
-store_node(Tab, {K, Attrs, Data}, Children, Parent) when is_binary(K) ->
-    Key = next_key(Parent, K),
-    write(Tab, {Key, Attrs, Data}),
-    [store_tree(Tab, Child, Key) || Child <- Children].
+%% store_node(Tab, {K, Attrs, Data}, Children, Parent) when is_binary(K) ->
+%%     Key = next_key(Parent, K),
+%%     write(Tab, {Key, Attrs, Data}),
+%%     [store_tree(Tab, Child, Key) || Child <- Children].
 
 
 next_key(<<>>, Key) ->
