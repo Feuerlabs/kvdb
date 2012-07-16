@@ -98,7 +98,7 @@
 
 -export_type([db/0, table/0, int_table_name/0, queue_name/0,
 	      db_ref/0, key/0, value/0, attr_name/0, attr_value/0, attrs/0,
-	      object/0, options/0]).
+	      object/0, options/0, cont/0]).
 
 
 -define(IF_TRANS(Name, Expr1, Expr2, Args),

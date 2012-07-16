@@ -7,24 +7,49 @@
 %%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
-%%% @author Ulf Wiger <ulf@wiger.net>
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
 %%% @doc
 %%% API to store NETCONF-style config data in kvdb
 %%%
+%%% The `kvdb_conf' API offers a number of functions geared towards
+%%% management of a configuration database. Specifically, `kvdb_conf' is
+%%% designed to work well with configuration management à la
+%%% <a href="http://tools.ietf.org/html/rfc6241">NETCONF (RFC 6241)"</a> and
+%%% the <a href="http://tools.ietf.org/html/rfc6020">YANG data modeling
+%%% language (RFC 6020)</a>. When used in the Feuerlabs Exosense(tm) platform,
+%%% `kvdb_conf' ties into the device lifecycle management concepts of the
+%%% Feuerlabs ExoDM Device Management Platform.
+%%%
+%%% The database itself is a `kvdb' database, so the `kvdb' API also applies.
+%%%
+%%% Specifically, `kvdb_conf' provides the following functionality on top
+%%% of `kvdb':
+%%%
+%%% * The object structure is `{Key, Attribues, Value}'
+%%% * Keys are always `raw'-encoded, and reflect a hierarchy
+%%% * A hierarchical key can be constructed using '*' as a join symbol.
+%%% * Keys can be constructed/deconstructed with
+%%%   {@link join_key/1}/{@link split_key/1}
+%%% * Whole configuration subtrees can be read/written as one operation
+%%% * Subtrees can be efficiently skipped during traversal due to key encoding.
 %%% identifiers are stored as a structured key (binary)
 %%% delimited by:
-%%%
-%%% Example:
-%%% `{system,[{services, [{ssh,[...]}]}]}' would be stored as
-%%%
-%%% {"system", []}
-%%% {"system*services", []}
-%%% {"system*services*ssh", []}
 %%%
 %%% Netconf identifiers can consist of alphanumerics, '-', '_' or '.'.
 %%% The '*' as delimiter is chosen so that a "wildcard" character can be
 %%% used that is greater than the delimiter, but smaller than any identifier
 %%% character.
+%%%
+%%% For further generality, `kvdb_conf' keys are escaped, using an algorithm
+%%% that doesn't upset the sort order, or ability to skip past subtrees during
+%%% traversal. Two functions exist for construction/deconstruction of
+%%% composite keys: {@link join_key/1} and {@link split_key/1}. These functions
+%%% also escape/unescape keys that are outside the Netconf alphabet. An escaped
+%%% key starts with '='. The escaping character is '@', followed by the hex
+%%% code of the escaped character. For efficiency, any key (or key part) that
+%%% starts with '=' will be considered escaped. Thus, no unescaped key may
+%%% begin with '=' (this is not enforced, but will lead to unpredictable
+%%% behavior).
 %%% @end
 
 -module(kvdb_conf).
@@ -43,8 +68,11 @@
 	 read_tree/2,       %% (Tab, Key)
 	 write_tree/2,      %% (Parent, Tree) -> (data, Parent, Tree)
 	 write_tree/3,      %% (Tab, Parent, Tree)
+	 shift_root/2,      %% (up | down | top | bottom, #conf_tree{})
 	 store_tree/1,      %% (Tree) -> (data, Tree)
 	 store_tree/2,      %% (Tab, Tree)
+	 prefix_match/1,    %% (Prefix) -> (data, Prefix)
+	 prefix_match/2,    %% (Tab, Prefix)
 	 all/0,             %% () -> all(data)
 	 all/1,             %% (Tab)
 	 first/0,           %% () -> first(data)
@@ -65,10 +93,11 @@
 	 last_tree/1,       %% (Tab)
 	 next_tree/1,       %% (Key) -> next_tree(data, Key)
 	 next_tree/2,       %% (Tab, Key)
-	 make_tree/1,
+	 make_tree/1,       %% (Objects)
 	 flatten_tree/1,
 	 split_key/1,
 	 join_key/1,
+	 join_key/2,
 	 list_key/2,
 	 is_list_key/1,
 	 encode_id/1,
@@ -80,14 +109,15 @@
 -export([open/1, open/2, close/0, options/1,
 	 add_table/1, add_table/2]).
 
--type key() :: binary().
--type attrs() :: [{atom(), any()}].
--type data() :: binary().
--type conf_tree() :: [conf_node() | conf_obj()].
--type node_key()  :: key() | integer().
--type conf_obj() :: {node_key(), attrs(), data()}.
--type conf_node() :: {node_key(), attrs(), data(), conf_tree()}
-		     | {node_key(), conf_tree()}.
+-include("kvdb_conf.hrl").
+%% -type key() :: binary().
+%% -type attrs() :: [{atom(), any()}].
+%% -type data() :: binary().
+%% -type conf_tree() :: [conf_node() | conf_obj()].
+%% -type node_key()  :: key() | integer().
+%% -type conf_obj() :: {node_key(), attrs(), data()}.
+%% -type conf_node() :: {node_key(), attrs(), data(), conf_tree()}
+%% 		     | {node_key(), conf_tree()}.
 
 %% Macros for kvdb key escaping
 %%
@@ -124,9 +154,42 @@ instance_() ->
 	Name -> Name
     end.
 
+%% @equiv open(File, [])
+%%
 open(File) ->
     kvdb:open_db(?MODULE, options(File)).
 
+-spec open(_Filename::undefined | string(), kvdb:options()) ->
+		  {ok, pid()} | {error,any()}.
+%% @doc Opens a kvdb_conf-compliant kvdb database.
+%%
+%% The kvdb_conf API offers a number of functions geared towards management of
+%% a configuration database. The database itself is a `kvdb' database, so the
+%% `kvdb' API also applies. Specifically, `kvdb_conf' provides the following
+%% functionality on top of `kvdb':
+%%
+%% The default options provided by `kvdb_conf' may be overridden, except for
+%% the key encoding, which must always be `raw', and the object structure,
+%% which must always include attributes.
+%%
+%% If `File == undefined', either a filename will be picked by the chosen
+%% `kvdb' backend, or - e.g. in case of the `ets' backend - no file will be
+%% used at all. Please refer to the documentation of each backend for
+%% information about their respective strengths and weaknesses.
+%%
+%% By default, `kvdb_conf' specifies one table: `<<"data">>'. This table is
+%% mandatory, and used unless another table is specified. Other tables can
+%% be created e.g. in order to use a different value encoding or indexes,
+%% or to separate different data sets.
+%%
+%% If a `name' option is given, the database instance can be called something
+%% other than `kvdb_conf'. This is primarily intended for e.g. device
+%% simulators. The database name is handled transparently in the `kvdb_conf'
+%% API, and no facility exists to explicitly choose between different
+%% `kvdb_conf' instances. The name of the current instance is stored in the
+%% process dictionary of the current process, and automatically fetched by
+%% the `kvdb_conf' functions.
+%% @end
 open(File, Options) ->
     case proplists:lookup(name, Options) of
 	none ->
@@ -186,23 +249,31 @@ add_table(T, Opts) ->
     end,
     kvdb:add_table(instance_(), T, Opts1).
 
+-spec close() -> ok.
+%% @doc Closes the current `kvdb_conf' database.
 close() ->
     kvdb:close(instance_()).
 
 
 -spec read(key()) -> {ok, conf_obj()} | {error, any()}.
+%% @equiv read(<<"data">>, Key)
+read(Key) when is_binary(Key) ->
+    read(data, Key).
+
 %% @doc Reads a configuration object from the database
 %%
 %% The returned item is always the single node. See read_tree(Prefix) on how to read an
 %% entire tree structure.
 %% @end
-read(Key) when is_binary(Key) ->
-    read(data, Key).
-
 read(Tab, Key) when is_binary(Key) ->
     kvdb:get(instance_(), Tab, Key).
 
 -spec write(conf_obj()) -> ok.
+%% @equiv write(<<"data">>, Obj)
+write({K, _As, _Data} = Obj) when is_binary(K) ->
+    write(data, Obj).
+
+-spec write(kvdb:table(), conf_obj()) -> ok.
 %% @doc Writes a configuration object into the database.
 %%
 %% Each node or leaf in the tree is stored as a separate object, so updating
@@ -211,10 +282,12 @@ read(Tab, Key) when is_binary(Key) ->
 %% Note that the `kvdb_conf' API only accepts keys of type `binary()',
 %% even though it allows kvdb_conf tables to select a different key encoding.
 %% @end
-write({K, _As, _Data} = Obj) when is_binary(K) ->
-    write(data, Obj).
-
-write(Tab, {K, _As, _Data} = Obj) when is_binary(K) ->
+write(Tab, {K, As, Data} = Obj0) when is_binary(K) ->
+    Obj = case K of
+	       <<"=", _/binary>> -> Obj0;
+	       _ ->
+		   {escape_key(K), As, Data}
+	   end,
     case kvdb:put(instance_(), Tab, Obj) of
 	ok ->
 	    ok;
@@ -222,24 +295,47 @@ write(Tab, {K, _As, _Data} = Obj) when is_binary(K) ->
 	    Error
     end.
 
+-spec update_counter(kvdb:key(), integer()) -> integer() | binary().
+%% @equiv update_counter(<<"data">>, Key, Incr)
 update_counter(K, Incr) when is_binary(K), is_integer(Incr) ->
     update_counter(data, K, Incr).
 
+-spec update_counter(kvdb:table(), kvdb:key(), integer()) ->
+			    integer() | binary().
+%% @doc Updates a counter with the given increment.
+%%
+%% This function can be used to update a counter object (the value part is
+%% assumed to contain the counter value). The counter value can be either
+%% a byte- or bitstring representation of an integer, or a regular integer.
+%% The return value will be the new counter value, of the same type as the
+%% counter itself.
+%%
+%% In the case of a byte- or bitstring-encoded counter, the size of the
+%% value is preserved. No overflow check is currently performed.
+%% @end
 update_counter(Tab, K, Incr) when is_binary(K), is_integer(Incr) ->
-    kvdb:update_counter(instance_(), Tab, K, Incr).
+    kvdb:update_counter(instance_(), Tab, escape_key(K), Incr).
 
+-spec delete(kvdb:key()) -> ok.
+%% @equiv delete(<<"data">>, K)
 delete(K) when is_binary(K) ->
     delete(data, K).
 
+-spec delete(kvdb:table(), kvdb:key()) -> ok.
+%% @doc Deletes an object denoted by Key, returns `ok' even if object not found.
 delete(Tab, K) when is_binary(K) ->
-    kvdb:delete(instance_(), Tab, K).
+    kvdb:delete(instance_(), Tab, escape_key(K)).
 
-
+-spec delete_all(kvdb:prefix()) -> ok.
+%% @equiv delete_all(<<"data">>, Prefix)
 delete_all(Prefix) when is_binary(Prefix) ->
     delete_all(data, Prefix).
 
+-spec delete_all(kvdb:table(), kvdb:prefix()) -> ok.
+%% @doc Deletes all objects with a key matching `Prefix'. Always returns `ok'.
 delete_all(Tab, Prefix) when is_binary(Prefix) ->
-    delete_all_(Tab, kvdb:prefix_match(instance_(), Tab, Prefix, 100)).
+    delete_all_(Tab, kvdb:prefix_match(
+		       instance_(), Tab, escape_prefix(Prefix), 100)).
 
 delete_all_(Tab, {Objs, Cont}) ->
     _ = [delete(Tab, K) || {K,_,_} <- Objs],
@@ -247,8 +343,26 @@ delete_all_(Tab, {Objs, Cont}) ->
 delete_all_(_Tab, done) ->
     ok.
 
+-spec prefix_match(kvdb:prefix()) -> {[conf_obj()], kvdb:cont()}.
+%% @equiv prefix_matc(<<"data">>, Prefix)
+prefix_match(Prefix) ->
+    prefix_match(data, Prefix).
+
+-spec prefix_match(kvdb:table(), kvdb:prefix()) -> {[conf_obj()], kvdb:cont()}.
+%% @doc Performs a prefix match, returning all matching objects.
+%%
+%% The difference between this function and {@link kvdb:prefix_match/3} is that
+%% this function automatically ensures that the prefix is escaped using the
+%% `kvdb_conf' escaping rules.
+%% @end
+prefix_match(Tab, Prefix) ->
+    kvdb:prefix_match(instance_(), Tab, escape_prefix(Prefix)).
+
+-spec all() -> [conf_obj()].
+%% @equiv all(<<"data">>)
 all() ->
     all(data).
+
 
 all(Tab) ->
     all_(kvdb:first(instance_(), Tab), Tab).
@@ -266,8 +380,8 @@ prev(K) when is_binary(K) -> prev(data, K).
 first(Tab) -> kvdb:first(instance_(), Tab).
 last (Tab) -> kvdb:last(instance_(), Tab).
 
-next(Tab, K) when is_binary(K) -> kvdb:next(instance_(), Tab, K).
-prev(Tab, K) when is_binary(K) -> kvdb:prev(instance_(), Tab, K).
+next(Tab, K) when is_binary(K) -> kvdb:next(instance_(), Tab, escape_key(K)).
+prev(Tab, K) when is_binary(K) -> kvdb:prev(instance_(), Tab, escape_key(K)).
 
 first_tree() ->
     first_tree(data).
@@ -352,8 +466,73 @@ read_tree(Tab, Prefix) when is_binary(Prefix) ->
 %% @doc Converts an ordered list of configuration objects into a configuration tree.
 %% @end
 %%
-make_tree(Objs) ->
-    make_tree_([split_key_part(O) || O <- Objs]).
+make_tree([]) -> [];
+make_tree([_|_] = Objs) ->
+    T0 = make_tree_([split_key_part(O) || O <- Objs]),
+    normalize_tree(T0).
+
+normalize_tree(T) ->
+    normalize_tree(T, #conf_tree{root = <<>>}).
+
+normalize_tree([{K,[H|_]}] = T, #conf_tree{} = CT) when
+      is_binary(K), is_integer(element(1,H)) ->
+    CT#conf_tree{tree = T};
+normalize_tree([{K,L}], #conf_tree{root = R} = CT) when
+      is_binary(K), is_list(L) ->
+    normalize_tree(L, CT#conf_tree{root = join_key([R,K])});
+normalize_tree(T, CT) ->
+    CT#conf_tree{tree = T}.
+
+shift_root(up, #conf_tree{root = <<>>}) ->
+    error;
+shift_root(up, #conf_tree{root = R, tree = T} = CT) ->
+    [Last|RevTail] = lists:reverse(split_key(R)),
+    CT#conf_tree{root = join_key(lists:reverse(RevTail)),
+		 tree = [{Last, T}]};
+shift_root(down, #conf_tree{root = R, tree = [{K,L}]} = CT) when
+      is_binary(K) ->
+    CT#conf_tree{root = join_key(R, K), tree = L};
+shift_root(down, #conf_tree{}) ->
+    error;
+shift_root(top, #conf_tree{} = CT) ->
+    shift_root_full(up, CT);
+shift_root(bottom, #conf_tree{} = CT) ->
+    shift_root_full(down, CT).
+
+shift_root_full(Dir, #conf_tree{} = CT) ->
+    case shift_root(Dir, CT) of
+	error ->
+	    CT;
+	NewCT ->
+	    shift_root_full(Dir, NewCT)
+    end.
+
+
+
+
+
+
+%% Finding the root key.
+%% Let's consider some small trees (using the escaped form):
+%% (1) [{<<"=a">>, [], <<>>}] - a tree of one; the root is trivially <<"=a">>.
+%% (2) [{<<"=a*=b">>, [], <<>>},{<<"=a*=c">>,[],<<>>}] -
+%%    We can use binary:longest_common_prefix/1 on all the keys; this will
+%%    give us a prefix of <<"=a*=">>, i.e. the actual root (<<"=a">>) isn't
+%%    in fact stored in the database.
+%%
+%% We have two distinct cases:
+%% (1) The root has no children, and thus the LCP is a complete key
+%% (2) The root has children, and our LCP ends with <<"*=">>
+%% get_root_key(Objs) ->
+%%     PfxLen = binary:longest_common_prefix([K || {K,_,_} <- Objs]),
+%%     <<Pfx0:PfxLen/binary, _/binary>> = element(1,hd(Objs)),
+%%     L = PfxLen -2,
+%%     case Pfx0 of
+%% 	<<Root:L/binary, "*=">> ->
+%% 	    Root;
+%% 	_ ->
+%% 	    Pfx0
+%%     end.
 
 split_key_part({K,A,V}) ->
     {split_key(K), A, V}.
@@ -380,17 +559,22 @@ raw_split_key(K) when is_binary(K) ->
 %% @end
 %%
 join_key([{K,I}|T]) when is_binary(K), is_integer(I) ->
-    join_key(T, list_key(K,I));
+    join_key_(T, list_key(K,I));
 join_key([H|T]) when is_binary(H) ->
-    join_key(T, encode_id(H));
+    join_key_(T, encode_id(H));
 join_key([]) ->
     <<>>.
 
-join_key([{K,I}|T], Acc) when is_binary(K), is_integer(I) ->
-    join_key(T, <<Acc/binary, "*", (list_key(K,I))/binary>>);
-join_key([H|T], Acc) ->
-    join_key(T, <<Acc/binary, "*", (encode_id(H))/binary>>);
-join_key([], Acc) ->
+join_key(<<>>, K) -> encode_id(K);
+join_key(K, <<>>) -> encode_id(K);
+join_key(K1, K2) when is_binary(K1), is_binary(K2) ->
+    <<(encode_id(K1))/binary, "*", (encode_id(K2))/binary>>.
+
+join_key_([{K,I}|T], Acc) when is_binary(K), is_integer(I) ->
+    join_key_(T, <<Acc/binary, "*", (list_key(K,I))/binary>>);
+join_key_([H|T], Acc) ->
+    join_key_(T, <<Acc/binary, "*", (encode_id(H))/binary>>);
+join_key_([], Acc) ->
     Acc.
 
 
@@ -400,6 +584,8 @@ raw_join_key([H|T]) when is_binary(H) ->
     Rest = << <<"*", B/binary>> || <<B/binary>> <- T >>,
     << H/binary, Rest/binary >>.
 
+escape_key(<<>>) -> <<>>;
+escape_key(<<"=", _/binary>> = K) -> K;
 escape_key(K) ->
     join_key(split_key(K)).
 
@@ -582,20 +768,29 @@ make_tree_i(_, []) ->
     [].
 
 
--spec write_tree(_Parent::key(), conf_tree()) -> ok.
+-spec write_tree(_Parent::key(), #conf_tree{}) -> ok.
 %% @doc Writes a configuration tree under the given parent.
+write_tree(Parent, #conf_tree{} = T) ->
+    write_tree_(data, T#conf_tree{root = Parent});
 write_tree(Parent, Tree) ->
-    write_tree(data, Parent, Tree).
+    write_tree_(data, #conf_tree{root = Parent, tree = Tree}).
 
+write_tree(Table, Parent, #conf_tree{} = T) ->
+    write_tree_(Table, T#conf_tree{root = Parent});
 write_tree(Table, Parent, Tree) when is_binary(Parent) ->
+    write_tree_(Table, #conf_tree{root = Parent, tree = Tree}).
+
+write_tree_(Table, #conf_tree{root = Parent, tree = Tree}) ->
     Objs = lists:flatten([flatten_tree(T, Parent) || T <- Tree]),
     [write(Table, Obj) || Obj <- Objs],
     ok.
 
--spec flatten_tree(conf_tree()) -> [conf_obj()].
+-spec flatten_tree(#conf_tree{} | conf_tree()) -> [conf_obj()].
 %% @doc Converts a configuration tree into an ordered list of configuration objects.
 %% @end
 %%
+flatten_tree(#conf_tree{root = R, tree = Tree}) ->
+    lists:flatten([flatten_tree(T, R) || T <- Tree]);
 flatten_tree(Tree) when is_list(Tree) ->
     lists:flatten([flatten_tree(T, <<>>) || T <- Tree]).
 

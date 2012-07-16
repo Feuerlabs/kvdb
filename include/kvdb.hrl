@@ -1,4 +1,15 @@
-%% kvdb definitions
+%%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%%
+%%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%%
+%%% This Source Code Form is subject to the terms of the Mozilla Public
+%%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%%
+%%%---- END COPYRIGHT ---------------------------------------------------------
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
+%%% @doc kvdb definitions.
+%%% @end
 
 -type table() :: atom() | binary().
 -type int_table_name() :: binary().
@@ -39,6 +50,7 @@
 -type object() :: {key(), value()} | {key(), attrs(), value()}.
 -type increment() :: integer().
 -type status() :: active | inactive | blocking.
+-type cont() :: fun(() -> {[object()], cont()} | done).
 
 -record(commit, {add_tables = [],
 		 del_tables = [],
