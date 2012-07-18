@@ -857,7 +857,11 @@ delete_q_entry(_, _, _) ->
 
 first(#db{ref = Ets} = Db, Table) ->
     Enc = encoding(Db, Table),
-    case ets:select(Ets, [{ {#k{t=Table,k='_'},'_'}, [], ['$_'] }], 1) of
+    Pat = case Enc of
+	      {_, _, _} -> [{ {#k{t=Table,k='_'},'_','_'}, [], ['$_'] }];
+	      _         -> [{ {#k{t=Table,k='_'},'_'}, [], ['$_'] }]
+	  end,
+    case ets:select(Ets, Pat, 1) of
 	{[Obj], _} ->
 	    #k{t=Table,k=K} = element(1, Obj),
 	    {ok, setelement(1, Obj, dec(key, K, Enc))};

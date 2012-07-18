@@ -76,6 +76,7 @@ basic_test_() ->
 			   [
 			    ?_test(?dbg(Db,fill_db(Db1)))
 			    , ?_test(?dbg(Db,first_next(Db1)))
+			    , ?_test(?dbg(Db,first_next2(Db1)))
 			    , ?_test(?dbg(Db,last_prev(Db1)))
 			    , ?_test(?dbg(Db,get_attrs(Db1)))
 			    , ?_test(?dbg(Db,prefix_match(Db1)))
@@ -164,6 +165,17 @@ first_next(Db) ->
     ?match({Db,FirstValue}, {ok, FirstValue}, kvdb:first(Db, value)),
     next(SortedTypes, Db, type),
     next(SortedVals, Db, value).
+
+first_next2(Db) ->
+    ok = kvdb:add_table(Db, tfn, [{encoding, {raw,sext,term}}]),
+    ok = kvdb:put(Db, tfn, {<<"a">>, [{a,1}], 1}),
+    ok = kvdb:put(Db, tfn, {<<"b">>, [{b,2}], 2}),
+    ok = kvdb:put(Db, tfn, {<<"c">>, [{c,3}], 3}),
+    {ok, {<<"a">>,[{a,1}],1}} = kvdb:first(Db, tfn),
+    {ok, {<<"b">>,[{b,2}],2}} = kvdb:next(Db, tfn, <<"a">>),
+    {ok, {<<"b">>,[{b,2}],2}} = kvdb:prev(Db, tfn, <<"c">>),
+    {ok, {<<"c">>,[{c,3}],3}} = kvdb:last(Db, tfn),
+    kvdb:delete_table(Db, tfn).
 
 next([{K,_}], Db, Tab) ->
     ?match({Db,K}, done, kvdb:next(Db, Tab, K)),

@@ -565,7 +565,9 @@ fix_attrs(As) ->
     %% duplicates. Return an orddict, where values from the head of the list
     %% take priority over values from tail.
     lists:foldr(fun({K,V}, Acc) when is_atom(K) ->
-			orddict:store(K, V, Acc)
+			orddict:store(K, V, Acc);
+		   (A, _) ->
+			error({bad_attribute, A})
 		end, orddict:new(), As).
 
 
