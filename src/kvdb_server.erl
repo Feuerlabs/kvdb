@@ -269,7 +269,7 @@ handle_info({'DOWN', Ref, _,_,_}, #st{transactions = Ts,
 		    {noreply, St#st{transactions = Ts1,
 				    commits = Commits1}}
 	    end;
-	{_, Ts1} ->
+	{value, _, Ts1} ->
 	    {noreply, St#st{transactions = Ts1}};
 	false ->
 	    {noreply, St}
@@ -395,9 +395,9 @@ mod(ets    ) -> kvdb_ets;
 mod(M) ->
     case is_behaviour(M) of
 	true ->
-	    M;
-	false ->
-	    error(illegal_backend_type)
+	    M   % TODO: implement actual check
+	%% false ->
+	%%     error(illegal_backend_type)
     end.
 
 %% name2file(X) ->

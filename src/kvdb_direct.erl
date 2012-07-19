@@ -416,8 +416,7 @@ delete(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table0, Key) ->
 -spec first(Db::db_ref(), Table::table()) ->
 		      {ok,Key::binary()} |
 		      {ok,Key::binary(),Value::binary()} |
-		      done |
-		      {error,any()}.
+		      done.
 
 first(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
     Table = table_name(Table0),
@@ -426,8 +425,7 @@ first(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
 -spec last(Db::db_ref(), Table::table()) ->
 		     {ok,Key::binary()} |
 		     {ok,Key::binary(),Value::binary()} |
-		     done |
-		     {error,any()}.
+		     done.
 
 last(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
     Table = table_name(Table0),
@@ -436,8 +434,7 @@ last(#kvdb_ref{mod = DbMod, db = Db}, Table0) ->
 -spec next(Db::db_ref(), Table::table(), FromKey::binary()) ->
 		     {ok,Key::binary()} |
 		     {ok,Key::binary(),Value::binary()} |
-		     done |
-		     {error,any()}.
+		     done.
 
 next(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
     Table = table_name(Table0),
@@ -446,8 +443,7 @@ next(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
 -spec prev(Db::db_ref(), Table::table(), FromKey::binary()) ->
 		     {ok,Key::binary()} |
 		     {ok,Key::binary(),Value::binary()} |
-		     done |
-		     {error,any()}.
+		     done.
 
 prev(#kvdb_ref{mod = DbMod, db = Db}, Table0, Key) ->
     Table = table_name(Table0),

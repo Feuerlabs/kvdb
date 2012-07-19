@@ -45,7 +45,7 @@ read(Db) ->
     match_(kvdb:select(Db, ?SCHEMA_TABLE, [{'_',[],['$_']}], 100), []).
 
 read(Db, Item) ->
-    case kvdb:get(Db, Item) of
+    case kvdb:get(Db, ?SCHEMA_TABLE, Item) of
 	{ok, {_,_,V}} -> {ok, V};
 	{ok, {_, V}}  -> {ok, V};
 	Error ->

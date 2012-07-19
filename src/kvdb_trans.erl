@@ -133,6 +133,7 @@ pop_trans(Name) ->
 	    put(Key, Rest)
     end.
 
+-spec is_transaction(kvdb:db_ref()) -> {true, kvdb:db_ref()} | false.
 is_transaction(#kvdb_ref{mod = ?MODULE} = Ref) ->
     {true, Ref};
 is_transaction(Name) ->
@@ -447,9 +448,9 @@ merge_sets([H|T1], [H|T2], SM, Limit, Acc) ->
 merge_sets([H1|T1], [H2|_] = S2, #set_merge{type = obj} = SM, Limit, Acc)
   when element(1,H1) < element(1,H2) ->
     merge_set_acc(H1, T1, S2, SM, Limit, Acc);
-merge_sets([H1|T1], [H2|_] = S2, #set_merge{type = key} = SM,
-	   Limit, Acc) when H1 < H2 ->
-    merge_set_acc(H1, T1, S2, SM, Limit, Acc);
+%% merge_sets([H1|T1], [H2|_] = S2, #set_merge{type = key} = SM,
+%% 	   Limit, Acc) when H1 < H2 ->
+%%     merge_set_acc(H1, T1, S2, SM, Limit, Acc);
 merge_sets([_|_] = S1, [H2|T2], SM, Limit, Acc) ->
     #set_merge{anydel=AnyDel, type=Type, mod=Mod, db=Db, tab=Tab} = SM,
     case AnyDel andalso obj_deleted(H2, Type, Mod, Db, Tab) of
@@ -532,7 +533,7 @@ merge_q_acc(K,St,O, S1,S2, #q_merge{heedblock = Heed,
 				    filter = Filter} = QM, Limit, Acc) ->
     case Heed andalso St == blocked of
 	true ->
-	    {Acc, QM, stop};
+	    {Acc, QM, blocked};
 	false ->
 	    {Acc1,Limit1} = case Filter(St,K,O) of
 				{keep, X} -> {[X|Acc], decr(Limit)};
@@ -583,16 +584,12 @@ index_keys(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
     Set2 = M2:index_keys(Db2, Tab, Ix, IxK),
     merge_sets(Set1, Set2, key, M1, Db1, Tab).
 
-is_queue_empty(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
-			  #kvdb_ref{mod=M2,db=Db2} = K2}}, Tab, Q) ->
+is_queue_empty(#db{ref = {K1, K2}} = Ref, Tab, Q) ->
     ensure_table(Tab, K1, K2),
     Filter = fun(active, K, O) -> {keep,{K,O}};
 		(_, _, _) -> skip
 	     end,
-    case list_queue_(
-	   M1:list_queue(Db1, Tab, Q, Filter, true, 1),
-	   M2:list_queue(Db2, Tab, Q, Filter, true, 1),
-	   M1,Db1, M2,Db2, Tab, Q, Filter, true, 1, 1, []) of
+    case do_list_queue(Ref, Tab, Q, Filter, heedblock, 1) of
 	{[_|_], _} ->
 	    false;
 	_ ->
@@ -654,8 +651,7 @@ list_queue_(R1, R2, QM, Limit0, Limit) ->
     {S1,C1} = initial_set(R1),
     {S2,C2} = initial_set(R2),
     case merge_q_sets(S1,S2, QM#q_merge{c1 = C1, c2 = C2}, Limit) of
-	{blocked, _, _} -> blocked;
-	{done, _, _}    -> done;
+	{RetSet, _, blocked} -> {RetSet, fun() -> blocked end};
 	{RetSet, _, stop} ->
 	    {RetSet, fun() -> done end};
 	{RetSet, #q_merge{c1 = NewC1, c2 = NewC2} = QM1, 0} ->
@@ -669,49 +665,49 @@ initial_set(done) -> {done, done};
 initial_set({_,_} = R) -> R.
 
 
-list_queue_(done,done, _,_, _,_, _, _, _, _, _, _, _) ->
-    done;
-list_queue_(Done1, Done2, _M1,_Db1, _M2,_Db2, _Tab, _Q, _Filter,
-	    _HeedBlock, _Limit0, _Limit, Acc) when
-      ?q_done(Done1) orelse ?q_done(Done2) ->
-    Status = most_done(Done1, Done2),
-    if Acc == [] ->
-	    Status;
-       true ->
+%% list_queue_(done,done, _,_, _,_, _, _, _, _, _, _, _) ->
+%%     done;
+%% list_queue_(Done1, Done2, _M1,_Db1, _M2,_Db2, _Tab, _Q, _Filter,
+%% 	    _HeedBlock, _Limit0, _Limit, Acc) when
+%%       ?q_done(Done1) orelse ?q_done(Done2) ->
+%%     Status = most_done(Done1, Done2),
+%%     if Acc == [] ->
+%% 	    Status;
+%%        true ->
 
-	    {lists:reverse(Acc), fun() -> Status end}
-    end;
-list_queue_(R1, R2, M1,Db1, M2,Db2, Tab, Q, Filter,
-	    HeedBlock, Limit0, Limit, Acc) when
-      ?q_done(R1) orelse ?q_done(R2) ->
-    {Set, C1, C2} = if R1 == done ->
-			    {element(1, R2), fun() -> done end, element(2, R2)};
-		       R2 == done ->
-			    {element(1, R1), element(2, R1), fun() -> done end}
-		    end,
-    if Acc == [] ->
-	    R2;
-       true ->
-	    {RetSet, NewAcc, NewLimit} = fill_limit(Set, Acc, Limit, Limit0),
-	    {RetSet, fun() ->
-			     list_queue_(
-			       C1(), C2(), M1,Db1, M2,Db2, Tab, Q,
-			       Filter, HeedBlock, Limit0, NewLimit, NewAcc)
-		     end}
-    end;
-list_queue_({S1, C1}, {S2, C2}, M1,Db1, M2,Db2, Tab, Q, Filter,
-	    HeedBlock, Limit0, Limit, Acc) ->
-    Set = merge_sets(S1, S2, obj, M1, Db1, Tab),
-    case fill_limit(Set, Acc, Limit, Limit0) of
-	{[], [], _} ->
-	    {[], fun() -> done end};
-	{RetSet, NewAcc, NewLimit} ->
-	    {RetSet, fun() ->
-			     list_queue_(
-			       C1(), C2(), M1, Db1, M2,Db2, Tab, Q,
-			       Filter, HeedBlock, Limit0, NewLimit, NewAcc)
-		     end}
-    end.
+%% 	    {lists:reverse(Acc), fun() -> Status end}
+%%     end;
+%% list_queue_(R1, R2, M1,Db1, M2,Db2, Tab, Q, Filter,
+%% 	    HeedBlock, Limit0, Limit, Acc) when
+%%       ?q_done(R1) orelse ?q_done(R2) ->
+%%     {Set, C1, C2} = if R1 == done ->
+%% 			    {element(1, R2), fun() -> done end, element(2, R2)};
+%% 		       R2 == done ->
+%% 			    {element(1, R1), element(2, R1), fun() -> done end}
+%% 		    end,
+%%     if Acc == [] ->
+%% 	    R2;
+%%        true ->
+%% 	    {RetSet, NewAcc, NewLimit} = fill_limit(Set, Acc, Limit, Limit0),
+%% 	    {RetSet, fun() ->
+%% 			     list_queue_(
+%% 			       C1(), C2(), M1,Db1, M2,Db2, Tab, Q,
+%% 			       Filter, HeedBlock, Limit0, NewLimit, NewAcc)
+%% 		     end}
+%%     end;
+%% list_queue_({S1, C1}, {S2, C2}, M1,Db1, M2,Db2, Tab, Q, Filter,
+%% 	    HeedBlock, Limit0, Limit, Acc) ->
+%%     Set = merge_sets(S1, S2, obj, M1, Db1, Tab),
+%%     case fill_limit(Set, Acc, Limit, Limit0) of
+%% 	{[], [], _} ->
+%% 	    {[], fun() -> done end};
+%% 	{RetSet, NewAcc, NewLimit} ->
+%% 	    {RetSet, fun() ->
+%% 			     list_queue_(
+%% 			       C1(), C2(), M1, Db1, M2,Db2, Tab, Q,
+%% 			       Filter, HeedBlock, Limit0, NewLimit, NewAcc)
+%% 		     end}
+%%     end.
 
 
 
@@ -723,18 +719,18 @@ decr(infinity) -> infinity;
 decr(L) when is_integer(L) ->
     L-1.
 
-fill_limit(Set, [], infinity, _) ->
-    %% reasonably, we shouldn't have anything in Acc if Limit==infinity
-    {Set, [], infinity};
-fill_limit(Set, Acc, Limit, Limit0) when is_integer(Limit) ->
-    Concat = lists:reverse(Acc) ++ Set,
-    case length(Concat) of
-	L when L =< Limit ->
-	    {Concat, [], Limit - L};
-	L when L > Limit->
-	    {Ret, NewAcc} = lists:split(Limit, Concat),
-	    {Ret, NewAcc, Limit0}
-    end.
+%% fill_limit(Set, [], infinity, _) ->
+%%     %% reasonably, we shouldn't have anything in Acc if Limit==infinity
+%%     {Set, [], infinity};
+%% fill_limit(Set, Acc, Limit, Limit0) when is_integer(Limit) ->
+%%     Concat = lists:reverse(Acc) ++ Set,
+%%     case length(Concat) of
+%% 	L when L =< Limit ->
+%% 	    {Concat, [], Limit - L};
+%% 	L when L > Limit->
+%% 	    {Ret, NewAcc} = lists:split(Limit, Concat),
+%% 	    {Ret, NewAcc, Limit0}
+%%     end.
 
 mark_queue_object(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 			     #kvdb_ref{} = K2}} = Ref,
@@ -799,9 +795,7 @@ pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
 	    IsEmpty = (Rest =/= []),
 	    {ok, Obj, IsEmpty};
 	R when ?q_done(R) ->
-	    R;
-	{error, _} = E ->
-	    E
+	    R
     end.
 
 prel_pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
@@ -815,9 +809,7 @@ prel_pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
 	    IsEmpty = (Rest =/= []),
 	    {ok, Obj, QKey, IsEmpty};
 	R when ?q_done(R) ->
-	    R;
-	{error, _} = E ->
-	    E
+	    R
     end.
 
 prev(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
@@ -865,7 +857,6 @@ prefix_match_(R1, R2, SM, Limit0, Limit) ->
     {S1,C1} = initial_set(R1),
     {S2,C2} = initial_set(R2),
     case merge_sets(S1, S2, SM#set_merge{c1 = C1, c2 = C2}, Limit) of
-	{done, _, _} -> done;
 	{RetSet, _, stop} ->
 	    {RetSet, fun() -> done end};
 	{RetSet, #set_merge{c1 = NewC1, c2 = NewC2} = SM1, 0} ->

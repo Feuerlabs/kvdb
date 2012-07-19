@@ -29,7 +29,7 @@ notify_when_not_empty(#kvdb_ref{name = DBN} = Db, Table0, Q) ->
     Table = kvdb_lib:table_name(Table0),
     Evt = {kvdb, DBN, Table, Q, queue_status},
     gproc_ps:notify_single_if_true(
-      l, Evt, fun() -> not kvdb:do_is_queue_empty(Db,Table,Q) end, not_empty).
+      l, Evt, fun() -> not kvdb:is_queue_empty(Db,Table,Q) end, not_empty).
 
 notify_all_queues(#kvdb_ref{name = DBN}, Table0) ->
     Table = kvdb_lib:table_name(Table0),

@@ -596,7 +596,9 @@ open_log(F, Pid) ->
 		   [F, Rec, Bad]),
 	    {ok, [{id, Log},
 		  {name, Name},
-		  {file, F}]}
+		  {file, F}]};
+	{error, _} = Err ->
+	    Err
     end.
 
 

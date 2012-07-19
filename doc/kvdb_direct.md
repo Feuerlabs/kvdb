@@ -116,7 +116,7 @@ Low-level equivalent to [`dump_tables/1`](#dump_tables-1)<a name="extract-3"></a
 ###first/2##
 
 
-<pre>first(Db::<a href="#type-db_ref">db_ref()</a>, Table::<a href="#type-table">table()</a>) -> {ok, Key::binary()} | {ok, Key::binary(), Value::binary()} | done | {error, any()}</pre>
+<pre>first(Db::<a href="#type-db_ref">db_ref()</a>, Table::<a href="#type-table">table()</a>) -> {ok, Key::binary()} | {ok, Key::binary(), Value::binary()} | done</pre>
 <br></br>
 
 
@@ -184,7 +184,7 @@ Low-level equivalent of [`index_keys/4`](#index_keys-4)<a name="info-2"></a>
 ###last/2##
 
 
-<pre>last(Db::<a href="#type-db_ref">db_ref()</a>, Table::<a href="#type-table">table()</a>) -> {ok, Key::binary()} | {ok, Key::binary(), Value::binary()} | done | {error, any()}</pre>
+<pre>last(Db::<a href="#type-db_ref">db_ref()</a>, Table::<a href="#type-table">table()</a>) -> {ok, Key::binary()} | {ok, Key::binary(), Value::binary()} | done</pre>
 <br></br>
 
 
@@ -229,7 +229,7 @@ Lists the tables defined in the database<a name="mark_queue_object-4"></a>
 ###next/3##
 
 
-<pre>next(Db::<a href="#type-db_ref">db_ref()</a>, Table::<a href="#type-table">table()</a>, FromKey::binary()) -> {ok, Key::binary()} | {ok, Key::binary(), Value::binary()} | done | {error, any()}</pre>
+<pre>next(Db::<a href="#type-db_ref">db_ref()</a>, Table::<a href="#type-table">table()</a>, FromKey::binary()) -> {ok, Key::binary()} | {ok, Key::binary(), Value::binary()} | done</pre>
 <br></br>
 
 
@@ -297,7 +297,7 @@ Low-level equivalent of [`pop/3`](#pop-3)<a name="prefix_match-4"></a>
 ###prev/3##
 
 
-<pre>prev(Db::<a href="#type-db_ref">db_ref()</a>, Table::<a href="#type-table">table()</a>, FromKey::binary()) -> {ok, Key::binary()} | {ok, Key::binary(), Value::binary()} | done | {error, any()}</pre>
+<pre>prev(Db::<a href="#type-db_ref">db_ref()</a>, Table::<a href="#type-table">table()</a>, FromKey::binary()) -> {ok, Key::binary()} | {ok, Key::binary(), Value::binary()} | done</pre>
 <br></br>
 
 

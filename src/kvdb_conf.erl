@@ -55,6 +55,7 @@
 -module(kvdb_conf).
 
 -export([transaction/1,     %% (Fun)
+	 in_transaction/1,  %% (Fun)
 	 read/1,            %% (Key) -> read(data, Key)
 	 read/2,            %% (Tab, Key)
 	 write/1,           %% (Obj) -> write(data, Obj)
@@ -78,6 +79,10 @@
 	 next_child/2,      %% (Table, PrevChild)
 	 last_child/1,      %% (Parent) -> (<<"data">>, Parent)
 	 last_child/2,      %% (Table, Parent)
+	 fold_children/3,   %% (Fun, Acc, P) -> (<<"data">>, Fun, Acc, P)
+	 fold_children/4,   %% (Table, Fun, Acc, Parent)
+	 fold_list/3,       %% (Fun, Acc0, Pfx) -> (<<"data">>, Fun, Acc0, Pfx)
+	 fold_list/4,       %% (Table, Fun, Acc0, Pfx)
 	 %% store_tree/1,      %% (Tree) -> (data, Tree)
 	 %% store_tree/2,      %% (Tab, Tree)
 	 prefix_match/1,    %% (Prefix) -> (data, Prefix)
@@ -174,10 +179,15 @@ instance_() ->
 transaction(Fun) ->
     kvdb:transaction(instance_(), Fun).
 
+-spec in_transaction(fun( (kvdb:db_ref()) -> T)) -> T.
+%% @equiv kvdb:in_transaction(kvdb_conf_instance(), Fun)
+in_transaction(Fun) ->
+    kvdb:in_transaction(instance_(), Fun).
+
 %% @equiv open(File, [])
 %%
 open(File) ->
-    kvdb:open_db(?MODULE, options(File)).
+    open(File, []).
 
 -spec open(_Filename::undefined | string(), kvdb:options()) ->
 		  {ok, pid()} | {error,any()}.
@@ -410,40 +420,50 @@ all_({ok, {K,A,V}}, Tab) ->
 all_(done, _) ->
     [].
 
--spec first() -> {ok, conf_obj()} | {error, not_found}.
+-spec first() -> {ok, conf_obj()} | done.
 %% @equiv first(<<"data">>)
 first() -> first(data).
 
--spec last() -> {ok, conf_obj()} | {error, not_found}.
+-spec last() -> {ok, conf_obj()} | done.
 %% @equiv last(<<"data">>)
 last () -> last(data).
 
--spec next(kvdb:key()) -> {ok, conf_obj()} | {error, not_found}.
+-spec next(kvdb:key()) -> {ok, conf_obj()} | done.
 %% @equiv next(<<"data">>, K)
 next(K) when is_binary(K) -> next(data, K).
 
--spec prev(kvdb:key()) -> {ok, conf_obj()} | {error, not_found}.
+-spec prev(kvdb:key()) -> {ok, conf_obj()} | done.
 %% @equiv prev(<<"data">>, K)
 prev(K) when is_binary(K) -> prev(data, K).
 
--spec first(kvdb:table()) -> {ok, conf_obj()} | {error, not_found}.
-%% @doc Returns the first object in `Tab', if there is one; otherwise
-%% `{error, not_found}'.
+-spec first(kvdb:table()) -> {ok, conf_obj()} | done.
+%% @doc Returns the first object in `Tab', if there is one; otherwise `done'.
 %% @end
 first(Tab) -> fix_ok_ret(raw_first(Tab)).
 
+-spec first_child(key()) -> {ok, key()} | done.
+%% @equiv first_child(<<"data">>, Parent)
 first_child(Parent) ->
     first_child(<<"data">>, Parent).
 
-first_child(Table, Parent0) when is_binary(Parent0) ->
-    Parent = escape_key(Parent0),
+-spec first_child(kvdb:table(), key()) -> {ok, key()} | done.
+%% @doc Returns the first child, if any, of the given `Parent'.
+first_child(Table, Parent) when is_binary(Parent) ->
+    case first_child_(Table, escape_key(Parent)) of
+	{ok, K} ->
+	    {ok, unescape_key(K)};
+	done ->
+	    done
+    end.
+
+first_child_(Table, Parent) when is_binary(Parent) ->
     case kvdb:next(instance_(), Table, <<Parent/binary,"*+">>) of
 	{ok,{K,_As,_Data}} when byte_size(K) > byte_size(Parent) ->
 	    N = byte_size(Parent),
 	    case erlang:split_binary(K, N) of
 		{Parent, <<$*,K1/binary>>} ->
 		    [C|_] = raw_split_key(K1),
-		    {ok, unescape_key(<<Parent/binary, "*", C/binary>>)};
+		    {ok, <<Parent/binary, "*", C/binary>>};
 		{_, _} ->
 		    done
 	    end;
@@ -451,11 +471,23 @@ first_child(Table, Parent0) when is_binary(Parent0) ->
 	    done
     end.
 
+-spec next_child(key()) -> {ok, key()} | done.
+%% @equiv next_child(<<"data">>, Prev)
 next_child(Prev) when is_binary(Prev) ->
     next_child(<<"data">>, Prev).
 
-next_child(Table, Prev0) ->
-    Prev = escape_key(Prev0),
+-spec next_child(kvdb:table(), key()) -> {ok, key()} | done.
+%% @doc Returns the next child at the same level as `PrevChild'.
+%%
+next_child(Table, PrevChild) ->
+    case next_child_(Table, escape_key(PrevChild)) of
+	{ok, K} ->
+	    {ok, unescape_key(K)};
+	done ->
+	    done
+    end.
+
+next_child_(Table, Prev) ->
     case kvdb:next(instance_(), Table, <<Prev/binary,"+">>) of
 	{ok,{K1,_As,_Data}} ->
 	    K0 = raw_drop_last_key_part(Prev),
@@ -465,11 +497,11 @@ next_child(Table, Prev0) ->
 	       true ->
 		    case erlang:split_binary(K1, N) of
 			{<<>>, K2} ->
-			    [C|_] = split_key(K2),
+			    [C|_] = raw_split_key(K2),
 			    {ok, C};
 			{K0, <<$*,K2/binary>>} ->
 			    [C|_] = raw_split_key(K2),
-			    {ok, unescape_key(<<K0/binary,$*,C/binary>>)};
+			    {ok, <<K0/binary,$*,C/binary>>};
 			{_, _} ->
 			    done
 		    end
@@ -478,9 +510,13 @@ next_child(Table, Prev0) ->
 	    done
     end.
 
+-spec last_child(key()) -> {ok, key()} | done.
+%% @equiv last_child(<<"data">>, K)
 last_child(K) ->
     last_child(<<"data">>, K).
 
+-spec last_child(kvdb:table(), key()) -> {ok, key()} | done.
+%% @doc Returns the last child, if any, of the given `Parent'; otherwise `done'.
 last_child(Tab, Parent0) ->
     Parent = escape_key(Parent0),
     case kvdb:prev(instance_(), Tab, <<Parent/binary, "*~">>) of
@@ -497,23 +533,77 @@ last_child(Tab, Parent0) ->
 	    done
     end.
 
+-spec fold_children(fun( (key(), Acc) -> Acc), Acc, key()) -> Acc.
+%% @equiv fold_children(<<"data">>, Fun, Acc, K)
+fold_children(Fun, Acc, K) ->
+    fold_children(<<"data">>, Fun, Acc, K).
 
--spec last(kvdb:table()) -> {ok, conf_obj()} | {error, not_found}.
+-spec fold_children(kvdb:table(), fun( (key(), Acc) -> Acc), Acc, key()) -> Acc.
+%% @doc Folds over the immediate children of `K', applying `Fun(K, Acc)'.
+fold_children(Tab, Fun, Acc, K) when is_function(Fun, 2), is_binary(K) ->
+    fold_children_(Tab, Fun, Acc, first_child_(Tab, escape_key(K))).
+
+fold_children_(Tab, Fun, Acc, {ok, K}) ->
+    Acc1 = Fun(unescape_key(K), Acc),
+    fold_children_(Tab, Fun, Acc1, next_child_(Tab, K));
+fold_children_(_Tab, _Fun, Acc, done) ->
+    Acc.
+
+
+-spec fold_list(fun( (integer(),key(),Acc) -> Acc ), Acc, key()) -> Acc.
+%% @equiv fold_list(<<"data">>, Fun, Acc, BaseKey)
+fold_list(Fun, Acc, BaseKey) ->
+    fold_list(<<"data">>, Fun, Acc, BaseKey).
+
+-spec fold_list(kvdb:table(), fun((integer(),key(),Acc) -> Acc), Acc, key()) ->
+		       Acc.
+%% @doc Fold through a configuration list set.
+%%
+%% This function assumes that `BaseKey' is a prefix to a set of list keys,
+%% e.g. `<<"a*b*c">>' would be a base key for `<<"a*b*c[00000001]">>',
+%% `<<"a*b*c[00000002]">>', etc. This function folds through all matching
+%% keys, applying `Fun(PosIndex, Key, Acc)' and accumulating the result.
+%% `PosIndex' is the numerical index value of the list key. `Key' is the
+%% entire key.
+%% @end
+fold_list(Tab, Fun, Acc, BaseKey) ->
+    MatchKey = <<(escape_key(BaseKey))/binary, "[">>,
+    Res = kvdb:next(instance_(), Tab, MatchKey),
+    fold_list_(Res, Tab, byte_size(MatchKey), MatchKey, Fun, Acc).
+
+fold_list_({ok, {K,_,_}}, Tab, PfxSz, Prefix, Fun, Acc) ->
+    N = byte_size(K),
+    N1 = (N-PfxSz) - 1,  % Prefix includes the opening "["
+    case K of
+	<<Prefix:PfxSz/binary, Pos:N1/binary, "]">> ->
+	    I = list_to_integer(binary_to_list(Pos), 16),
+	    Acc1 = Fun(I, unescape_key(K), Acc),
+	    Res = kvdb:next(instance_(), Tab, <<K/binary,"+">>),
+	    fold_list_(Res, Tab, PfxSz, Prefix, Fun, Acc1);
+	_ ->
+	    Acc
+    end;
+fold_list_(_, _, _, _, _, Acc) ->
+    Acc.
+
+
+
+-spec last(kvdb:table()) -> {ok, conf_obj()} | done.
 %% @doc Returns the last object in `Tab', if there is one; otherwise
-%% `{error, not_found}'.
+%% `done'.
 %% @end
 last (Tab) -> fix_ok_ret(raw_last(Tab)).
 
--spec next(kvdb:table(), kvdb:key()) -> {ok, conf_obj()} | {error, not_found}.
+-spec next(kvdb:table(), kvdb:key()) -> {ok, conf_obj()} | done.
 %% @doc Returns the next object in `Tab' following the key `K',
-%% if there is one; otherwise `{error, not_found}'.
+%% if there is one; otherwise `done'.
 %% @end
 next(Tab, K) when is_binary(K) ->
     fix_ok_ret(raw_next(Tab, escape_key(K))).
 
--spec prev(kvdb:table(), kvdb:key()) -> {ok, conf_obj()} | {error, not_found}.
+-spec prev(kvdb:table(), kvdb:key()) -> {ok, conf_obj()} | done.
 %% @doc Returns the previous object in `Tab' before the key `K',
-%% if there is one; otherwise `{error, not_found}'.
+%% if there is one; otherwise `done'.
 %% @end
 prev(Tab, K) when is_binary(K) ->
     fix_ok_ret(raw_prev(Tab, escape_key(K))).
@@ -549,7 +639,7 @@ last_tree() ->
     last_tree(data).
 
 -spec last_tree(kvdb:table()) -> #conf_tree{} | [].
-%% @doc Reads the last config tree from `Table', returns `[]' if `Table' empty.
+%% @doc Returns the last config tree from `Table', or `[]' if `Table' empty.
 %%
 %% This function returns a `#conf_tree{}' record which, among other things,
 %% can be passed to {@link next_tree/2}, {@link write_tree/3} or
@@ -569,7 +659,7 @@ next_tree(K) when is_binary(K); is_record(K, conf_tree) ->
     next_tree(data, K).
 
 -spec next_tree(kvdb:table(), kvdb:key() | #conf_tree{}) -> #conf_tree{} | [].
-%% @doc Reads the next config tree in `Table' after `K', returns `[]' not found.
+%% @doc Returns the next config tree in `Table' after `K', or `[]' if not found.
 %%
 %% This function returns a `#conf_tree{}' record which, among other things,
 %% can be passed to {@link write_tree/3} or {@link flatten_tree/1}.
@@ -667,16 +757,16 @@ make_tree([_|_] = Objs) ->
     normalize_tree(T0).
 
 normalize_tree(T) ->
-    normalize_tree(T, #conf_tree{root = []}).
+    normalize_tree(T, []).
 
-normalize_tree([{K,[H|_]}] = T, #conf_tree{root = R} = CT) when
+normalize_tree([{K,[H|_]}] = T, R) when
       is_binary(K), is_integer(element(1,H)) ->
-    CT#conf_tree{root = raw_join_key(lists:reverse(R)), tree = T};
-normalize_tree([{K,L}], #conf_tree{root = R} = CT) when
+    #conf_tree{root = raw_join_key(lists:reverse(R)), tree = T};
+normalize_tree([{K,L}], R) when
       is_binary(K), is_list(L) ->
-    normalize_tree(L, CT#conf_tree{root = [K|R]});
-normalize_tree(T, #conf_tree{root = R} = CT) ->
-    CT#conf_tree{root = raw_join_key(lists:reverse(R)), tree = T}.
+    normalize_tree(L, [K|R]);
+normalize_tree(T, R) ->
+    #conf_tree{root = raw_join_key(lists:reverse(R)), tree = T}.
 
 -spec get_root(#conf_tree{}) -> key().
 %% @doc Returns the root key of the given config tree.
@@ -897,7 +987,7 @@ decode_list_key_(<<"[", Rest/binary>>, Acc) ->
     N = Sz - 1,
     case Rest of
 	<<Pb:N/binary, "]">> ->
-	    {Acc, list_to_integer(binary_to_list(Pb))};
+	    {Acc, list_to_integer(binary_to_list(Pb), 16)};
 	_ ->
 	    decode_list_key_(Rest, <<Acc/binary, "]">>)
     end;
@@ -942,9 +1032,9 @@ raw_list_key(Name, Pos) when is_binary(Name), is_integer(Pos) ->
     <<Name/binary, "[", IX/binary, "]">>.
 
 pos_key(ID) when is_integer(ID), ID >= 0, ID =< 16#ffffffff ->
-    tl(integer_to_list(16#100000000+ID,16));
-pos_key(<<ID:32/integer>>) ->
     tl(integer_to_list(16#100000000+ID,16)).
+%% pos_key(<<ID:32/integer>>) ->
+%%     tl(integer_to_list(16#100000000+ID,16)).
 
 
 is_list_key(I) when is_integer(I) -> false;

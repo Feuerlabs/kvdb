@@ -932,9 +932,7 @@ enc_match_prefix(sext, Prefix) when is_binary(Prefix) ->
 enc_match_prefix(sext, Prefix) ->
     {ms, {match_spec([{Prefix, [], ['$_']}]),
 	  not is_ms_var(Prefix),
-	  Prefix}};
-enc_match_prefix(_, _) ->
-    error(badarg).
+	  Prefix}}.
 
 is_ms_var('_') -> true;
 is_ms_var(A) when is_atom(A) ->

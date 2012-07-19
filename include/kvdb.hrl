@@ -16,7 +16,7 @@
 -type queue_name() :: any().
 
 -record(kvdb_ref, {name, tref, db, mod, schema = db}).
--opaque db_ref()  :: #kvdb_ref{}.
+-type db_ref()  :: #kvdb_ref{}.
 
 -record(db, {ref, encoding = sext, metadata, log = false, st}).
 -record(table, {name,
@@ -31,7 +31,7 @@
 -record(dbst, {encoding,
 	       type}).
 
--opaque db() :: #db{}.
+-type db() :: #db{}.
 
 -define(SCHEMA_TABLE, <<"kvdb__SCHEMA">>).
 

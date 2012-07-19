@@ -129,18 +129,16 @@ open(DbName, Options) ->
 		  sqlite3:open(IntName, DbOptions)
 	  end,
     case Res of
-	{ok, Instance} ->
+	{ok, _Pid} ->
 	    kvdb_lib:common_open(
 	      DbName, ?MODULE,
-	      ensure_schema(#db{ref = Instance, encoding = E}), Options);
+	      ensure_schema(#db{ref = IntName, encoding = E}), Options);
 	{error,_} = Error ->
 	    Error
     end.
 
-make_atom_name(A) when is_atom(A) ->
-    A;
-make_atom_name(B) when is_binary(B) ->
-    binary_to_atom(B, latin1);
+%% make_atom_name(B) when is_binary(B) ->
+%%     binary_to_atom(B, latin1);
 make_atom_name(X) ->
     list_to_atom(lists:flatten(io_lib:fwrite("~w", [X]))).
 
@@ -531,7 +529,7 @@ prel_pop(Db, Table, Q) ->
 mark_queue_object(#db{} = Db, Table, #q_key{} = QKey, St) when
       St==active; St==blocking; St==inactive ->
     case queue_read(Db, Table, QKey) of
-	{ok, Obj} ->
+	{ok, _, Obj} ->
 	    Enc = encoding(Db, Table),
 	    Type = type(Db, Table),
 	    K = element(1, Obj),
@@ -628,9 +626,7 @@ do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
 	{[], _} ->
 	    done;
 	blocked ->
-	    blocked;
-	{error, _} = Error ->
-	    Error
+	    blocked
     end.
 
 extract(#db{} = Db, Table, #q_key{queue = Q} = QKey) ->
@@ -1006,24 +1002,18 @@ first(#db{ref = Ref} = Db, Table, Enc) ->
     select_one(Ref, Enc, ["SELECT ", sel_cols(Enc), " FROM ", Table, Where,
 			 " ORDER BY key ASC LIMIT 1"]).
 
-last(Db, Table) ->
-    last(Db, Table, false).
-
-last(#db{ref = Ref} = Db, Table, InclAll) when is_boolean(InclAll) ->
+last(#db{ref = Ref} = Db, Table) ->
     Enc = encoding(Db, Table),
-    Where = case (InclAll orelse type(Db, Table)==set) of
+    Where = case type(Db, Table)==set of
 		true -> "";
 		false -> " WHERE active == 1"
 	    end,
     select_one(Ref, Enc, ["SELECT ", sel_cols(Enc), " FROM ", Table, Where,
 			 " ORDER BY key DESC LIMIT 1"]).
 
-next(Db, Table, Key) ->
-    next(Db, Table, Key, false).
-
-next(#db{ref = Ref} = Db, Table, Key, InclAll) when is_boolean(InclAll) ->
+next(#db{ref = Ref} = Db, Table, Key) ->
     Enc = encoding(Db, Table),
-    IsActive = case (InclAll orelse type(Db, Table) == set) of
+    IsActive = case type(Db, Table) == set of
 		   true -> "";
 		   false -> " AND active == 1"
 	       end,
@@ -1031,12 +1021,9 @@ next(#db{ref = Ref} = Db, Table, Key, InclAll) when is_boolean(InclAll) ->
 			 " WHERE key > ?", IsActive,
 			 " ORDER BY key ASC LIMIT 1"], [{blob, enc(key, Key, Enc)}]).
 
-prev(Db, Table, Key) ->
-    prev(Db, Table, Key, false).
-
-prev(#db{ref = Ref} = Db, Table, Key, InclAll) when is_boolean(InclAll) ->
+prev(#db{ref = Ref} = Db, Table, Key) ->
     Enc = encoding(Db, Table),
-    IsActive = case (InclAll orelse type(Db, Table) == set) of
+    IsActive = case type(Db, Table) == set of
 		   true -> "";
 		   false -> " AND active == 1"
 	       end,
@@ -1097,11 +1084,13 @@ check_options([], _, Rec) ->
 ensure_schema(#db{ref = Ref} = Db) ->
     ETS = ets:new(kvdb_schema, [ordered_set, public]),
     Db1 = Db#db{metadata = ETS},
-    case lists:member(?SCHEMA_TABLE, [to_bin(T) || T <- sqlite3:list_tables(Ref)]) of
+    case lists:member(
+	   ?SCHEMA_TABLE, [to_bin(T) || T <- sqlite3:list_tables(Ref)]) of
 	false ->
 	    Columns = [{key, blob, primary_key}, {value, blob}],
 	    sqlite3:create_table(Ref, ?SCHEMA_TABLE, Columns),
-	    Tab = #table{name = ?SCHEMA_TABLE, encoding = sext, columns = [key,value]},
+	    Tab = #table{name = ?SCHEMA_TABLE,
+			 encoding = sext, columns = [key,value]},
 	    schema_write(Db1, {{table, ?SCHEMA_TABLE}, Tab}),
 	    schema_write(Db1, {{a, ?SCHEMA_TABLE, encoding}, sext}),
 	    Db1;

@@ -81,9 +81,9 @@ dump_tables_({ok, K, V}, I, Db) ->
 			      set ->
 				  {obj, T, kvdb_lib:try_decode(Key),
 				   kvdb_lib:try_decode(V)};
-			      TType when TType == fifo; TType == lifo,
-					 element(1, TType) == fifo;
-					 element(1, TType) == lifo ->
+			      TType when TType == fifo; TType == lifo;
+					 element(2, TType) == fifo;
+					 element(2, TType) == lifo ->
 				  %% io:fwrite("split_queue_key(~p, ~p, ~p)~n",
 				  %% 	    [Enc, TType, Key]),
 				  #q_key{queue = Q,
@@ -157,7 +157,6 @@ try_sext_decode([{P,_}|Ps], K) ->
 
 
 
-bin_match([], _) -> unknown;
 bin_match(Ts, B) ->
     Cs = << << "\\", C:8 >> || {C,_} <- Ts >>,
     Pat = << "[", Cs/binary, "]" >>,
@@ -340,7 +339,7 @@ update_counter(#db{ref = Ref} = Db, Table, K, Incr) when is_integer(Incr) ->
 	    Enc = encoding(Db, Table),
 	    Key = enc(key, K, Enc),
 	    case eleveldb:get(Ref, TabKey = make_table_key(Table, Key),
-			      [{cache, true}]) of
+			      [{fill_cache, true}]) of
 		{ok, V} ->
 		    NewV =
 			case dec(value, V, Enc) of
@@ -457,8 +456,6 @@ do_pop(Db, Table, _Type, Q, Remove, ReturnKey) ->
 	       true ->
 		    {ok, Obj, Empty}
 	    end;
-	{error, _} = Error ->
-	    Error;
 	Stop when Stop == done; Stop == blocked ->
 	    Stop
     end.

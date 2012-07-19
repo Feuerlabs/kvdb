@@ -42,7 +42,7 @@
 %% -behaviour(gen_server).
 
 %% starting kvdb, opening databases
--export([start/0, open_db/2, info/2]).
+-export([start/0, info/2]).
 -export([open/2, close/1, db/1, start_session/2]).
 -export([transaction/2, in_transaction/2]).
 %% adding, deleting, listing tables
@@ -103,7 +103,7 @@
 
 -define(IF_TRANS(Name, Expr1, Expr2, Args),
 	case kvdb_trans:is_transaction(Name) of
-	    {true, Ref} ->
+	    {true, #kvdb_ref{} = Ref} ->
 		?KVDB_CATCH(Expr1, Args);
 	    false ->
 		if is_record(Name, kvdb_ref) ->
@@ -155,23 +155,6 @@ start() ->
     application:start(gproc),
     application:start(kvdb).
 
--spec open_db(db_name(), options()) -> {ok, pid()} | {error, any()}.
-
-%% @spec open_db(Name, Options) -> {ok, Pid} | {error, Reason}
-%% @doc Opens a kvdb database instance.
-%%
-%% TODO: make sure that the database instance is able to remember relevant
-%% options and verify that given options are compatible.
-%% @end
-%%
-open_db(Name, Options) ->
-    case gproc:where({n,l,{kvdb, Name}}) of
-	undefined ->
-	    Child = kvdb_sup:childspec({Name, Options}),
-	    supervisor:start_child(kvdb_sup, Child);
-	_ ->
-	    {error, already_loaded}
-    end.
 
 -spec info(db_name(), attr_name()) -> undefined | attr_value().
 info(Name, Item) ->
@@ -237,7 +220,7 @@ close(#kvdb_ref{mod = DbMod, db = Db}) ->
 close(Name) ->
     ?IF_TRANS(
        Name,
-       kvdb_direct:close(Ref),
+       close(Ref),
        call(Name, close), [Name]).
 
 -spec db(db_name() | db_ref()) -> db_ref().
@@ -680,7 +663,7 @@ default_limit() ->
 select(Name, Table, MatchSpec) ->
     ?IF_TRANS(
        Name,
-       kvdb_direct:select(Ref, Table, MatchSpec),
+       kvdb_direct:select(Ref, Table, MatchSpec, default_limit()),
        kvdb_direct:select(db(Name), Table, MatchSpec, default_limit()),
 		[Name, Table, MatchSpec]).
 

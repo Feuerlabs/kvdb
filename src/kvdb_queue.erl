@@ -11,7 +11,7 @@
 %%%
 -module(kvdb_queue).
 
--export([push/2, push/3,
+-export([push/3, push/4,
 	 pop/2, pop/3,
 	 prel_pop/2, prel_pop/3,
 	 delete/3, extract/3,
@@ -21,8 +21,8 @@
 	 next/3,
 	 clear_queue/3]).
 
-push(Db, Table)         -> push(Db, Table, <<>>).
-push(Db, Table, Q)      -> kvdb:push(Db, Table, Q).
+push(Db, Table, Obj)    -> push(Db, Table, Obj).
+push(Db, Table, Q, Obj) -> kvdb:push(Db, Table, Q, Obj).
 pop(Db, Table)          -> pop(Db, Table, <<>>).
 pop(Db, Table, Q)       -> kvdb:pop(Db, Table, Q).
 prel_pop(Db, Table)     -> prel_pop(Db, Table, <<>>).

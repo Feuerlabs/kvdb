@@ -136,7 +136,9 @@ __Authors:__ Ulf Wiger ([`ulf@feuerlabs.com`](mailto:ulf@feuerlabs.com)).<a name
 ###is_transaction/1##
 
 
-`is_transaction(Kvdb_ref) -> any()`
+<pre>is_transaction(Kvdb_ref::<a href="kvdb.md#type-db_ref">kvdb:db_ref()</a>) -> {true, <a href="kvdb.md#type-db_ref">kvdb:db_ref()</a>} | false</pre>
+<br></br>
+
 
 <a name="last-2"></a>
 

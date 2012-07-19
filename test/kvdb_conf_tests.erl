@@ -37,6 +37,8 @@ conf_test_() ->
       , ?my_t(conf_tree())
       , ?my_t(write_tree())
       , ?my_t(first_next_child())
+      , ?my_t(fold_list())
+      , ?my_t(fold_children())
       ]}.
 
 read_write() ->
@@ -118,5 +120,36 @@ first_next_child() ->
     {ok, <<"a*d">>} = kvdb_conf:next_child(T, <<"a*c">>),
     done = kvdb_conf:next_child(T, <<"a*d">>),
     ok = kvdb_conf:delete_table(T).
+
+fold_list() ->
+    ?mktab(T, []),
+    ok = kvdb_conf:write(T, {<<"a*b*b">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"a*b*c[00000001]">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"a*b*c[00000005]">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"a*b*c[0000000A]">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"a*b*d">>, [], <<>>}),
+    [{10, <<"a*b*c[0000000A]">>},
+     {5,  <<"a*b*c[00000005]">>},
+     {1,  <<"a*b*c[00000001]">>}] =
+	kvdb_conf:fold_list(T, fun(I,K,Acc) ->
+				       [{I,K}|Acc]
+			       end, [], <<"a*b*c">>),
+    ok = kvdb_conf:delete_table(T).
+
+fold_children() ->
+    ?mktab(T, []),
+    ok = kvdb_conf:write(T, {<<"a*b">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"a*b*b">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"a*b*c">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"a*b*d">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"a*c">>, [], <<>>}),
+    [<<"a*b*d">>,
+     <<"a*b*c">>,
+     <<"a*b*b">>] =
+	kvdb_conf:fold_children(T, fun(K,Acc) ->
+					   [K|Acc]
+				   end, [], <<"a*b">>),
+    ok = kvdb_conf:delete_table(T).
+
 
 -endif.
