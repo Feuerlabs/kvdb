@@ -70,7 +70,14 @@
 	 write_tree/2,      %% (Parent, Tree) -> (data, Parent, Tree)
 	 write_tree/3,      %% (Tab, Parent, Tree)
 	 get_root/1,        %% (ConfTree)
+	 set_root/2,        %% (Root, ConfTree)
 	 shift_root/2,      %% (up | down | top | bottom, #conf_tree{})
+	 first_child/1,     %% (Parent) -> (<<"data">>, Parent)
+	 first_child/2,     %% (Table, Parent)
+	 next_child/1,      %% (PrevChild) -> (<<"data">>, PrevChild)
+	 next_child/2,      %% (Table, PrevChild)
+	 last_child/1,      %% (Parent) -> (<<"data">>, Parent)
+	 last_child/2,      %% (Table, Parent)
 	 %% store_tree/1,      %% (Tree) -> (data, Tree)
 	 %% store_tree/2,      %% (Tab, Tree)
 	 prefix_match/1,    %% (Prefix) -> (data, Prefix)
@@ -425,6 +432,72 @@ prev(K) when is_binary(K) -> prev(data, K).
 %% @end
 first(Tab) -> fix_ok_ret(raw_first(Tab)).
 
+first_child(Parent) ->
+    first_child(<<"data">>, Parent).
+
+first_child(Table, Parent0) when is_binary(Parent0) ->
+    Parent = escape_key(Parent0),
+    case kvdb:next(instance_(), Table, <<Parent/binary,"*+">>) of
+	{ok,{K,_As,_Data}} when byte_size(K) > byte_size(Parent) ->
+	    N = byte_size(Parent),
+	    case erlang:split_binary(K, N) of
+		{Parent, <<$*,K1/binary>>} ->
+		    [C|_] = raw_split_key(K1),
+		    {ok, unescape_key(<<Parent/binary, "*", C/binary>>)};
+		{_, _} ->
+		    done
+	    end;
+	_ ->
+	    done
+    end.
+
+next_child(Prev) when is_binary(Prev) ->
+    next_child(<<"data">>, Prev).
+
+next_child(Table, Prev0) ->
+    Prev = escape_key(Prev0),
+    case kvdb:next(instance_(), Table, <<Prev/binary,"+">>) of
+	{ok,{K1,_As,_Data}} ->
+	    K0 = raw_drop_last_key_part(Prev),
+	    N = byte_size(K0),
+	    if N >= byte_size(K1) ->
+		    done;
+	       true ->
+		    case erlang:split_binary(K1, N) of
+			{<<>>, K2} ->
+			    [C|_] = split_key(K2),
+			    {ok, C};
+			{K0, <<$*,K2/binary>>} ->
+			    [C|_] = raw_split_key(K2),
+			    {ok, unescape_key(<<K0/binary,$*,C/binary>>)};
+			{_, _} ->
+			    done
+		    end
+	    end;
+	done ->
+	    done
+    end.
+
+last_child(K) ->
+    last_child(<<"data">>, K).
+
+last_child(Tab, Parent0) ->
+    Parent = escape_key(Parent0),
+    case kvdb:prev(instance_(), Tab, <<Parent/binary, "*~">>) of
+	{ok, {K1,_As,_Data}} when byte_size(K1) > byte_size(Parent) ->
+	    N = byte_size(Parent),
+	    case erlang:split_binary(K1, N) of
+		{Parent, <<$*,K2/binary>>} ->
+		    [C|_] = raw_split_key(K2),
+		    {ok, unescape_key(<<Parent/binary,$*,C/binary>>)};
+		{_, _} ->
+		    done
+	    end;
+	_ ->
+	    done
+    end.
+
+
 -spec last(kvdb:table()) -> {ok, conf_obj()} | {error, not_found}.
 %% @doc Returns the last object in `Tab', if there is one; otherwise
 %% `{error, not_found}'.
@@ -610,6 +683,11 @@ normalize_tree(T, #conf_tree{root = R} = CT) ->
 get_root(#conf_tree{root = R}) ->
     R.
 
+-spec set_root(key(), #conf_tree{}) -> #conf_tree{}.
+%% @doc Inserts a new root into a `#conf_tree{}' record.
+set_root(R, #conf_tree{} = T) when is_binary(R) ->
+    T#conf_tree{root = R}.
+
 -spec shift_root(shift_op() | [shift_op()], #conf_tree{}) ->
 			#conf_tree{} | error.
 %% @doc Shifts the config tree root upwards or downwards if possible.
@@ -678,6 +756,9 @@ split_key(K) when is_binary(K) ->
 %% Used when we don't care about escaping/unescaping, or know it doesn't matter.
 raw_split_key(K) when is_binary(K) ->
     re:split(K, "\\*", [{return,binary}]).
+
+raw_drop_last_key_part(K) ->
+    raw_join_key(lists:reverse(tl(lists:reverse(raw_split_key(K))))).
 
 -spec join_key([key_part()]) -> key().
 %% @doc Joins a list of key parts into one key, ensuring all parts are escaped.

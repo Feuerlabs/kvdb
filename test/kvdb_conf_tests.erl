@@ -13,54 +13,13 @@
 -ifdef(TEST).
 
 -include_lib("eunit/include/eunit.hrl").
-
--define(_t(E), {timeout,60000,
-		[?_test(try E catch error:_R_ ->
-				      error({_R_, erlang:get_stacktrace()})
-			      end)]}).
+-include("feuerlabs_eunit.hrl").
 
 -define(tab, iolist_to_binary([<<"t_">>, integer_to_list(?LINE)])).
 -define(mktab(T, Os), T = ?tab, ok = kvdb_conf:add_table(T, Os)).
-
--define(dbg(E),
-	(fun() ->
-		 try (E) of
-		     __V ->
-			 ?debugFmt(<<"~s = ~P">>, [(??E), __V, 15]),
-			 __V
-		 catch
-		     error:__Err ->
-			 io:fwrite(user,
-				   "FAIL: test = ~s~n"
-				   "Error = ~p~n"
-				   "Trace = ~p~n", [(??E), __Err,
-						    erlang:get_stacktrace()]),
-			 error(__Err)
-		 end
-	  end)()).
-
 -define(my_t(E), ?_t(?dbg(E))).
 
 
--define(trace(Mods, Expr), begin dbg:tracer(),
-				 lists:foreach(
-				   fun(_M_) when is_atom(_M_) ->
-					   dbg:tpl(_M_,x);
-				      ({_M_,_F_}) ->
-					   dbg:tpl(_M_,_F_,x)
-				   end, Mods),
-				 dbg:p(all,[c]),
-				 try Expr
-				 after
-				     lists:foreach(
-				       fun(_M_) when is_atom(_M_) ->
-					       dbg:ctpl(_M_);
-					  ({_M_,_F_}) ->
-					       dbg:ctpl(_M_,_F_)
-				       end, Mods),
-				     dbg:stop()
-				 end
-			   end).
 conf_test_() ->
     {setup,
      fun() ->
@@ -77,6 +36,7 @@ conf_test_() ->
       , ?my_t(prefix_match())
       , ?my_t(conf_tree())
       , ?my_t(write_tree())
+      , ?my_t(first_next_child())
       ]}.
 
 read_write() ->
@@ -141,9 +101,22 @@ write_tree() ->
 	 {<<"a*c*a[00000001]">>,[],<<"3">>},
 	 {<<"a*c*a[00000002]">>,[],<<"4">>}],
     {conf_tree, _, _} = Tree = kvdb_conf:make_tree(L),
-    %% To write the whole, tree, we must first shift the root into the tree.
+    %% To write the whole tree, we must first shift the root into the tree.
     ok = kvdb_conf:write_tree(T, <<>>, kvdb_conf:shift_root(top, Tree)),
     {L,_} = kvdb_conf:prefix_match(T, <<>>),
+    ok = kvdb_conf:delete_table(T).
+
+first_next_child() ->
+    ?mktab(T, []),
+    ok = kvdb_conf:write(T, {<<"a*b">>, [], <<"1">>}),
+    ok = kvdb_conf:write(T, {<<"a*c">>, [], <<"2">>}),
+    ok = kvdb_conf:write(T, {<<"a*c*1">>, [], <<"3">>}),
+    ok = kvdb_conf:write(T, {<<"a*d">>, [], <<"4">>}),
+    {ok, <<"a*b">>} = kvdb_conf:first_child(T, <<"a">>),
+    {ok, <<"a*d">>} = kvdb_conf:last_child(T, <<"a">>),
+    {ok, <<"a*c">>} = kvdb_conf:next_child(T, <<"a*b">>),
+    {ok, <<"a*d">>} = kvdb_conf:next_child(T, <<"a*c">>),
+    done = kvdb_conf:next_child(T, <<"a*d">>),
     ok = kvdb_conf:delete_table(T).
 
 -endif.
