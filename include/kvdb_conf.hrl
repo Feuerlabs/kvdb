@@ -11,6 +11,17 @@
 %%% @doc kvdb definitions.
 %%% @end
 
+-type key_part()  :: binary() | {binary(), integer()}.
+-type key()       :: binary().
+-type attrs()     :: [{atom(), any()}].
+-type value()     :: any().
+-type conf_tree() :: [conf_node() | conf_obj()].
+-type node_key()  :: key() | integer().
+-type conf_obj()  :: {node_key(), attrs(), value()}.
+-type conf_node() :: {node_key(), attrs(), value(), conf_tree()}
+		   | {node_key(), conf_tree()}.
+-type shift_op()  :: up | down | top | bottom.
+
 -record(conf_tree, {root = <<>> :: key(),
 		    tree = []   :: conf_tree()
 		   }).

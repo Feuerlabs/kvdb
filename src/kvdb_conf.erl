@@ -83,10 +83,13 @@
 	 fold_children/4,   %% (Table, Fun, Acc, Parent)
 	 fold_list/3,       %% (Fun, Acc0, Pfx) -> (<<"data">>, Fun, Acc0, Pfx)
 	 fold_list/4,       %% (Table, Fun, Acc0, Pfx)
+	 last_list_pos/1,   %% (Pfx) -> (<<"data">>, Pfx)
+	 last_list_pos/2,   %% (Table, Prefix)
 	 %% store_tree/1,      %% (Tree) -> (data, Tree)
 	 %% store_tree/2,      %% (Tab, Tree)
 	 prefix_match/1,    %% (Prefix) -> (data, Prefix)
 	 prefix_match/2,    %% (Tab, Prefix)
+	 prefix_match/3,    %% (Tab, Prefix, Limit)
 	 all/0,             %% () -> all(data)
 	 all/1,             %% (Tab)
 	 first/0,           %% () -> first(data)
@@ -112,6 +115,8 @@
 	 split_key/1,
 	 join_key/1,
 	 join_key/2,
+	 raw_join_key/1,
+	 raw_split_key/1,
 	 list_key/2,
 	 %% is_list_key/1,
 	 escape_key_part/1,
@@ -125,16 +130,16 @@
 
 -include("kvdb_conf.hrl").
 
--type key_part()  :: binary() | {binary(), integer()}.
--type key()       :: binary().
--type attrs()     :: [{atom(), any()}].
--type value()     :: any().
--type conf_tree() :: [conf_node() | conf_obj()].
--type node_key()  :: key() | integer().
--type conf_obj()  :: {node_key(), attrs(), value()}.
--type conf_node() :: {node_key(), attrs(), value(), conf_tree()}
-		   | {node_key(), conf_tree()}.
--type shift_op()  :: up | down | top | bottom.
+%% -type key_part()  :: binary() | {binary(), integer()}.
+%% -type key()       :: binary().
+%% -type attrs()     :: [{atom(), any()}].
+%% -type value()     :: any().
+%% -type conf_tree() :: [conf_node() | conf_obj()].
+%% -type node_key()  :: key() | integer().
+%% -type conf_obj()  :: {node_key(), attrs(), value()}.
+%% -type conf_node() :: {node_key(), attrs(), value(), conf_tree()}
+%% 		   | {node_key(), conf_tree()}.
+%% -type shift_op()  :: up | down | top | bottom.
 
 -export_types([key_part/0, key/0, attrs/0, value/0, conf_obj/0]).
 
@@ -398,6 +403,10 @@ prefix_match(Prefix) ->
 prefix_match(Tab, Prefix) ->
     fix_match_set(kvdb:prefix_match(instance_(), Tab, escape_key(Prefix))).
 
+prefix_match(Tab, Prefix, Limit) ->
+    fix_match_set(
+      kvdb:prefix_match(instance_(), Tab, escape_key(Prefix), Limit)).
+
 -spec all() -> [conf_obj()].
 %% @equiv all(<<"data">>)
 all() ->
@@ -457,19 +466,34 @@ first_child(Table, Parent) when is_binary(Parent) ->
     end.
 
 first_child_(Table, Parent) when is_binary(Parent) ->
-    case kvdb:next(instance_(), Table, <<Parent/binary,"*+">>) of
+    case case Parent of
+	     <<>> -> kvdb:first(instance_(), Table);
+	     _ ->
+		 kvdb:next(instance_(), Table, <<Parent/binary,"*+">>)
+	 end of
 	{ok,{K,_As,_Data}} when byte_size(K) > byte_size(Parent) ->
-	    N = byte_size(Parent),
-	    case erlang:split_binary(K, N) of
-		{Parent, <<$*,K1/binary>>} ->
+	    case is_child(K, Parent) of
+		{true, K1} ->
 		    [C|_] = raw_split_key(K1),
-		    {ok, <<Parent/binary, "*", C/binary>>};
-		{_, _} ->
+		    {ok, raw_join_key(Parent, C)};
+		false ->
 		    done
 	    end;
 	_ ->
 	    done
     end.
+
+is_child(K, <<>>) ->
+    {true, K};
+is_child(K, Parent) ->
+    N = byte_size(Parent),
+    case erlang:split_binary(K, N) of
+	{Parent, <<$*,K1/binary>>} ->
+	    {true, K1};
+	_ ->
+	    false
+    end.
+
 
 -spec next_child(key()) -> {ok, key()} | done.
 %% @equiv next_child(<<"data">>, Prev)
@@ -568,25 +592,40 @@ fold_list(Fun, Acc, BaseKey) ->
 %% @end
 fold_list(Tab, Fun, Acc, BaseKey) ->
     MatchKey = <<(escape_key(BaseKey))/binary, "[">>,
+    BaseKeyU = unescape_key(BaseKey),
     Res = kvdb:next(instance_(), Tab, MatchKey),
-    fold_list_(Res, Tab, byte_size(MatchKey), MatchKey, Fun, Acc).
+    fold_list_(Res, Tab, byte_size(MatchKey), MatchKey, BaseKeyU, Fun, Acc).
 
-fold_list_({ok, {K,_,_}}, Tab, PfxSz, Prefix, Fun, Acc) ->
-    N = byte_size(K),
-    N1 = (N-PfxSz) - 1,  % Prefix includes the opening "["
+fold_list_({ok, {K,_,_}}, Tab, PfxSz, Prefix, Base, Fun, Acc) ->
     case K of
-	<<Prefix:PfxSz/binary, Pos:N1/binary, "]">> ->
+	<<Prefix:PfxSz/binary, Rest/binary>> ->
+	    [<<Pos:8/binary,"]">>|_] = binary:split(Rest, <<"*">>),
 	    I = list_to_integer(binary_to_list(Pos), 16),
-	    Acc1 = Fun(I, unescape_key(K), Acc),
-	    Res = kvdb:next(instance_(), Tab, <<K/binary,"+">>),
-	    fold_list_(Res, Tab, PfxSz, Prefix, Fun, Acc1);
+	    ListKey = <<Base/binary, "[", Pos/binary, "]">>,
+	    Acc1 = Fun(I, ListKey, Acc),
+	    Res = kvdb:next(instance_(), Tab,
+			    <<Prefix/binary, Pos/binary, "]+">>),
+	    fold_list_(Res, Tab, PfxSz, Prefix, Base, Fun, Acc1);
 	_ ->
 	    Acc
     end;
-fold_list_(_, _, _, _, _, Acc) ->
+fold_list_(_, _, _, _, _, _, Acc) ->
     Acc.
 
+last_list_pos(Prefix) ->
+    last_list_pos(<<"data">>, Prefix).
 
+last_list_pos(Table, Prefix0) ->
+    Prefix = escape_key(Prefix0),
+    PfxSz = byte_size(Prefix),
+    case kvdb:prev(instance_(), Table, <<Prefix/binary, "[~">>) of
+	{ok, {<<Prefix:PfxSz/binary, "[", Pos:8/binary, "]", _/binary>>,_,_}} ->
+	    {ok, list_to_integer(binary_to_list(Pos), 16)};
+	{ok, {<<Prefix:PfxSz/binary, _/binary>>,_,_}} ->
+	    {error, not_a_list};
+	_ ->
+	    {ok, 1}
+    end.
 
 -spec last(kvdb:table()) -> {ok, conf_obj()} | done.
 %% @doc Returns the last object in `Tab', if there is one; otherwise
@@ -685,6 +724,9 @@ next_at_level(K) when is_binary(K) ->
 %% @doc Skips to the next sibling at the same level in the subtree.
 next_at_level(Tab, K0) when is_binary(K0) ->
     K = escape_key(K0),
+    next_at_level_(Tab, K).
+
+next_at_level_(Tab, K) ->
     Len = length(raw_split_key(K)),
     Sz = byte_size(K),
     case raw_next(Tab, << K:Sz/binary, $+ >>) of
@@ -858,11 +900,16 @@ raw_drop_last_key_part(K) ->
 %% is the base key, and the second, a list index.
 %% For example, `{<<"port">>, 1}' is expanded to `<<"port[00000001]">>' and
 %% then escaped.
+%%
+%% NOTE: This function does not automatically escape '*', '[' and ']', as
+%% they are key delimiters. If they are meant to be escaped, escape the parts
+%% explicitly with {@link escape_key_part/1} and then use
+%% {@link raw_join_key/1}.
 %% @end
 join_key([{K,I}|T]) when is_binary(K), is_integer(I) ->
     join_key_(T, list_key(K,I));
 join_key([H|T]) when is_binary(H) ->
-    join_key_(T, escape_key_part(H));
+    join_key_(T, escape_key(H));
 join_key([]) ->
     <<>>.
 
@@ -870,15 +917,15 @@ join_key([]) ->
 %% @doc Joins two key parts into one key, ensuring both parts are escaped.
 %% See {@link join_key/1}.
 %% @end
-join_key(<<>>, K) -> escape_key_part(K);
-join_key(K, <<>>) -> escape_key_part(K);
+join_key(<<>>, K) -> escape_key(K);
+join_key(K, <<>>) -> escape_key(K);
 join_key(K1, K2) when is_binary(K1), is_binary(K2) ->
-    <<(escape_key_part(K1))/binary, "*", (escape_key_part(K2))/binary>>.
+    <<(escape_key(K1))/binary, "*", (escape_key(K2))/binary>>.
 
 join_key_([{K,I}|T], Acc) when is_binary(K), is_integer(I) ->
     join_key_(T, <<Acc/binary, "*", (list_key(K,I))/binary>>);
 join_key_([H|T], Acc) ->
-    join_key_(T, <<Acc/binary, "*", (escape_key_part(H))/binary>>);
+    join_key_(T, <<Acc/binary, "*", (escape_key(H))/binary>>);
 join_key_([], Acc) ->
     Acc.
 
@@ -896,37 +943,49 @@ join_unescape_key([H|T], Acc) when is_binary(H) ->
 join_unescape_key([], Acc) ->
     Acc.
 
-
-%% Used when we don't care about escaping/unescaping, or know it doesn't matter.
+-spec raw_join_key([key_part()]) -> key().
+%% @doc Joins key parts without escaping them.
+%% Use this function when you either don't care about escaping/unescaping,
+%% or know it has already been done (e.g. with {@link escape_key_part/1}).
+%% @end
 raw_join_key([]) -> <<>>;
 raw_join_key([{K,I}|T]) ->
-    raw_join_key(T, raw_list_key(K, I));
+    raw_join_(T, raw_list_key(K, I));
 raw_join_key([H|T]) when is_binary(H) ->
-    raw_join_key(T, H).
+    raw_join_(T, H).
 
-raw_join_key([{K,I}|T], Acc) when is_binary(K), is_integer(I) ->
-    raw_join_key(T, <<Acc/binary, "*", (raw_list_key(K, I))/binary>>);
-raw_join_key([H|T], Acc) when is_binary(H) ->
-    raw_join_key(T, <<Acc/binary, "*", H/binary>>);
-raw_join_key([], Acc) ->
+raw_join_([{K,I}|T], Acc) when is_binary(K), is_integer(I) ->
+    raw_join_(T, <<Acc/binary, "*", (raw_list_key(K, I))/binary>>);
+raw_join_([H|T], Acc) when is_binary(H) ->
+    raw_join_(T, <<Acc/binary, "*", H/binary>>);
+raw_join_([], Acc) ->
     Acc.
+
+raw_join_key(<<>>, K) -> K;
+raw_join_key(K, <<>>) -> K;
+raw_join_key(A, B) -> <<A/binary, "*", B/binary>>.
 
 -spec escape_key(key()) -> key().
 %% @doc Escapes a key; leaves it unchanged if already escaped.
 %%
 %% Any key starting with "=" is assumed to be escaped already.
 %%
+%% NOTE: This function does not escape '*', '[' and ']', as they are key
+%% delimiters. If they are intended to be escaped as well, use
+%% {@link escape_key_part/1} instead.
+%% @end
 escape_key(<<>>) -> <<>>;
 escape_key(<<"=", _/binary>> = K) -> K;
-escape_key(K) ->
-    join_key(split_key(K)).
+escape_key(Bin) when is_binary(Bin) ->
+    <<"=", (escape_key_(Bin))/binary>>.
 
--spec unescape_key(key()) -> key().
-%% @doc Unescapes a key.
-%%
-unescape_key(K) ->
-    Parts = split_key(K),
-    raw_join_key(Parts).
+escape_key_(<<"*=", Rest/binary>>) -> <<"*=", (escape_key_(Rest))/binary>>;
+escape_key_(<<"*", C, Rest/binary>>) ->
+    <<"*=", (id_char(C,false))/binary, (escape_key_(Rest))/binary>>;
+escape_key_(<<C, Rest/binary>>) ->
+    <<(id_char(C, false))/binary, (escape_key_(Rest))/binary>>;
+escape_key_(<<>>) ->
+    <<>>.
 
 -spec escape_key_part(key_part()) -> key_part().
 %% @doc Escapes a key part according to `kvdb_conf' escaping rules.
@@ -938,14 +997,23 @@ unescape_key(K) ->
 %% (just as '@' does), it won't upset the kvdb sort order.
 %%
 %% As a consequence, no unescaped key part string may begin with '='.
+%%
+%% NOTE: This function also escapes the key delimiters '*', '[' and ']'.
 %% @end
 escape_key_part(<<$=, _/binary>> = Esc) ->
     Esc;
 %% escape_key_part(I) when is_integer(I) ->
 %%     escape_key_part(list_to_binary(integer_to_list(I)));
 escape_key_part(Bin) when is_binary(Bin) ->
-    Enc = << <<(id_char(C))/binary>> || <<C>> <= Bin >>,
+    Enc = << <<(id_char(C,true))/binary>> || <<C>> <= Bin >>,
     <<$=, Enc/binary>>.
+
+-spec unescape_key(key()) -> key().
+%% @doc Unescapes a key.
+%%
+unescape_key(K) ->
+    Parts = split_key(K),
+    raw_join_key(Parts).
 
 -spec unescape_key_part(key_part()) -> key_part().
 %% @doc Unescapes a key part; leaving it untouched if already escaped.
@@ -996,8 +1064,10 @@ decode_list_key_(<<C, Rest/binary>>, Acc) ->
 decode_list_key_(<<>>, Acc) ->
     Acc.
 
-
-id_char(C) ->
+id_char($*, false) -> <<"*">>;
+id_char($[, false) -> <<"[">>;
+id_char($], false) -> <<"]">>;
+id_char(C, _) ->
     case ?is_id2(C) of
 	true -> <<C>>;
 	false when C =< 255 ->
@@ -1186,10 +1256,11 @@ flatten_tree({K, A, V, C}, Parent) ->
 %% there may be missing top- or intermediate nodes in the tree.
 %% If so, insert an empty node.
 %%
-pad_levels([{[_],_,_}|_] = Children) ->
-    Children;
 pad_levels([{[H,_|_],_,_}|_] = Children) ->
-    [H | Children].
+    [H | Children];
+pad_levels(Children) ->
+    Children.
+
 %% pad_levels([{[H,_|_],_,_}|_] = Children) ->
 %%     [{[H], [{1,1}], <<>>}|Children].
 
@@ -1239,6 +1310,8 @@ fix_ok_ret(Ret) ->
     Ret.
 
 fix_match_set({L, C}) ->
-    {[{unescape_key(K),A,V} || {K,A,V} <- L], C};
+    {[{unescape_key(K),A,V} || {K,A,V} <- L], fun() ->
+						      fix_match_set(C())
+					      end};
 fix_match_set(Ret) ->
     Ret.

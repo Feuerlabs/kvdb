@@ -34,6 +34,7 @@ conf_test_() ->
      end,
      [?my_t(read_write())
       , ?my_t(prefix_match())
+      , ?my_t(next_at_level())
       , ?my_t(conf_tree())
       , ?my_t(write_tree())
       , ?my_t(first_next_child())
@@ -56,6 +57,19 @@ prefix_match() ->
     ok = kvdb_conf:write(T, {<<"aaccdd">>, [], <<>>}),
     {[{<<"aabbcc">>,[],<<>>},{<<"aabbdd">>,[],<<>>}],_} =
 	kvdb_conf:prefix_match(T, <<"aabb">>),
+    ok = kvdb_conf:delete_table(T).
+
+next_at_level() ->
+    ?mktab(T, []),
+    ok = kvdb_conf:write(T, {<<"aa">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"aa*bb">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"aa*bb*cc">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"aa*cc">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"bb">>, [], <<>>}),
+    {ok, {<<"aa">>,_,_}} = kvdb_conf:first(T),
+    {ok, <<"bb">>} = kvdb_conf:next_at_level(T, <<"aa">>),
+    {ok, <<"aa*cc">>} = kvdb_conf:next_at_level(T, <<"aa*bb">>),
+    done = kvdb_conf:next_at_level(T, <<"aa*bb*cc">>),
     ok = kvdb_conf:delete_table(T).
 
 first_next_tree() ->
@@ -125,7 +139,8 @@ fold_list() ->
     ?mktab(T, []),
     ok = kvdb_conf:write(T, {<<"a*b*b">>, [], <<>>}),
     ok = kvdb_conf:write(T, {<<"a*b*c[00000001]">>, [], <<>>}),
-    ok = kvdb_conf:write(T, {<<"a*b*c[00000005]">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"a*b*c[00000005]*d">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"a*b*c[00000005]*e">>, [], <<>>}),
     ok = kvdb_conf:write(T, {<<"a*b*c[0000000A]">>, [], <<>>}),
     ok = kvdb_conf:write(T, {<<"a*b*d">>, [], <<>>}),
     [{10, <<"a*b*c[0000000A]">>},
