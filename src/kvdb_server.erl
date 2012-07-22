@@ -15,6 +15,7 @@
 -export([start_link/2,
 	 start_session/2,
 	 db/1, db/2,
+	 await/1, await/2,
 	 close/1,
 	 call/2,
 	 cast/2]).
@@ -91,6 +92,13 @@ end_trans(Name, Ref) ->
 
 close(Name) ->
     call(Name, close).
+
+await(Name) ->
+    await(Name, timer:minutes(1)).
+
+await(Name, Timeout) ->
+    gproc:await({n,l,{kvdb,Name}}, Timeout),
+    ok.
 
 cast(Name, Msg) ->
     gen_server:cast(gproc:where({n,l,{kvdb,Name}}), Msg).

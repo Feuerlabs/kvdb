@@ -43,7 +43,9 @@
 
 %% starting kvdb, opening databases
 -export([start/0, info/2]).
--export([open/2, close/1, db/1, start_session/2]).
+-export([open/2, close/1,
+	 await/1, await/2, db/1,
+	 start_session/2]).
 -export([transaction/2, in_transaction/2]).
 %% adding, deleting, listing tables
 -export([add_table/2,
@@ -222,6 +224,16 @@ close(Name) ->
        Name,
        close(Ref),
        call(Name, close), [Name]).
+
+-spec await(db_name()) -> ok.
+%% @equiv await(DbName, 60000)
+await(DbName) ->
+    kvdb_server:await(DbName).
+
+-spec await(db_name(), integer() | infinity) -> ok.
+%% @doc Waits for the kvdb database `DbName' to become available.
+await(DbName, Timeout) when is_integer(Timeout); Timeout==infinity ->
+    kvdb_server:await(DbName, Timeout).
 
 -spec db(db_name() | db_ref()) -> db_ref().
 %% @doc Returns a low-level handle for accessing the data via kvdb_direct:* functions.
