@@ -173,9 +173,15 @@
 
 
 instance_() ->
-    case get(kvdb_conf) of
-	undefined -> ?MODULE;
-	Name -> Name
+    Name = case get(kvdb_conf) of
+	       undefined -> ?MODULE;
+	       N -> N
+	   end,
+    case kvdb_trans:is_transaction(Name) of
+	{true, Ref} ->
+	    Ref;
+	false ->
+	    Name
     end.
 
 

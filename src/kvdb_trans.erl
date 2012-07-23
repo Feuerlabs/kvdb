@@ -464,7 +464,7 @@ merge_sets([], S2, #set_merge{c1 = C1} = SM, Limit, Acc) ->
 		      done -> {done, done};
 		      {_, _} = Res -> Res
 		  end,
-    merge_sets(S1, S2, #set_merge{c1 = NewC1} = SM, Limit, Acc);
+    merge_sets(S1, S2, SM#set_merge{c1 = NewC1}, Limit, Acc);
 merge_sets(S1, [], #set_merge{c2 = C2} = SM, Limit, Acc) ->
     {S2, NewC2} = case C2() of
 		      done -> {done, done};
