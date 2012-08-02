@@ -527,11 +527,11 @@ list_queue(Name, Table, Q) ->
        kvdb_direct:list_queue(db(Name), Table, Q),
        [Name, Table, Q]).
 
-list_queue(Name, Table, Q, Fltr, Inactive, Limit) ->
+list_queue(Name, Table, Q, Fltr, HeedBlock, Limit) ->
     ?IF_TRANS(
        Name,
-       kvdb_direct:list_queue(Ref, Table, Q, Fltr, Inactive, Limit),
-       kvdb_direct:list_queue(db(Name), Table, Q, Fltr, Inactive, Limit),
+       kvdb_direct:list_queue(Ref, Table, Q, Fltr, HeedBlock, Limit),
+       kvdb_direct:list_queue(db(Name), Table, Q, Fltr, HeedBlock, Limit),
        [Name, Table, Q, Fltr, Inactive, Limit]).
 
 

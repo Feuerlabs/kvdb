@@ -25,6 +25,8 @@
 	 pre_commit/2,
 	 post_commit/2]).
 
+-include_lib("lager/include/log.hrl").
+
 notify_when_not_empty(#kvdb_ref{name = DBN} = Db, Table0, Q) ->
     Table = kvdb_lib:table_name(Table0),
     Evt = {kvdb, DBN, Table, Q, queue_status},
@@ -61,8 +63,10 @@ pre_commit(C, _) ->
 post_commit(_, _) ->
     ok.
 
-notify_queue_status(#kvdb_ref{name = DBN, db = #db{metadata = Ets}},
+notify_queue_status(#kvdb_ref{name = DBN, db = #db{metadata = Ets}} = Ref,
 		    Table, Q, Status) ->
+    ?debug("notify_queue_statusf(Ref = ~p, ~p, ~p, ~p)~n",
+	   [Ref,Table,Q,Status]),
     case set_status(Ets, Table, Q, Status) of
 	changed ->
 	    _ = gproc_ps:publish(l, {kvdb, DBN, Table, queue_status},

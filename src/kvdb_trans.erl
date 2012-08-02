@@ -33,6 +33,7 @@
 	 prel_pop/3,
 	 extract/3,
 	 list_queue/3,
+	 list_queue/6,
 	 is_queue_empty/3,
 	 is_table/2,
 	 first_queue/2,
@@ -73,6 +74,7 @@ require(#kvdb_ref{name=Name, tref=undefined} = Ref, F) when is_function(F,1) ->
 	[Kt|_]    -> F(Kt)
     end;
 require(#kvdb_ref{tref = TRef} = Ref, F) when is_function(F, 1) ->
+    ?debug("~p: reusing existing transaction (~p)~n", [self(), Ref]),
     Key = {kvdb_trans, Name = name(Ref)},
     case get(Key) of
 	[#kvdb_ref{tref = TRef} = Kt|_] ->
@@ -95,9 +97,10 @@ run(#kvdb_ref{schema = Schema, db = Db0} = KR0, F) when is_function(F,1) ->
     KR1 = #kvdb_ref{mod = kvdb_ets, db = DbE},
     K = #kvdb_ref{name = Name, schema = Schema,
 		  mod = ?MODULE, tref = TRef,
-		  db = #db{ref = {KR1, KR0}}},
+		  db = #db{ref = {KR1, KR0}, metadata = DbE#db.metadata}},
     kvdb_server:begin_trans(Name, TRef, K),
     push_trans(Name, K),
+    ?debug("~p: New transaction (~p)~n", [self(), K]),
     try  Result = F(K),
 	 commit(K),
 	 Result
@@ -180,7 +183,7 @@ commit(#kvdb_ref{tref = TRef, schema = Schema} = Ref0) ->
 	switch_db(Ref0, NewDb),
     #commit{} = Set = M1:commit_set(Db1),
     #commit{} = Set1 = Schema:pre_commit(Set, Ref),
-    ?debug("Commit set: ~p~n", [Set]),
+    ?debug("~p: Commit set: ~p~n", [self(), Set]),
     kvdb_lib:commit(Set1, KR2),
     catch Schema:post_commit(Set1, Ref),
     fire_events(Set1, Ref).
@@ -794,6 +797,8 @@ pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
 	    M1:int_write(Db1, {deleted, Tab, QKey}, true),
 	    IsEmpty = (Rest =/= []),
 	    {ok, Obj, IsEmpty};
+	{[], _} ->
+	    done;
 	R when ?q_done(R) ->
 	    R
     end.
@@ -808,6 +813,8 @@ prel_pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
 	    M1:queue_insert(Db1, Tab, QKey, blocking, Obj),
 	    IsEmpty = (Rest =/= []),
 	    {ok, Obj, QKey, IsEmpty};
+	{[], _} ->
+	    done;
 	R when ?q_done(R) ->
 	    R
     end.

@@ -341,14 +341,14 @@ list_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
     DbMod:list_queue(Db, Table, Q).
 
 -spec list_queue(#kvdb_ref{}, Table::table(), Q::queue_name(),
-		    _Fltr :: fun((active|inactive, tuple()) ->
-					keep | keep_raw | skip | tuple()),
-		    _Inactive :: boolean(), _Limit :: integer() | infinity) ->
-			   [object()] | {error,any()}.
+		 _Fltr :: fun((active|inactive, tuple()) ->
+				     keep | keep_raw | skip | tuple()),
+		 _HeedBlock :: boolean(), _Limit :: integer() | infinity) ->
+			[object()] | {error,any()}.
 list_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q,
-	      Fltr, Inactive, Limit) ->
+	   Fltr, HeedBlock, Limit) ->
     Table = table_name(Table0),
-    DbMod:list_queue(Db, Table, Q, Fltr, Inactive, Limit).
+    DbMod:list_queue(Db, Table, Q, Fltr, HeedBlock, Limit).
 
 -spec is_queue_empty(#kvdb_ref{}, table(), _Q::queue_name()) -> boolean().
 is_queue_empty(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
