@@ -246,7 +246,7 @@ do_add_table(#db{ref = Db}, Table) ->
 
 list_tables(#db{metadata = ETS}) ->
     ets:select(ETS, [{ {{table, '$1'}, '_'},
-		       [{'=/=','$1',?SCHEMA_TABLE}], ['$1'] }]).
+		       [{'=/=','$1',?META_TABLE}], ['$1'] }]).
 
 delete_table(#db{ref = Ref} = Db, Table) ->
     case schema_lookup(Db, {table, Table}, undefined) of
@@ -1171,7 +1171,9 @@ iterator_move_(I, Db, Table, Enc, TableKey, KeySize, EncRel,
 					   KeySize, EncRel, prev, Comp, Dir);
 		       true ->
 			    done
-		    end
+		    end;
+	       true ->
+		    done
 	    end;
 	_ ->
 	    done
@@ -1269,17 +1271,17 @@ check_options([], _, Rec) ->
 ensure_schema(#db{ref = Ref} = Db, Opts) ->
     ETS = ets:new(kvdb_schema, [ordered_set, public]),
     Db1 = Db#db{metadata = ETS},
-    case eleveldb:get(Ref, make_table_key(?SCHEMA_TABLE, <<>>), []) of
+    case eleveldb:get(Ref, make_table_key(?META_TABLE, <<>>), []) of
 	{ok, _} ->
-	    [ets:insert(ETS, X) || X <- whole_table(Db1, sext, ?SCHEMA_TABLE)],
+	    [ets:insert(ETS, X) || X <- whole_table(Db1, sext, ?META_TABLE)],
 	    Db1;
 	_ ->
-	    ok = do_add_table(Db1, ?SCHEMA_TABLE),
-	    Tab = #table{name = ?SCHEMA_TABLE, encoding = sext,
+	    ok = do_add_table(Db1, ?META_TABLE),
+	    Tab = #table{name = ?META_TABLE, encoding = sext,
 			 columns = [key,value]},
-	    schema_write(Db1, {{table, ?SCHEMA_TABLE}, Tab}),
-	    schema_write(Db1, {{a, ?SCHEMA_TABLE, encoding}, sext}),
-	    schema_write(Db1, {{a, ?SCHEMA_TABLE, type}, set}),
+	    schema_write(Db1, {{table, ?META_TABLE}, Tab}),
+	    schema_write(Db1, {{a, ?META_TABLE, encoding}, sext}),
+	    schema_write(Db1, {{a, ?META_TABLE, type}, set}),
 	    schema_write(Db1, {schema_mod, proplists:get_value(schema, Opts, kvdb_schema)}),
 	    Db1
     end.
@@ -1294,9 +1296,9 @@ whole_table(done, _Db, _Enc, _Table) ->
 
 schema_write(#db{metadata = ETS} = Db, Item) ->
     ets:insert(ETS, Item),
-    put(Db, ?SCHEMA_TABLE, Item).
+    put(Db, ?META_TABLE, Item).
 
-schema_lookup(_, {a, ?SCHEMA_TABLE, Attr}, Default) ->
+schema_lookup(_, {a, ?META_TABLE, Attr}, Default) ->
     case Attr of
 	type -> set;
 	encoding -> sext;
@@ -1312,4 +1314,4 @@ schema_lookup(#db{metadata = ETS}, Key, Default) ->
 
 schema_delete(#db{metadata = ETS} = Db, Key) ->
     ets:delete(ETS, Key),
-    delete(Db, ?SCHEMA_TABLE, Key).
+    delete(Db, ?META_TABLE, Key).

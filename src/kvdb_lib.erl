@@ -38,6 +38,7 @@
 	 purge_logs/2,
 	 clear_log_thresholds/1,
 	 log/2,
+	 process_log_event/3,
 	 on_update/4,
 	 commit/2]).
 
@@ -497,28 +498,30 @@ replay_log(LogF, Module, Db, LastDump) ->
 eat_log(eof, _, _, _, _) ->
     ok;
 eat_log({Cont, Terms}, Log, Mod, Db, Last) ->
-    lists:foreach(
-      fun({{_,_,_} = TS, Op}) when TS > Last ->
-	      case Op of
-		  ?KVDB_LOG_INSERT(Table, Obj) ->
-		      Mod:put(Db, Table, Obj);
-		  ?KVDB_LOG_DELETE(Table, Key) ->
-		      Mod:delete(Db, Table, Key);
-		  ?KVDB_LOG_Q_INSERT(Table, QKey, St, Obj) ->
-		      Mod:queue_insert(Db, Table, QKey, St, Obj);
-		  ?KVDB_LOG_Q_DELETE(Table, QKey) ->
-		      _ = Mod:extract(Db, Table, QKey);
-		  ?KVDB_LOG_ADD_TABLE(Table, TabR) ->
-		      Mod:add_table(Db, Table, TabR);
-		  ?KVDB_LOG_DELETE_TABLE(Table) ->
-		      Mod:delete_table(Db, Table);
-		  ?KVDB_LOG_COMMIT(CommitRec) ->
-		      commit(CommitRec, Mod, Db)
-	      end;
-	 (_) ->
-	      skip
-      end, Terms),
-    eat_log(disk_log:chunk(Log, Cont), Log, Mod, Db, Last).
+    lists:foreach(fun({{_,_,_} = TS, _} = Event) when TS > Last ->
+			  process_log_event(Event, Mod, Db);
+		     (_) -> skip
+		  end, Terms),
+eat_log(disk_log:chunk(Log, Cont), Log, Mod, Db, Last).
+
+process_log_event({_TS, Op}, Mod, Db) ->
+    case Op of
+	?KVDB_LOG_INSERT(Table, Obj) ->
+	    Mod:put(Db, Table, Obj);
+	?KVDB_LOG_DELETE(Table, Key) ->
+	    Mod:delete(Db, Table, Key);
+	?KVDB_LOG_Q_INSERT(Table, QKey, St, Obj) ->
+	    Mod:queue_insert(Db, Table, QKey, St, Obj);
+	?KVDB_LOG_Q_DELETE(Table, QKey) ->
+	    _ = Mod:extract(Db, Table, QKey);
+	?KVDB_LOG_ADD_TABLE(Table, TabR) ->
+	    Mod:add_table(Db, Table, TabR);
+	?KVDB_LOG_DELETE_TABLE(Table) ->
+	    Mod:delete_table(Db, Table);
+	?KVDB_LOG_COMMIT(CommitRec) ->
+	    commit(CommitRec, Mod, Db)
+    end.
+
 
 use_logs(F, [A,B|_] = L) when A < F, F < B ->
     L;
@@ -682,6 +685,22 @@ log(#db{log = {Log,Thr}} = Db, Data) ->
 	    kvdb_meta:delete(Db, log_threshold),
 	    ok
     end.
+
+nodes_of({commit, #commit{add_tables = [], del_tables = []} = Rec}, Db) ->
+    lists:usort(lists:append(([nodes_of_(T, Db) || T <- updated_tables(Rec)])));
+nodes_of(_Commit, Db) ->
+    kvdb_meta:read(Db, schema_nodes, [node()]);
+nodes_of(Evt, Db) ->
+    nodes_of_(element(2, Evt), Db).
+
+nodes_of_(T, Db) ->
+    kvdb_meta:read(Db, {T, nodes}, [node()]).
+
+updated_tables(#commit{write = Writes, delete = Deletes}) ->
+    Tw = [element(1,W) || W <- Writes],
+    Td = [element(1,D) || D <- Deletes],
+    lists:usort(Tw ++ Td).
+
 
 threshold_reached(#thr{bytes = ABs, writes = AWs},
 		  #thr{bytes = TBs, writes = TWs}) ->

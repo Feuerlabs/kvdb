@@ -24,6 +24,7 @@
 		encoding = sext,
 		columns,
 		schema,
+		nodes = [node()],
 		index = []}).
 
 -record(event, {event, tab, info}).
@@ -33,7 +34,7 @@
 
 -type db() :: #db{}.
 
--define(SCHEMA_TABLE, <<"kvdb__SCHEMA">>).
+-define(META_TABLE, <<"kvdb__META">>).
 
 -type db_name() :: any().
 -type key() :: any().
@@ -86,4 +87,5 @@
 -define(KVDB_LOG_Q_DELETE(Tab, QKey), {q_delete, Tab, QKey}).
 -define(KVDB_LOG_ADD_TABLE(Tab, TabR), {add_table, Tab, TabR}).
 -define(KVDB_LOG_DELETE_TABLE(Tab), {delete_table, Tab}).
+-define(KVDB_LOG_WRITE_META(Op), {write_meta, Op}).
 -define(KVDB_LOG_COMMIT(CommitRec), {commit, CommitRec}).

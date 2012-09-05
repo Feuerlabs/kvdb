@@ -137,7 +137,7 @@ load_from_file(FileName, Options) ->
 		    %% FIXME: also need to read transaction log, but as yet,
 		    %% we don't have one.
 		    Db0 = #db{ref = T},
-		    Enc = encoding(Db0, ?SCHEMA_TABLE),
+		    Enc = encoding(Db0, ?META_TABLE),
 		    {ok, Db0#db{metadata = T, encoding = Enc}};
 		Error ->
 		    Error
@@ -1106,18 +1106,18 @@ check_options([], _, Rec) ->
 
 
 ensure_schema(#db{ref = Ets} = Db, Options) ->
-    case ets:member(Ets, {table, ?SCHEMA_TABLE}) of
+    case ets:member(Ets, {table, ?META_TABLE}) of
 	true ->
 	    Db;
 	false ->
-	    ets:insert(Ets, [{{table, ?SCHEMA_TABLE},
-			      #table{name = ?SCHEMA_TABLE,
+	    ets:insert(Ets, [{{table, ?META_TABLE},
+			      #table{name = ?META_TABLE,
 				     encoding = raw,
 				     columns = [key,value]}},
-			     {{a, ?SCHEMA_TABLE, encoding}, raw},
-			     {{a, ?SCHEMA_TABLE, index}, []},
-			     {{a, ?SCHEMA_TABLE, type}, set},
-			     {{a, ?SCHEMA_TABLE, options}, Options}]),
+			     {{a, ?META_TABLE, encoding}, raw},
+			     {{a, ?META_TABLE, index}, []},
+			     {{a, ?META_TABLE, type}, set},
+			     {{a, ?META_TABLE, options}, Options}]),
 	    Db
     end.
 

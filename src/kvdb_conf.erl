@@ -930,6 +930,8 @@ join_key(K1, K2) when is_binary(K1), is_binary(K2) ->
 
 join_key_([{K,I}|T], Acc) when is_binary(K), is_integer(I) ->
     join_key_(T, <<Acc/binary, "*", (list_key(K,I))/binary>>);
+join_key_([<<>>], Acc) ->
+    Acc;
 join_key_([H|T], Acc) ->
     join_key_(T, <<Acc/binary, "*", (escape_key(H))/binary>>);
 join_key_([], Acc) ->

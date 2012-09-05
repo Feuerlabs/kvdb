@@ -195,7 +195,7 @@ maybe_create_index_table(Ref, Table, #table{index = [_|_] = Ix} = TabR) ->
 
 
 list_tables(#db{metadata = ETS}) ->
-    ets:select(ETS, [{ {{table, '$1'}, '_'}, [{'=/=','$1',?SCHEMA_TABLE}], ['$1'] }]).
+    ets:select(ETS, [{ {{table, '$1'}, '_'}, [{'=/=','$1',?META_TABLE}], ['$1'] }]).
 
 
 delete_table(#db{ref = Ref} = Db, Table) ->
@@ -1085,17 +1085,17 @@ ensure_schema(#db{ref = Ref} = Db) ->
     ETS = ets:new(kvdb_schema, [ordered_set, public]),
     Db1 = Db#db{metadata = ETS},
     case lists:member(
-	   ?SCHEMA_TABLE, [to_bin(T) || T <- sqlite3:list_tables(Ref)]) of
+	   ?META_TABLE, [to_bin(T) || T <- sqlite3:list_tables(Ref)]) of
 	false ->
 	    Columns = [{key, blob, primary_key}, {value, blob}],
-	    sqlite3:create_table(Ref, ?SCHEMA_TABLE, Columns),
-	    Tab = #table{name = ?SCHEMA_TABLE,
+	    sqlite3:create_table(Ref, ?META_TABLE, Columns),
+	    Tab = #table{name = ?META_TABLE,
 			 encoding = sext, columns = [key,value]},
-	    schema_write(Db1, {{table, ?SCHEMA_TABLE}, Tab}),
-	    schema_write(Db1, {{a, ?SCHEMA_TABLE, encoding}, sext}),
+	    schema_write(Db1, {{table, ?META_TABLE}, Tab}),
+	    schema_write(Db1, {{a, ?META_TABLE, encoding}, sext}),
 	    Db1;
 	true ->
-	    [ets:insert(ETS, X) || X <- whole_table(Ref, ?SCHEMA_TABLE, sext)],
+	    [ets:insert(ETS, X) || X <- whole_table(Ref, ?META_TABLE, sext)],
 	    Db1
     end.
 
@@ -1124,12 +1124,12 @@ whole_table(Ref, Table, Enc) ->
 
 schema_write(#db{metadata = ETS} = Db, Item) ->
     ets:insert(ETS, Item),
-    put(Db, ?SCHEMA_TABLE, Item).
+    put(Db, ?META_TABLE, Item).
 
 is_table(#db{metadata = ETS}, Table) ->
     ets:member(ETS, {table, Table}).
 
-schema_lookup(_, {a, ?SCHEMA_TABLE,Attr}, Default) ->
+schema_lookup(_, {a, ?META_TABLE,Attr}, Default) ->
     case Attr of
 	type -> set;
 	encoding -> sext;
@@ -1145,6 +1145,6 @@ schema_lookup(#db{metadata = ETS}, Key, Default) ->
 
 schema_delete(#db{metadata = ETS} = Db, Key) ->
     ets:delete(ETS, Key),
-    delete(Db, ?SCHEMA_TABLE, Key).
+    delete(Db, ?META_TABLE, Key).
 
 

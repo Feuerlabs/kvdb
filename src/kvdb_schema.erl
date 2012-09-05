@@ -38,14 +38,14 @@ on_update(_Op, _Db, _Table, _Obj) ->
     ok.
 
 write(Db, Schema) ->
-    [kvdb:put(Db, ?SCHEMA_TABLE, X) || X <- Schema],
+    [kvdb:put(Db, ?META_TABLE, X) || X <- Schema],
     ok.
 
 read(Db) ->
-    match_(kvdb:select(Db, ?SCHEMA_TABLE, [{'_',[],['$_']}], 100), []).
+    match_(kvdb:select(Db, ?META_TABLE, [{'_',[],['$_']}], 100), []).
 
 read(Db, Item) ->
-    case kvdb:get(Db, ?SCHEMA_TABLE, Item) of
+    case kvdb:get(Db, ?META_TABLE, Item) of
 	{ok, {_,_,V}} -> {ok, V};
 	{ok, {_, V}}  -> {ok, V};
 	Error ->
