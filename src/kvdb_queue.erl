@@ -38,6 +38,13 @@ list_full(Db,Tab,Q) ->
 first(Db, Table)        -> kvdb:first_queue(Db, Table).
 next(Db, Table, PrevQ)  -> kvdb:next_queue(Db, Table, PrevQ).
 
+list_queues(Db, Table) ->
+    list_queues(Db, Table, 30).
+
+list_queues(Db, Table, Limit) when
+      Limit == infinity; is_integer(Limit), Limit >= 0 ->
+    list_queues_(first(Db, Table), Db, Table, Limit, Limit, []).
+
 clear_queue(Db, Table, Q) ->
     clear_queue_(kvdb:list_queue(Db, Table, Q,
 				 fun(_,K,_) -> {keep,K} end,
@@ -51,4 +58,25 @@ clear_queue_({Keys, Cont}, Db, Table, Q) ->
 	      kvdb:delete(Db, Table, Key)
       end, Keys),
     clear_queue_(Cont(), Db, Table, Q).
+
+list_queues_({ok, Q}, Db, Table, Limit0, Limit, Acc) ->
+    case decr(Limit) of
+	0 ->
+	    {lists:reverse([Q|Acc]),
+	     fun() ->
+		     Next = next(Db, Table, Q),
+		     list_queues_(Next, Db, Table, Limit0, Limit0, [])
+	     end};
+	Limit1 ->
+	    list_queues_(next(Db, Table, Q), Db, Table, Limit0, Limit1, [Q|Acc])
+    end;
+list_queues_(done, Db, Table, Limit0, Limit, Acc) ->
+    if Acc == [] -> done;
+       true -> {lists:reverse(Acc), fun() -> done end}
+    end.
+
+decr(infinity) ->
+    infinity;
+decr(I) when is_integer(I) ->
+    I-1.
 
