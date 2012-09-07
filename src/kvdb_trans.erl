@@ -664,6 +664,7 @@ list_queue_(R1, R2, QM, Limit0, Limit) ->
 	     end}
     end.
 
+initial_set(blocked) -> {blocked, done};
 initial_set(done) -> {done, done};
 initial_set({_,_} = R) -> R.
 
