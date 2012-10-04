@@ -44,7 +44,7 @@
 %% starting kvdb, opening databases
 -export([start/0, info/2]).
 -export([open/2, close/1,
-	 await/1, await/2, db/1,
+	 await/1, await/2, db/1, db_name/1,
 	 start_session/2]).
 -export([transaction/2, in_transaction/2]).
 %% adding, deleting, listing tables
@@ -75,6 +75,8 @@
 	 push/4,
 	 pop/2,
 	 pop/3,
+	 peek/2,
+	 peek/3,
 	 prel_pop/2,
 	 prel_pop/3,
 	 extract/3,
@@ -201,7 +203,12 @@ dump_tables(Name) ->
 %% @end
 open(Name, Options) ->
     %% supervisor:start_child(kvdb_sup, kvdb_sup:childspec({Name, Options})).
-    kvdb_sup:start_child(Name, Options).
+    case kvdb_sup:start_child(Name, Options) of
+	{ok, _} ->
+	    {ok, gproc:where({n,l,{kvdb,Name}})};
+	Other ->
+	    Other
+    end.
 
 %% do_open(Name, Options) when is_list(Options) ->
 %%     DbMod = proplists:get_value(backend, Options, kvdb_sqlite3),
@@ -223,7 +230,8 @@ close(Name) ->
     ?IF_TRANS(
        Name,
        close(Ref),
-       call(Name, close), [Name]).
+       kvdb_db_sup:stop_child(Name), [Name]).
+       %% call(Name, close), [Name]).
 
 -spec await(db_name()) -> ok.
 %% @equiv await(DbName, 60000)
@@ -246,6 +254,12 @@ db(#kvdb_ref{} = Db) ->
     Db;
 db(Name) ->
     kvdb_server:db(Name).
+
+db_name(#kvdb_ref{name = Name}) ->
+    Name;
+db_name(Name) ->
+    Name.
+
 
 -spec transaction(db_name() | #kvdb_ref{}, F::fun((#kvdb_ref{}) -> T)) -> T.
 %% @doc Runs a transaction with commit/rollback semantics.
@@ -481,6 +495,24 @@ pop(Name, Table, Q) ->
        call(Name, {pop, Table, Q}),
        [Name, Table, Q]).
 
+peek(Name, Table) ->
+    peek(Name, Table, <<>>).
+
+peek(Name, Table, Q) ->
+    ?IF_TRANS(
+       Name,
+       peek_(Ref, Table, Q),
+       peek_(db(Name), Table, Q),
+       [Name, Table, Q]).
+
+peek_(Ref, Table, Q) ->
+    case kvdb_direct:list_queue(
+	   Ref, Table, Q, fun(S,K,O) -> {keep,{S,K,O}} end, false, 1) of
+	{[{S,K,O}], _} ->
+	    {ok, S, K, O};
+	_ ->
+	    done
+    end.
 
 -spec prel_pop(db_name(), Table::table()) ->
 		      {ok, object(), binary()} | done | {error,any()}.

@@ -129,6 +129,7 @@ fill_db(Name, _Db, Opts, D) ->
 	      timer:sleep(30),
 	      kvdb:put(Name, t, Obj)
       end, Objs),
+    ?debugFmt("closing ~p...~n", [Name]),
     kvdb:close(Name),
     ?debugFmt("DB closed. Trying to reopen...~n", []),
     timer:sleep(500),

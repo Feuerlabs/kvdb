@@ -74,7 +74,7 @@ require(#kvdb_ref{name=Name, tref=undefined} = Ref, F) when is_function(F,1) ->
 	[Kt|_]    -> F(Kt)
     end;
 require(#kvdb_ref{tref = TRef} = Ref, F) when is_function(F, 1) ->
-    ?debug("~p: reusing existing transaction (~p)~n", [self(), Ref]),
+    ?debug("~p: reusing existing transaction...~n", [self()]),
     Key = {kvdb_trans, Name = name(Ref)},
     case get(Key) of
 	[#kvdb_ref{tref = TRef} = Kt|_] ->
@@ -100,7 +100,7 @@ run(#kvdb_ref{schema = Schema, db = Db0} = KR0, F) when is_function(F,1) ->
 		  db = #db{ref = {KR1, KR0}, metadata = DbE#db.metadata}},
     kvdb_server:begin_trans(Name, TRef, K),
     push_trans(Name, K),
-    ?debug("~p: New transaction (~p)~n", [self(), K]),
+    ?debug("~p: New transaction...~n", [self()]),
     try  Result = F(K),
 	 commit(K),
 	 Result
@@ -534,6 +534,7 @@ merge_q_sets(done,done, QM, _Limit, Acc) ->
 
 merge_q_acc(K,St,O, S1,S2, #q_merge{heedblock = Heed,
 				    filter = Filter} = QM, Limit, Acc) ->
+    ?debug("merge_q_acc(QM = ~p)~n", [QM]),
     case Heed andalso St == blocked of
 	true ->
 	    {Acc, QM, blocked};

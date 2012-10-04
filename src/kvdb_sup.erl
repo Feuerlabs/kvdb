@@ -38,9 +38,11 @@ start_link() ->
 init([]) ->
     %% Children = childspecs(DBs = get_databases()),
     %% io:fwrite("DBs = ~p~n", [DBs]),
-    {ok, { {simple_one_for_one, 5, 10},
-	   [{id, {kvdb_server, start_link, []},
-	     transient, 5000, worker, [kvdb_server]}] }}.
+    {ok, { {simple_one_for_one, 0, 10},
+	   [{id, {kvdb_db_sup, start_link, []},
+	     permanent, infinity, supervisor, [kvdb_db_sup]}] }}.
+	   %% [{id, {kvdb_server, start_link, []},
+	   %%   transient, 5000, worker, [kvdb_server]}] }}.
 
 
 start_child(Name, Opts) ->

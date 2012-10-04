@@ -64,6 +64,8 @@
 	 update_counter/3,  %% (Tab, Key, Incr)
 	 delete/1,          %% (Key) -> delete(data, Key)
 	 delete/2,          %% (Tab, Key)
+	 delete_tree/1,     %% (Key) -> delete_tree(data, Key)
+	 delete_tree/2,     %% (Tab, Key)
 	 delete_all/1,      %% (Prefix) -> delete_all(data, Prefix)
 	 delete_all/2,      %% (Tab, Prefix)
 	 read_tree/1,       %% (Key) -> (data, Key)
@@ -90,6 +92,9 @@
 	 prefix_match/1,    %% (Prefix) -> (data, Prefix)
 	 prefix_match/2,    %% (Tab, Prefix)
 	 prefix_match/3,    %% (Tab, Prefix, Limit)
+	 xpath/1,           %% (Expr) -> (<<"data">>, Expr)
+	 xpath/2,           %% (Tab, Expr) -> (Tab, Expr, <<>>)
+	 xpath/3,           %% (Tab, Exp, Prev)
 	 all/0,             %% () -> all(data)
 	 all/1,             %% (Tab)
 	 first/0,           %% () -> first(data)
@@ -377,6 +382,13 @@ delete(K) when is_binary(K) ->
 delete(Tab, K) when is_binary(K) ->
     kvdb:delete(instance_(), Tab, escape_key(K)).
 
+delete_tree(K) when is_binary(K) ->
+    delete(data, K).
+
+delete_tree(Tab, K) when is_binary(K) ->
+    delete(Tab, K),
+    delete_all(Tab, <<K/binary, "*">>).
+
 -spec delete_all(kvdb:prefix()) -> ok.
 %% @equiv delete_all(<<"data">>, Prefix)
 delete_all(Prefix) when is_binary(Prefix) ->
@@ -413,6 +425,23 @@ prefix_match(Tab, Prefix, Limit) ->
     fix_match_set(
       kvdb:prefix_match(instance_(), Tab, escape_key(Prefix), Limit)).
 
+xpath(Expr) ->
+    xpath(<<"data">>, Expr).
+
+xpath(Tab, Expr) ->
+    xpath(Tab, Expr, 30).
+
+xpath(Tab, Expr, Limit) ->
+    xpath(Tab, Expr, Limit, <<>>).
+
+xpath(Tab, Expr, Limit, Prev) ->
+    case xmerl_xpath_parse:parse(xmerl_xpath_scan:tokens(Expr)) of
+	{ok, Abst} ->
+	    error(nyi);
+	{error,_} = E ->
+	    error(E)
+    end.
+
 -spec all() -> [conf_obj()].
 %% @equiv all(<<"data">>)
 all() ->
@@ -428,7 +457,19 @@ all() ->
 %% function would be `prefix_match(Tab, <<>>)'.
 %% @end
 all(Tab) ->
-    all_(raw_first(Tab), Tab).
+    Db = instance_(),
+    case kvdb:info(Db, {Tab, type}) of
+	set ->
+	    all_(raw_first(Tab), Tab);
+	T when T==fifo; T==lifo; element(1,T) == keyed ->
+	    iterate_all(kvdb_queue:list_queues(Db, Tab))
+    end.
+
+iterate_all({L, Cont}) ->
+    L ++ iterate_all(Cont());
+iterate_all(done) ->
+    [].
+
 
 all_({ok, {K,A,V}}, Tab) ->
     [{unescape_key(K),A,V} | all_(raw_next(Tab, K), Tab)];

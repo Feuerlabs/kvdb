@@ -30,6 +30,7 @@
 	 queue_prefix/3,
 	 timestamp/0, timestamp/1,
 	 timestamp_to_datetime/1,
+	 datetime_to_timestamp/1,
 	 good_string/1]).
 -export([common_open/4,
 	 log_filename/1,
@@ -306,7 +307,6 @@ q_key_to_actual(#q_key{queue = Q, ts = TS, key = K}, Enc, Type) when
 	    {Q, TS, K}
     end.
 
-
 timestamp() ->
     timestamp(erlang:now()).
 
@@ -322,6 +322,14 @@ timestamp_to_datetime(TS) ->
     US = TS rem 1000000,
     %% return {Datetime, Milliseconds}
     {calendar:now_to_datetime({1258,S,0}), US}.
+
+
+%% calendar:datetime_to_gregorian_seconds({{2009,11,12}, {4,26,40}})
+-define(EPOCH_GREGORIAN_SECS, 63425219200).
+
+datetime_to_timestamp({{{Y,Mo,D},{H,Mi,S}} = DT, US}) ->
+    ((calendar:datetime_to_gregorian_seconds(DT)
+      - ?EPOCH_GREGORIAN_SECS) * 1000000) + US.
 
 %% Encode a 56-bit prefix using our special-epoch timestamp.
 %% It will not overflow until year 4293 - hopefully that will be sufficient.

@@ -636,10 +636,10 @@ list_queue(#db{ref = Ets} = Db0, Table, Q, Fltr, HeedBlock, Limit)
     Db = ?cache_meta(Db0, Table, encoding(Db0, Table), T),
     {First,Next} =
 	case T of
-	    _ when T == fifo; element(1,T) == fifo ->
+	    _ when T == fifo; element(2,T) == fifo ->
 		{fun() -> ets:next(Ets, #k{t=Table, k={{Q,0},0,0}}) end,
 		 fun(K) -> ets:next(Ets, #k{t=Table, k=K}) end};
-	    _ when T == lifo; element(1,T) == lifo ->
+	    _ when T == lifo; element(2,T) == lifo ->
 		{fun() -> ets:prev(Ets, #k{t=Table, k={{Q,2},0,0}}) end,
 		 fun(K) -> ets:prev(Ets, #k{t=Table, k=K}) end};
 	    _ -> error(illegal)
