@@ -33,7 +33,7 @@ start(_StartType, _StartArgs) ->
 start_phase(open_dbs, _, []) ->
     Dbs = get_databases(),
     io:fwrite("KVDB Dbs = ~p~n", [Dbs]),
-    [{ok, _} = kvdb_sup:start_child(Name, Opts) || {Name, Opts} <- Dbs],
+    [{ok,_} = kvdb:open(Name, Opts) || {Name, Opts} <- Dbs],
     ok.
 
 stop(_State) ->

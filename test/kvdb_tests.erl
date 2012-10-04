@@ -94,6 +94,24 @@ basic_test_() ->
 	   {Db,E,B} <- dbs()]
       }]}.
 
+%% open_test_() ->
+%%     {setup,
+%%      fun() ->
+%% 	     application:start(gproc),
+%% 	     application:load(kvdb)
+%%      end,
+%%      fun(_) ->
+%% 	     application:stop(kvdb),
+%% 	     applicaiton:stop(gproc)
+%%      end,
+%%      [?_test(?dbg(dbs, fun(_) ->
+%% 			       application:set_env(kvdb, databases,
+%% 						   [{N,[{encoding,E},
+%% 							{backend,B}]} ||
+%% 						       {N,E,B} <- dbs()]),
+%% 			       ok = application:start(kvdb)
+%% 		       end))]}.
+
 dbs() ->
     [
      {s1,sext,sqlite3},
