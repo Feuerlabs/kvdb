@@ -83,7 +83,13 @@
 -include_lib("lager/include/log.hrl").
 
 -spec info(db_ref(), attr_name()) -> undefined | attr_value().
-info(#kvdb_ref{mod = DbMod, db = Db}, Item) ->
+info(#kvdb_ref{mod = DbMod, db = Db}, Item0) ->
+    Item = case Item0 of
+	       {Tab, I} ->
+		   {kvdb_lib:table_name(Tab), I};
+	       Other ->
+		   Other
+	   end,
     DbMod:info(Db, Item).
 
 -spec dump_tables(db_ref()) -> list().
