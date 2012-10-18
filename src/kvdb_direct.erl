@@ -469,7 +469,7 @@ prefix_match_rel(#kvdb_ref{mod = DbMod, db = Db}, Table0, Prefix, Start, Limit)
 select(#kvdb_ref{mod = DbMod, db = Db}, Table0, MatchSpec, Limit) ->
     Table = table_name(Table0),
     MSC = ets:match_spec_compile(MatchSpec),
-    Encoding = DbMod:info(Db, encoding),
+    Encoding = DbMod:info(Db, {Table, encoding}),
     {Prefix, Conv} = ms2pfx(MatchSpec, Encoding),
     select_(DbMod:prefix_match(Db,Table,Prefix,Limit),
 	       Conv, MSC, [], Limit, Limit).

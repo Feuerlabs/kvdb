@@ -51,7 +51,8 @@
 -export([add_table/2,
 	 add_table/3,
 	 delete_table/2,
-	 list_tables/1]).
+	 list_tables/1,
+	 meta_table/0]).
 %% standard KV database operations
 -export([put/3,
 	 get/3,
@@ -355,8 +356,8 @@ add_table(Name, Table) ->
 add_table(Name, Table, Opts) when is_list(Opts) ->
     ?IF_TRANS(
        Name,
-       kvdb_direct:add_table(Ref, Table, Opts),
-       call(Name, {add_table, Table, Opts}),
+       kvdb_direct:add_table(Ref, not_meta_table(Table), Opts),
+       call(Name, {add_table, not_meta_table(Table), Opts}),
        [Name, Table, Opts]).
 
 
@@ -365,8 +366,8 @@ add_table(Name, Table, Opts) when is_list(Opts) ->
 delete_table(Name, Table) ->
     ?IF_TRANS(
        Name,
-       kvdb_direct:delete_table(Ref, Table),
-       call(Name, {delete_table, Table}),
+       kvdb_direct:delete_table(Ref, not_meta_table(Table)),
+       call(Name, {delete_table, not_meta_table(Table)}),
        [Name, Table]).
 
 -spec list_tables(db_name()) -> [binary()].
@@ -377,6 +378,9 @@ list_tables(Name) ->
        Name,
        kvdb_direct:list_tables(Ref),
        kvdb_direct:list_tables(db(Name)), [Name]).
+
+meta_table() ->
+    ?META_TABLE.
 
 -spec put(any(), Table::table(), Obj::object()) ->
 		 ok | {error, any()}.
@@ -730,3 +734,11 @@ start_link(Name, Backend) ->
 
 start_session(Name, Id) ->
     kvdb_server:start_session(Name, Id).
+
+not_meta_table(Table0) ->
+    Table = kvdb_lib:table_name(Table0),
+    if Table == ?META_TABLE ->
+	    error(illegal_operation);
+       true ->
+	    Table
+    end.

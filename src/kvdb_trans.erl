@@ -593,7 +593,7 @@ is_queue_empty(#db{ref = {K1, K2}} = Ref, Tab, Q) ->
     Filter = fun(active, K, O) -> {keep,{K,O}};
 		(_, _, _) -> skip
 	     end,
-    case do_list_queue(Ref, Tab, Q, Filter, heedblock, 1) of
+    case do_list_queue(Ref, Tab, Q, Filter, _HeedBlock = true, 1) of
 	{[_|_], _} ->
 	    false;
 	_ ->
@@ -670,50 +670,6 @@ initial_set(done) -> {done, done};
 initial_set({_,_} = R) -> R.
 
 
-%% list_queue_(done,done, _,_, _,_, _, _, _, _, _, _, _) ->
-%%     done;
-%% list_queue_(Done1, Done2, _M1,_Db1, _M2,_Db2, _Tab, _Q, _Filter,
-%% 	    _HeedBlock, _Limit0, _Limit, Acc) when
-%%       ?q_done(Done1) orelse ?q_done(Done2) ->
-%%     Status = most_done(Done1, Done2),
-%%     if Acc == [] ->
-%% 	    Status;
-%%        true ->
-
-%% 	    {lists:reverse(Acc), fun() -> Status end}
-%%     end;
-%% list_queue_(R1, R2, M1,Db1, M2,Db2, Tab, Q, Filter,
-%% 	    HeedBlock, Limit0, Limit, Acc) when
-%%       ?q_done(R1) orelse ?q_done(R2) ->
-%%     {Set, C1, C2} = if R1 == done ->
-%% 			    {element(1, R2), fun() -> done end, element(2, R2)};
-%% 		       R2 == done ->
-%% 			    {element(1, R1), element(2, R1), fun() -> done end}
-%% 		    end,
-%%     if Acc == [] ->
-%% 	    R2;
-%%        true ->
-%% 	    {RetSet, NewAcc, NewLimit} = fill_limit(Set, Acc, Limit, Limit0),
-%% 	    {RetSet, fun() ->
-%% 			     list_queue_(
-%% 			       C1(), C2(), M1,Db1, M2,Db2, Tab, Q,
-%% 			       Filter, HeedBlock, Limit0, NewLimit, NewAcc)
-%% 		     end}
-%%     end;
-%% list_queue_({S1, C1}, {S2, C2}, M1,Db1, M2,Db2, Tab, Q, Filter,
-%% 	    HeedBlock, Limit0, Limit, Acc) ->
-%%     Set = merge_sets(S1, S2, obj, M1, Db1, Tab),
-%%     case fill_limit(Set, Acc, Limit, Limit0) of
-%% 	{[], [], _} ->
-%% 	    {[], fun() -> done end};
-%% 	{RetSet, NewAcc, NewLimit} ->
-%% 	    {RetSet, fun() ->
-%% 			     list_queue_(
-%% 			       C1(), C2(), M1, Db1, M2,Db2, Tab, Q,
-%% 			       Filter, HeedBlock, Limit0, NewLimit, NewAcc)
-%% 		     end}
-%%     end.
-
 
 
 most_done(blocked, _) -> blocked;
@@ -785,8 +741,21 @@ next(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 	    check_next(Res, R1, Tab, M1,Db1, M2,Db2)
     end.
 
-next_queue(_Db, _Tab, _Q) ->
-    error(nyi).
+next_queue(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
+		       #kvdb_ref{mod=M2,db=Db2} = K2}}, Tab, Q) ->
+    ensure_table(Tab, K1, K2),
+    R1 = M1:next_queue(Db1, Tab, Q),
+    R2 = M2:next_queue(Db2, Tab, Q),
+    case {R1, R2} of
+	{_   , done} -> R1;
+	{done, _} -> R2;
+	{{ok,A},{ok,B}} ->
+	    if A > B ->
+		    R2;
+	       true ->
+		    R1
+	    end
+    end.
 
 pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
     ensure_table(Tab, K1, K2),

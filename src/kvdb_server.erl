@@ -164,6 +164,7 @@ init_({owner, Name, Opts}) ->
 			     {backend, DbMod}),
     case do_open(Name, NewOpts) of
 	{ok, Db} ->
+	    kvdb_cron:init_meta(Db),
 	    create_tables_(Db, Opts),
 	    {ok, #st{name = Name, db = Db, is_owner = true}};
 	{error,_} = Error ->
