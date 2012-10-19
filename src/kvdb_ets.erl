@@ -1298,6 +1298,9 @@ decode_writes([{T,_}|_] = Writes, Db) ->
 decode_writes([], _) ->
     [].
 
+decode_writes([{T, _}|_] = Writes, T1, _, Db) when T =/= T1 ->
+    %% Switched to different table - re-cache encoding info
+    decode_writes(Writes, T, encoding(Db, T), Db);
 decode_writes([{T, {QKi, {St,Val}}}|Rest], T, Enc, Db) when is_tuple(QKi) ->
     QKey = int_to_q_key(Db, T, QKi),
     Obj = {QKey#q_key.key, Val},

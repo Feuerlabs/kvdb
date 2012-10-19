@@ -1259,7 +1259,7 @@ write_tree(Parent, Tree) ->
 %% @end
 write_tree(Table, Parent, #conf_tree{} = T) ->
     write_tree_(Table, T#conf_tree{root = Parent});
-write_tree(Table, Parent, Tree) when is_binary(Parent) ->
+write_tree(Table, Parent, Tree) when is_binary(Parent), is_list(Tree) ->
     write_tree_(Table, #conf_tree{root = Parent, tree = Tree}).
 
 write_tree_(Table, #conf_tree{root = Parent, tree = Tree}) ->
