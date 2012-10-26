@@ -132,12 +132,14 @@ normalize_until(Other) ->
 normalize_({nil,_}) -> [];
 normalize_({integer,_,I}) -> I;
 normalize_({fixnum,_,{I,F}}) -> {I,F};
-normalize_({Op, _, Args}) when is_list(Args) ->
+normalize_({Op, _, Args}) when is_atom(Op), is_list(Args) ->
     {Op, [normalize_(A) || A <- Args]};
-normalize_({Op, _, Arg}) when is_tuple(Arg) ->
-    {Op, normalize_(Arg)};
+normalize_({A,B,C}) when is_tuple(A), is_tuple(B), is_tuple(C) ->
+    {normalize_(A), normalize_(B), normalize_(C)};
 normalize_({T1,T2}) when is_tuple(T1), is_tuple(T2) ->
     {normalize_(T1), normalize_(T2)};
+normalize_({Op, _, Arg}) when is_atom(Op), is_tuple(Arg) ->
+    {Op, normalize_(Arg)};
 normalize_({Op, L}) when is_atom(Op), is_integer(L) ->
     Op;
 normalize_(X) ->
