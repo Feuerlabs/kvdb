@@ -57,7 +57,7 @@ create_crontab(Db, Tab) ->
       end).
 
 testf() ->
-    io:fwrite("~nCRON!! ~p~n", [kvdb_lib:timestamp_do_datetime(
+    io:fwrite("~nCRON!! ~p~n", [kvdb_lib:timestamp_to_datetime(
 				  kvdb_lib:timestamp())]).
 
 %%% @spec (When::timespec(), Key::any(),
