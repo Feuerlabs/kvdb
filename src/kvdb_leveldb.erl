@@ -278,57 +278,64 @@ delete_table_({ok, K, _V}, I, Kt,Ka,Ki, Sz, Ref) ->
 delete_table_({error,invalid_iterator}, _, _, _, _, _, _) ->
     ok.
 
-put(#db{ref = Ref} = Db, Table, {K, V}) ->
-    %% Frequently used case, therefore optimized. No indexing on {K,V} tuples
+put(Db, Table,Obj) ->
     case type(Db, Table) of
 	set ->
-	    Enc = encoding(Db, Table),
-	    Key = enc(key, K, Enc),
-	    Val = enc(value, V, Enc),
-	    eleveldb:put(Ref, make_table_key(Table, Key), Val, []);
-	_ ->
-	    {error, illegal}
-    end;
-put(#db{ref = Ref} = Db, Table, {K, Attrs, V}) ->
-    case type(Db, Table) of
-	set ->
-	    Enc = encoding(Db, Table),
-	    Ix = index(Db, Table),
-	    Key = enc(key, K, Enc),
-	    Val = enc(value, V, Enc),
-	    OldAttrs = get_attrs_(Db, Table, Key, all),
-	    IxOps = case Ix of
-			[_|_] ->
-			    OldIxVals = kvdb_lib:index_vals(
-					  Ix, K, OldAttrs,
-					  fun() ->
-						  get_value(Db, Table, K)
-					  end),
-			    NewIxVals = kvdb_lib:index_vals(Ix, K, Attrs,
-							    fun() -> V end),
-			    [{delete, ix_key(Table, I, K)} ||
-				I <- OldIxVals -- NewIxVals]
-				++ [{put, ix_key(Table, I, K), <<>>} ||
-				       I <- NewIxVals -- OldIxVals];
-			_ ->
-			    []
-		    end,
-	    DelAttrs = attrs_to_delete(
-			 Table, Key,
-			 [{A,Va} ||
-			     {A,Va} <- OldAttrs,
-			     not lists:keymember(A, 1, Attrs)]),
-	    PutAttrs = attrs_to_put(Table, Key, Attrs),
-	    case eleveldb:write(Ref, [{put, make_table_key(Table, Key), Val}|
-				      DelAttrs ++ PutAttrs ++ IxOps], []) of
-		ok ->
-		    ok;
-		Other ->
-		    Other
-	    end;
+	    put_(Db, Table, Obj);
 	_ ->
 	    {error, illegal}
     end.
+
+put_(#db{ref = Ref} = Db, Table, {K,V}) ->
+    %% Frequently used case, therefore optimized. No indexing on {K,V} tuples
+    Enc = encoding(Db, Table),
+    Type = type(Db, Table),
+    Key = encode_elem(key, K, Type, Enc),
+    Val = encode_elem(value, V, Type, Enc),
+    eleveldb:put(Ref, make_table_key(Table, Key), Val, []);
+put_(#db{ref = Ref} = Db, Table, {K, Attrs, V}) ->
+    Enc = encoding(Db, Table),
+    Ix = index(Db, Table),
+    Type = type(Db, Table),
+    Key = encode_elem(key, K, Type, Enc),
+    Val = encode_elem(value, V, Type, Enc),
+    OldAttrs = get_attrs_(Db, Table, Key, all),
+    IxOps = case Ix of
+		[_|_] ->
+		    OldIxVals = kvdb_lib:index_vals(
+				  Ix, K, OldAttrs,
+				  fun() ->
+					  get_value(Db, Table, K)
+				  end),
+		    NewIxVals = kvdb_lib:index_vals(Ix, K, Attrs,
+						    fun() -> V end),
+		    [{delete, ix_key(Table, I, K)} ||
+			I <- OldIxVals -- NewIxVals]
+			++ [{put, ix_key(Table, I, K), <<>>} ||
+			       I <- NewIxVals -- OldIxVals];
+		_ ->
+		    []
+	    end,
+    DelAttrs = attrs_to_delete(
+		 Table, Key,
+		 [{A,Va} ||
+		     {A,Va} <- OldAttrs,
+		     not lists:keymember(A, 1, Attrs)]),
+    PutAttrs = attrs_to_put(Table, Key, Attrs),
+    case eleveldb:write(Ref, [{put, make_table_key(Table, Key), Val}|
+			      DelAttrs ++ PutAttrs ++ IxOps], []) of
+	ok ->
+	    ok;
+	Other ->
+	    Other
+    end.
+
+encode_elem(Elem, V, set, Enc) ->
+    enc(Elem, V, Enc);
+encode_elem(_, V, T, _Enc) when is_binary(V),
+				T==fifo; T==lifo; element(1,T) == keyed ->
+    V.
+
 
 ix_key(Table, I, K) ->
     make_key(Table, $?, <<(sext:encode(I))/binary, (sext:encode(K))/binary>>).
@@ -364,7 +371,7 @@ update_counter(#db{ref = Ref} = Db, Table, K, Incr) when is_integer(Incr) ->
     end.
 
 
-push(#db{ref = Ref} = Db, Table, Q, Obj) ->
+push(#db{} = Db, Table, Q, Obj) ->
     Type = type(Db, Table),
     if Type == fifo; Type == lifo; element(1,Type) == keyed ->
 	    Enc = encoding(Db, Table),
@@ -372,32 +379,39 @@ push(#db{ref = Ref} = Db, Table, Q, Obj) ->
 		kvdb_lib:actual_key(Enc, Type, Q, element(1, Obj)),
 	    {Key, Attrs, Value} = encode_queue_obj(
 				    Enc, setelement(1, Obj, ActualKey)),
-	    PutAttrs = attrs_to_put(Table, Key, Attrs),
-	    Put = {put, make_table_key(Table, Key), Value},
-	    case eleveldb:write(Ref, [Put|PutAttrs], []) of
+	    case put_(Db, Table, {Key, Attrs, Value}) of
 		ok ->
 		    {ok, QKey};
 		Other ->
 		    Other
 	    end;
+	    %% PutAttrs = attrs_to_put(Table, Key, Attrs),
+	    %% Put = {put, make_table_key(Table, Key), Value},
+	    %% case eleveldb:write(Ref, [Put|PutAttrs], []) of
+	    %% 	ok ->
+	    %% 	    {ok, QKey};
+	    %% 	Other ->
+	    %% 	    Other
+	    %% end;
        true ->
 	    error(illegal)
     end.
 
-queue_insert(#db{ref = Ref} = Db, Table, #q_key{} = QKey, St, Obj) when
+queue_insert(#db{} = Db, Table, #q_key{} = QKey, St, Obj) when
       St==blocking; St==active; St==inactive ->
     Enc = encoding(Db, Table),
     Type = type(Db, Table),
     Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
     Obj1 = setelement(1, Obj, Key),
-    {EncKey, Attrs, Value} = encode_queue_obj(Enc, Obj1, St),
-    PutAttrs = attrs_to_put(Table, EncKey, Attrs),
-    Put = {put, make_table_key(Table, EncKey), Value},
-    case eleveldb:write(Ref, [Put|PutAttrs], []) of
-	ok -> ok;
-	{error, Error} ->
-	    error(Error)
-    end.
+    put_(Db, Table, Obj1).
+    %% {EncKey, Attrs, Value} = encode_queue_obj(Enc, Obj1, St),
+    %% PutAttrs = attrs_to_put(Table, EncKey, Attrs),
+    %% Put = {put, make_table_key(Table, EncKey), Value},
+    %% case eleveldb:write(Ref, [Put|PutAttrs], []) of
+    %% 	ok -> ok;
+    %% 	{error, Error} ->
+    %% 	    error(Error)
+    %% end.
 
 queue_delete(Db, Table, #q_key{} = QKey) ->
     _ = extract(Db, Table, QKey),

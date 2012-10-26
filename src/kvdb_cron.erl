@@ -81,6 +81,10 @@ add(Db, Tab, Q, When, Options, M, F, As) when is_list(When);
 	    false
     end.
 
+delete(Db, Tab, Key) ->
+    %% FIXME: This approach doesn't work for repeating timers
+    kvdb:delete(Db, Tab, Key).
+
 new_job(Spec0, Options0, M, F, As) ->
     Spec = normalize_spec(Spec0),
     Now = kvdb_lib:timestamp(),
@@ -173,8 +177,8 @@ reschedule_(#job{spec = Spec} = Job, Last, Tab, Q, Db, Opts, Parent) ->
     end.
 
 
-delete(Db, Tab, Key) ->
-    call(Db, {delete, Tab, Key}).
+%% delete(Db, Tab, Key) ->
+%%     call(Db, {delete, Tab, Key}).
 
 
 start_link(Db) ->
