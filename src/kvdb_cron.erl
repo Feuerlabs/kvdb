@@ -33,7 +33,7 @@
 
 -record(job, {mfa,
 	      interval,
-	      times,
+	      repeat,
 	      from,
 	      until,
 	      next,
@@ -66,7 +66,9 @@ testf() ->
 add(Db, Tab, When, Options, M, F, As) ->
     add(Db, Tab, <<>>, When, Options, M, F, As).
 
-add(Db, Tab, Q, When, Options, M, F, As) when is_list(When); is_integer(When) ->
+add(Db, Tab, Q, When, Options, M, F, As) when is_list(When);
+					      is_binary(When);
+					      is_integer(When) ->
     ?debug("add(~p, ~p, ~p, ~p, ~p, ~p, ~p, ~p)~n",
 	   [kvdb:db_name(Db),Tab,Q,When,Options,M,F,As]),
     case new_job(When, Options, M, F, As) of
@@ -79,23 +81,68 @@ add(Db, Tab, Q, When, Options, M, F, As) when is_list(When); is_integer(When) ->
 	    false
     end.
 
-new_job(When, Options0, M, F, As) ->
+new_job(Spec0, Options0, M, F, As) ->
+    Spec = normalize_spec(Spec0),
     Now = kvdb_lib:timestamp(),
     MFA = valid_function(M, F, As),
     Options = valid_options(Options0),
-    Job = #job{mfa = MFA, spec = When},
-    if is_integer(When) ->
-	    %% optimized case: a single-shot millisecond timer
-	    NextTime = Now + (When * 1000),
-	    {NextTime, Options, Job#job{next = NextTime}};
-       true ->
-	    case valid_time(When, Now, Job) of
-		#job{next = never} ->
-		    [];
-		#job{next = NextTime} = Job1 when is_integer(NextTime) ->
-		    {NextTime, Options, Job1}
-	    end
+    Job = #job{mfa = MFA, spec = Spec},
+    case valid_time(Spec, Now, Job) of
+	#job{next = never} ->
+	    [];
+	#job{next = NextTime} = Job1 when is_integer(NextTime) ->
+	    {NextTime, Options, Job1}
     end.
+
+normalize_spec(W) when is_binary(W) ->
+    parse_spec(binary_to_list(W));
+normalize_spec(W) when is_list(W) ->
+    parse_spec(W);
+normalize_spec({Time, Repeat, Until}) ->
+    {normalize_(Time), normalize_(Repeat), normalize_until(normalize_(Until))};
+normalize_spec(W) when is_integer(W) ->
+    {{in, [{W, ms}]}, [], []};
+normalize_spec({in, _} = In) ->
+    {In, [], []};
+normalize_spec({at, _} = At) ->
+    {At, [], []};
+normalize_spec({Time, Repeat}) when Time =/= in; Time =/= at ->
+    {Time, Repeat, []}.
+
+parse_spec(W) ->
+    case kvdb_cron_scan:string(W) of
+	{ok, Tokens, _} ->
+	    case kvdb_cron_parse:parse(Tokens) of
+		{ok, Form} ->
+		    normalize_form(Form);
+		ParseErr ->
+		    error(ParseErr)
+	    end;
+	ScanErr ->
+	    error(ScanErr)
+    end.
+
+normalize_form({Time, Repeat, Until}) ->
+    {normalize_(Time), normalize_(Repeat), normalize_until(normalize_(Until))}.
+
+normalize_until(forever) -> [];
+normalize_until(Other) ->
+    Other.
+
+normalize_({nil,_}) -> [];
+normalize_({integer,_,I}) -> I;
+normalize_({fixnum,_,{I,F}}) -> {I,F};
+normalize_({Op, _, Args}) when is_list(Args) ->
+    {Op, [normalize_(A) || A <- Args]};
+normalize_({Op, _, Arg}) when is_tuple(Arg) ->
+    {Op, normalize_(Arg)};
+normalize_({T1,T2}) when is_tuple(T1), is_tuple(T2) ->
+    {normalize_(T1), normalize_(T2)};
+normalize_({Op, L}) when is_atom(Op), is_integer(L) ->
+    Op;
+normalize_(X) ->
+    X.
+
 
 reschedule_job(#job{next = Last, spec = Spec} = Job,
 	       Tab, Q, Db, Opts, Parent) ->
@@ -104,7 +151,7 @@ reschedule_job(#job{next = Last, spec = Spec} = Job,
 	    ?debug("is integer - will not reschedule~n", []),
 	    ok;
        true ->
-	    reschedule_(decr_times(Job), Last, Tab, Q, Db, Opts, Parent)
+	    reschedule_(decr_repeat(Job), Last, Tab, Q, Db, Opts, Parent)
     end.
 
 reschedule_(#job{next = never}, _, _, _, _, _, _) ->
@@ -342,53 +389,52 @@ regname(Db) ->
     {n, l, {?MODULE, Name}}.
 
 
-decr_times(#job{times = 0} = J) ->
+decr_repeat(#job{repeat = 0} = J) ->
     J#job{next = never};
-decr_times(#job{times = N} = J) when is_integer(N) ->
+decr_repeat(#job{repeat = {times,N}} = J) when is_integer(N) ->
     case N-1 of
 	N1 when N1 > 0 ->
-	    J#job{times = N1};
+	    J#job{repeat = {times,N1}};
 	0 ->
-	    J#job{next = never, times = 0}
+	    J#job{next = never, repeat = {times,0}}
     end;
-decr_times(J) ->
+decr_repeat(J) ->
     J.
 
+valid_time({TimeDef, RepeatDef, UntilDef}, Now, Job) ->
+    TS = get_datetime(TimeDef, Now),
+    Repeat = valid_repeat(RepeatDef, Job),
+    Int = valid_interval(TimeDef, RepeatDef, Job),
+    Until = valid_until(UntilDef, Repeat, Int, TS),
+    Job#job{next = TS, repeat = Repeat, interval = Int, until = Until}.
 
-
-valid_time(Spec, Now, Job) ->
-    TS = get_datetime(Spec, Now),
-    Times = valid_times(Spec, Job),
-    Int = valid_interval(Spec, Times, Job),
-    Until = valid_until(Spec, Int, TS),
-    Job#job{next = TS, times = Times, interval = Int, until = Until}.
-
-valid_times(_, #job{times = It}) when It=/=undefined ->
-    It;
-valid_times(Spec, #job{times = undefined}) ->
-    case get_opt([times], Spec, 1) of
-	any ->
-	    any;
-	I when is_integer(I), I > 0 ->
-	    I;
+valid_repeat(_, #job{repeat = R}) when R=/=undefined ->
+    R;
+valid_repeat(Spec, #job{repeat = undefined}) ->
+    case Spec of
+	[] -> {times, 1};
+	repeat -> repeat;
+	{each, _} -> Spec;
+	{times, _} -> Spec;
 	Other ->
-	    error({bad_times, Other})
+	    error({bad_repeat, Other})
     end.
 
 valid_interval(_, _, #job{interval = I}) when I =/= undefined ->
     I;
-valid_interval(Spec, Times, #job{interval = undefined}) ->
-    case lists:keyfind(each, 1, Spec) of
-	false ->
-	    case Times of
-		undefined -> undefined;
-		_ -> case lists:keyfind(in, 1, Spec) of
-			 {_, In} -> In;
-			 false -> undefined
-		     end
-	    end;
-	{_, Each0} when is_list(Each0) ->
-	    [valid_each_(E) || E <- Each0]
+valid_interval(Time, Repeat, #job{interval = undefined}) ->
+    case Repeat of
+	{each, Each} ->
+	    [valid_each_(E) || E <- Each];
+	[] ->
+	    undefined;
+	_ when Repeat==repeat; element(1, Repeat) == times ->
+	    case Time of
+		{in, In} ->
+		    In;
+		_ ->
+		    error(unknown_interval)
+	    end
     end.
 
 valid_each_(E) ->
@@ -414,42 +460,46 @@ valid_each_(E) ->
 	    end
     end.
 
-valid_until(Spec, Int, TS) ->
-    case proplists:get_value(until, Spec, undefined) of
+valid_until(Spec, Times, Int, TS) ->
+    case Spec of
+	{at, At} ->
+	    at_spec(At, TS);
+	[] ->
+	    case Times of
+		{times,1} ->
+		    {undefined, undefined};
+		{times, N} when is_integer(N), N > 1 ->
+		    lists:foldl(
+		      fun(_, Last) ->
+			      step_interval(Int, Last)
+		      end, TS, lists:seq(1,N-1));
+		_ ->
+		    {undefined, undefined}
+	    end;
 	{date, UntilD} ->
 	    DT = {valid_date(UntilD), {23,59,59}},
 	    kvdb_lib:datetime_to_timestamp({DT, 0});
 	{time, {_,_,_} = UntilT} ->
 	    {{Date,_},US} = kvdb_lib:timestamp_to_datetime(TS),
-	    kvdb_lib:datetime_to_timestamp({{Date, UntilT}, US});
-	{{_,_,_},{_,_,_}} = UntilDt ->
-	    kvdb_lib:datetime_to_timestamp({UntilDt, 0});
-	undefined ->
-	    case proplists:get_value(times, Spec, undefined) of
-		undefined ->
-		    {undefined, undefined};
-		1 ->
-		    TS;
-		N when is_integer(N), N > 1 ->
-		    lists:foldl(
-		      fun(_, Last) ->
-			      step_interval(Int, Last)
-		      end, TS, lists:seq(1,N-1))
-	    end
+	    kvdb_lib:datetime_to_timestamp({{Date, UntilT}, US})
+	%% {{_,_,_},{_,_,_}} = UntilDt ->
+	%%     kvdb_lib:datetime_to_timestamp({UntilDt, 0});
+	%% undefined ->
+	%%     case proplists:get_value(times, Spec, undefined) of
+	%% 	undefined ->
+	%% 	    {undefined, undefined};
+	%% 	1 ->
+	%% 	    TS;
+	%% 	N when is_integer(N), N > 1 ->
+	%%     end
     end.
 
-get_datetime(Spec, Now) ->
-    case lists:keyfind(in, 1, Spec) of
-	{_, In} when is_list(In), In =/= [] ->
-	    in_spec(In, Now);
-	false ->
-	    case lists:keyfind(at, 1, Spec) of
-		{_, At} when is_list(At), At =/= [] ->
-		    at_spec(At, Now);
-		false ->
-		    error(missing_time_spec, Spec)
-	    end
-    end.
+get_datetime({in, In}, Now) ->
+    in_spec(In, Now);
+get_datetime({at, At}, Now) ->
+    at_spec(At, Now);
+get_datetime(Other, _) ->
+    error(invalid_time_spec, Other).
 
 in_spec(In, TS) ->
     lists:foldl(
