@@ -404,8 +404,9 @@ queue_insert(#db{} = Db, Table, #q_key{} = QKey, St, Obj) when
     Type = type(Db, Table),
     Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
     Obj1 = setelement(1, Obj, Key),
-    put_(Db, Table, Obj1, put).
-    %% {EncKey, Attrs, Value} = encode_queue_obj(Enc, Obj1, St),
+    %% put_(Db, Table, Obj1, put).
+    {EncKey, Attrs, Value} = encode_queue_obj(Enc, Obj1, St),
+    put_(Db, Table, {EncKey, Attrs, Value}, push).
     %% PutAttrs = attrs_to_put(Table, EncKey, Attrs),
     %% Put = {put, make_table_key(Table, EncKey), Value},
     %% case eleveldb:write(Ref, [Put|PutAttrs], []) of
