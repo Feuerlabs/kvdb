@@ -4,7 +4,8 @@
 -export([create_crontab/2]).
 -export([start_link/1,
 	 add/7, add/8,
-	 delete/3]).
+	 delete/3, delete/4,
+	 delete_abs/3]).
 
 -export([init/1,
 	 handle_call/3,
@@ -82,8 +83,40 @@ add(Db, Tab, Q, When, Options, M, F, As) when is_list(When);
     end.
 
 delete(Db, Tab, Key) ->
-    %% FIXME: This approach doesn't work for repeating timers
-    kvdb:delete(Db, Tab, Key).
+    delete(Db, Tab, <<>>, Key).
+
+delete(Db, Tab, Q, Key) ->
+    kvdb:in_transaction(
+      Db,
+      fun(Db1) ->
+	      ListRes = kvdb:list_queue(
+			  Db1, Tab, Q, fun(_, QK, Obj) ->
+					       {keep, setelement(1,Obj,QK)}
+				       end, false, 50),
+	      search_delete(ListRes, Db1, Tab, Q, Key)
+      end).
+
+search_delete({Entries, Cont}, Db, Tab, Q, Key) ->
+    case find_job(Entries, Key) of
+	false ->
+	    search_delete(Cont(), Db, Tab, Q, Key);
+	QKey ->
+	    delete_abs(Db, Tab, QKey)
+    end;
+search_delete(done, _, _, _, _) ->
+    ok.
+
+find_job([{Key, As, _}|T], Id) ->
+    case lists:member({id, Id}, As) of
+	true ->
+	    Key;
+	false ->
+	    find_job(T, Key)
+    end;
+find_job([], _) ->
+    false.
+
+
 
 new_job(Spec0, Options0, M, F, As) ->
     Spec = normalize_spec(Spec0),
@@ -358,13 +391,13 @@ do_dispatch_(TS, Tab, Q, Db, Parent) ->
 		    ignore
 	    end,
 	    %% even if we didn't call, we attempt to reschedule
-	    delete_entry(Db, Tab, QK),
+	    delete_abs(Db, Tab, QK),
 	    reschedule_job(Job, Tab, Q, Db, Opts, Parent);
 	done ->
 	    ok
     end.
 
-delete_entry(Db, Tab, QK) ->
+delete_abs(Db, Tab, QK) ->
     kvdb:delete(Db, Tab, QK).
 
 should_i_call(Diff, _Opts) when Diff > -5000 ->
@@ -589,7 +622,7 @@ valid_function(_, _, _) ->
 
 valid_options([{call_if_delayed, B}=O|Os]) when is_boolean(B) ->
     [O|valid_options(Os)];
-valid_options([{reference, _} = O|Os]) ->
+valid_options([{id, _} = O|Os]) ->
     [O|valid_options(Os)];
 valid_options([O|_]) ->
     erlang:error({invalid_option, O});

@@ -281,24 +281,24 @@ delete_table_({error,invalid_iterator}, _, _, _, _, _, _) ->
 put(Db, Table,Obj) ->
     case type(Db, Table) of
 	set ->
-	    put_(Db, Table, Obj);
+	    put_(Db, Table, Obj, put);
 	_ ->
 	    {error, illegal}
     end.
 
-put_(#db{ref = Ref} = Db, Table, {K,V}) ->
+put_(#db{ref = Ref} = Db, Table, {K,V}, Op) ->
     %% Frequently used case, therefore optimized. No indexing on {K,V} tuples
     Enc = encoding(Db, Table),
     Type = type(Db, Table),
-    Key = encode_elem(key, K, Type, Enc),
-    Val = encode_elem(value, V, Type, Enc),
+    Key = encode_elem(key, K, Type, Enc, Op),
+    Val = encode_elem(value, V, Type, Enc, Op),
     eleveldb:put(Ref, make_table_key(Table, Key), Val, []);
-put_(#db{ref = Ref} = Db, Table, {K, Attrs, V}) ->
+put_(#db{ref = Ref} = Db, Table, {K, Attrs, V}, Op) ->
     Enc = encoding(Db, Table),
     Ix = index(Db, Table),
     Type = type(Db, Table),
-    Key = encode_elem(key, K, Type, Enc),
-    Val = encode_elem(value, V, Type, Enc),
+    Key = encode_elem(key, K, Type, Enc, Op),
+    Val = encode_elem(value, V, Type, Enc, Op),
     OldAttrs = get_attrs_(Db, Table, Key, all),
     IxOps = case Ix of
 		[_|_] ->
@@ -330,11 +330,12 @@ put_(#db{ref = Ref} = Db, Table, {K, Attrs, V}) ->
 	    Other
     end.
 
-encode_elem(Elem, V, set, Enc) ->
-    enc(Elem, V, Enc);
-encode_elem(_, V, T, _Enc) when is_binary(V),
-				T==fifo; T==lifo; element(1,T) == keyed ->
-    V.
+encode_elem(_Elem, V, _T, _Enc, push) when is_binary(V) ->
+    %% This should really be cleaned up, but for now, when put_(...) is called
+    %% from push(...), the key and value parts are already coded as binary.
+    V;
+encode_elem(Elem, V, _, Enc, _) ->
+    enc(Elem, V, Enc).
 
 
 ix_key(Table, I, K) ->
@@ -379,7 +380,7 @@ push(#db{} = Db, Table, Q, Obj) ->
 		kvdb_lib:actual_key(Enc, Type, Q, element(1, Obj)),
 	    {Key, Attrs, Value} = encode_queue_obj(
 				    Enc, setelement(1, Obj, ActualKey)),
-	    case put_(Db, Table, {Key, Attrs, Value}) of
+	    case put_(Db, Table, {Key, Attrs, Value}, push) of
 		ok ->
 		    {ok, QKey};
 		Other ->
@@ -403,7 +404,7 @@ queue_insert(#db{} = Db, Table, #q_key{} = QKey, St, Obj) when
     Type = type(Db, Table),
     Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
     Obj1 = setelement(1, Obj, Key),
-    put_(Db, Table, Obj1).
+    put_(Db, Table, Obj1, put).
     %% {EncKey, Attrs, Value} = encode_queue_obj(Enc, Obj1, St),
     %% PutAttrs = attrs_to_put(Table, EncKey, Attrs),
     %% Put = {put, make_table_key(Table, EncKey), Value},
