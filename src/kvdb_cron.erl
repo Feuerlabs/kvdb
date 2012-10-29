@@ -416,11 +416,14 @@ call_job(#job{mfa = {M, F, A}} = J) ->
 	?debug("~p Job ~p -> ~p~n", [?MODULE, J, R])
     catch
 	error:Err ->
-	    ?debug("~p Job ~p -> ERROR:~p~n", [?MODULE, J, Err]);
+	    ?debug("~p Job ~p -> ERROR:~p~n~p~n",
+		   [?MODULE, J, Err, erlang:get_stacktrace()]);
 	exit:Ex ->
-	    ?debug("~p Job ~p -> EXIT:~p~n", [?MODULE, J, Ex]);
+	    ?debug("~p Job ~p -> EXIT:~p~n~p~n",
+		   [?MODULE, J, Ex, erlang:get_stacktrace()]);
 	throw:Th ->
-	    ?debug("~p Job ~p -> THROW:~p~n", [?MODULE, J, Th])
+	    ?debug("~p Job ~p -> THROW:~p~n~p~n",
+		   [?MODULE, J, Th, erlang:get_stacktrace()])
     end.
 
 regname(Db) ->
