@@ -27,19 +27,19 @@
 %% API functions
 %% ===================================================================
 
-start_link(Name, Backend) ->
-    supervisor:start_link(?MODULE, {Name, Backend}).
+start_link(Name, Options) ->
+    supervisor:start_link(?MODULE, {Name, Options}).
 
 %% ===================================================================
 %% Supervisor callbacks
 %% ===================================================================
 
-init({Name, Backend}) ->
+init({Name, Options}) ->
     gproc:reg({n,l,{?MODULE, Name}}),
     {ok, { {rest_for_one, 5, 10},
-	   [{db, {kvdb_server, start_link, [Name, Backend]},
+	   [{db, {kvdb_server, start_link, [Name, Options]},
 	     permanent, 5000, worker, [kvdb_server]},
-	    {cron, {kvdb_cron, start_link, [Name]},
+	    {cron, {kvdb_cron, start_link, [Name, Options]},
 	     permanent, 5000, worker, [kvdb_cron]}]}}.
 
 stop_child(Name) ->

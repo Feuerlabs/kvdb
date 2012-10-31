@@ -220,7 +220,7 @@ dump_tables(#db{ref = {#kvdb_ref{mod = M, db = Db}, _}}) ->
 put(#db{ref = {#kvdb_ref{mod = M1, db = Db1} = KR1, KR2}}, Tab, Obj) ->
     ensure_table(Tab, KR1, KR2),
     case M1:put(Db1, Tab, Obj) of
-	{ok, _} = Res ->
+	ok = Res ->
 	    M1:int_delete(Db1, {deleted, Tab, element(1, Obj)}),
 	    Res;
 	Other ->

@@ -190,7 +190,7 @@ dump_tables(Name) ->
 %% Options:
 %%
 %% - `{backend, Backend}' - select a backend<br/>
-%% Supported backends are Sqlite3 (`sqlite' or `sqlite3') and `leveldb',
+%% Supported backends are Sqlite3 (`sqlite' or `sqlite3'), `ets' and `leveldb',
 %% or any module that implements the `kvdb' behaviour.
 %%
 %% - `{schema, SchemaMod}' - Callback module used for validation and triggers.
@@ -201,6 +201,8 @@ dump_tables(Name) ->
 %% - `{encoding, Encoding}' - Default encoding for tables.
 %%
 %% - `{db_opts, DbOpts}' - Backend-specific options.
+%%
+%% - `{set_timers, boolean()}' - If true, process kvdb_cron timers at startup.
 %% @end
 open(Name, Options) ->
     %% supervisor:start_child(kvdb_sup, kvdb_sup:childspec({Name, Options})).

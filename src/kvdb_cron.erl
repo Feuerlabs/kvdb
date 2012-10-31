@@ -2,10 +2,11 @@
 -behaviour(gen_server).
 
 -export([create_crontab/2]).
--export([start_link/1,
+-export([start_link/2,
 	 add/7, add/8,
 	 delete/3, delete/4,
-	 delete_abs/3]).
+	 delete_abs/3,
+	 set_timers/1]).
 
 -export([init/1,
 	 handle_call/3,
@@ -95,6 +96,10 @@ delete(Db, Tab, Q, Key) ->
 				       end, false, 50),
 	      search_delete(ListRes, Db1, Tab, Q, Key)
       end).
+
+
+set_timers(Db) ->
+    call(Db, set_timers).
 
 search_delete({Entries, Cont}, Db, Tab, Q, Key) ->
     case find_job(Entries, Key) of
@@ -214,12 +219,17 @@ reschedule_(#job{spec = Spec} = Job, Last, Tab, Q, Db, Opts, Parent) ->
 %%     call(Db, {delete, Tab, Key}).
 
 
-start_link(Db) ->
-    gen_server:start_link(?MODULE, Db, []).
+start_link(Db, Options) ->
+    gen_server:start_link(?MODULE, {Db, Options}, []).
 
-init(Db) ->
+init({Db, Options}) ->
     gproc:reg(regname(Db)),
-    Tabs = set_timers(Db),
+    Tabs = case proplists:get_value(set_timers, Options, true) of
+	       true ->
+		   set_timers_(Db);
+	       false ->
+		   []
+	   end,
     {ok, #st{db = Db, tabs = Tabs}}.
 
 cast(Db, Msg) ->
@@ -230,6 +240,9 @@ call(Db, Req) ->
 
 
 %% ===
+handle_call(set_timers, _From, #st{db = Db} = S) ->
+    Tabs = set_timers_(Db),
+    {reply, ok, S#st{tabs = Tabs}};
 handle_call(_Req, _From, St) ->
     {noreply, St}.
 
@@ -288,22 +301,28 @@ code_change(_FromVsn, St, _Extra) ->
 
 %% ===
 
-set_timers(Db) ->
-    Pat = [{ {{table,'$1'},'_'},[], ['$1'] }],
-    kvdb:in_transaction(
-      Db,
-      fun(Db1) ->
-	      set_timers(kvdb:select(Db1, ?CRON_META, Pat), Db, [])
-      end).
+set_timers_(Db) ->
+    try
+	Pat = [{ {{table,'$1'},'_'},[], ['$1'] }],
+	kvdb:in_transaction(
+	  Db,
+	  fun(Db1) ->
+		  set_timers_(kvdb:select(Db1, ?CRON_META, Pat), Db, [])
+	  end)
+    catch
+	error:Reason ->
+	    ?error("ERROR setting ~p timers: ~p~n", [?MODULE, Reason]),
+	    ok
+    end.
 
-set_timers({Tabs, Cont}, Db, Acc) ->
+set_timers_({Tabs, Cont}, Db, Acc) ->
     NewAcc =
 	lists:foldl(fun(T, Acc1) ->
 			    First = kvdb:first_queue(Db, T),
 			    revisit_queues(First, Db, T, Acc1)
 		    end, Acc, Tabs),
-    set_timers(Cont(), Db, NewAcc);
-set_timers(done, _, Acc) ->
+    set_timers_(Cont(), Db, NewAcc);
+set_timers_(done, _, Acc) ->
     Acc.
 
 revisit_queues({ok, Q}, Db, Tab, Acc) ->

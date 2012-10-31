@@ -76,6 +76,7 @@ fill_test_() ->
       end,
       [{{N,Opts,D}, fun(_, Db) ->
 			    [?_t(?dbg(fill_db(N, Db, Opts, D)))
+			     , ?_t(?dbg(write_del_write(N)))
 			     , ?_t(?dbg(update_counter(N)))
 			     , ?_t(?dbg(first_next(N)))
 			     , ?_t(?dbg(get_attrs(N)))
@@ -138,6 +139,20 @@ fill_db(Name, _Db, Opts, D) ->
     %% io:fwrite(user, "Objs = ~p~n", [Objs]),
     ?assertMatch({Objs, _}, Found).
 
+write_del_write(Name) ->
+    T1 = ?tab,
+    ok = kvdb:add_table(Name, T1, [{type,set},
+				   {encoding, {sext,term,sext}}]),
+    ok = kvdb:put(Name, T1, {x, [], 1}),
+    kvdb:in_transaction(
+      Name,
+      fun(_) ->
+	      ok = kvdb:delete(Name, T1, x),
+	      ok = kvdb:put(Name, T1, {x,[],1}),
+	      {ok, {x,[],1}} = kvdb:get(Name, T1, x)
+      end),
+    {ok, {x,[],1}} = kvdb:get(Name, T1,x),
+    ok.
 
 update_counter(Name) ->
     T1 = ?tab,
