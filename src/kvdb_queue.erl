@@ -16,6 +16,7 @@
 	 prel_pop/2, prel_pop/3,
 	 delete/3, extract/3,
 	 is_empty/3,
+	 list_queues/2, list_queues/3,
 	 list/3, list/6, list_full/3,
 	 first/2,
 	 next/3,
@@ -70,7 +71,7 @@ list_queues_({ok, Q}, Db, Table, Limit0, Limit, Acc) ->
 	Limit1 ->
 	    list_queues_(next(Db, Table, Q), Db, Table, Limit0, Limit1, [Q|Acc])
     end;
-list_queues_(done, Db, Table, Limit0, Limit, Acc) ->
+list_queues_(done, _Db, _Table, _Limit0, _Limit, Acc) ->
     if Acc == [] -> done;
        true -> {lists:reverse(Acc), fun() -> done end}
     end.

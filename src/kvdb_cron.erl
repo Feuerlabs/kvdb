@@ -411,7 +411,12 @@ do_dispatch_(TS, Tab, Q, Db, Parent) ->
 	    end,
 	    %% even if we didn't call, we attempt to reschedule
 	    delete_abs(Db, Tab, QK),
-	    reschedule_job(Job, Tab, Q, Db, Opts, Parent);
+	    reschedule_job(Job, Tab, Q, Db, Opts, Parent),
+	    do_dispatch_(TS, Tab, Q, Db, Parent);
+	{ok, active, #q_key{key = TS1} = QK, _} ->
+	    ?debug("peek(~p, ~p) -> ~p; future job~n",
+		   [kvdb:db_name(Db), Tab, QK]),
+	    gen_server:cast(Parent, {next_time, TS1, Tab, Q});
 	done ->
 	    ok
     end.
