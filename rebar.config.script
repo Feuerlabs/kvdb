@@ -6,15 +6,44 @@
 %% the dependency tree, we should nil out our local
 %% deps list provided by our local rebar.config
 %%
+CFG1 = case os:getenv("KVDB_BACKENDS") of
+	   Str when is_list(Str) ->
+	       Backends = [{"leveldb",eleveldb},
+			   {"sqlite3",sqlite3}],
+	       Split = re:split(Str, "[, ]+", [{return,list}]),
+	       case [B || B <- Split, not lists:member(
+					    B, ["none", "ets",
+						"leveldb", "sqlite3"])] of
+		   [] -> ok;
+		   [_|_] = Unknown ->
+		       io:fwrite("Error - unknown backends: ~p~n", [Unknown]),
+		       error({unknown_backends, Unknown})
+	       end,
+	       io:fwrite("Backends selected: ~p~n", [Split]),
+	       Exclude = case Split of
+			     "none" -> Backends;
+			     _ -> [Pair || {K,_} = Pair <- Backends,
+					   not lists:member(K, Split)]
+			 end,
+	       Deps0 = proplists:get_value(deps, CONFIG, []),
+	       Deps1 = [D || D <- Deps0,
+			     not lists:keymember(element(1,D), 2, Exclude)],
+	       lists:keystore(deps, 1, CONFIG, {deps, Deps1});
+	   false ->
+	       io:fwrite("Using all backends~n", []),
+	       CONFIG
+       end.
+
+%% The following is a temporary fix for Feuerlabs' device SW build system
 case os:getenv("EXODEV_COMP") of
     E when E==false; E==[] ->
 	case os:getenv("REBAR_DEPS") of
-	    D when D==false; D==[] -> CONFIG;
-	    Dir -> lists:keystore(deps_dir, 1, CONFIG, {deps_dir, Dir})
+	    D when D==false; D==[] -> CFG1;
+	    Dir -> lists:keystore(deps_dir, 1, CFG1, {deps_dir, Dir})
 	end;
     _ ->
-        case lists:keytake(deps, 1, CONFIG) of
+        case lists:keytake(deps, 1, CFG1) of
             { value, _, Remainder } -> Remainder;
-            _ -> CONFIG
+            _ -> CFG1
         end
 end.
