@@ -184,7 +184,8 @@ commit(#kvdb_ref{tref = TRef, schema = Schema} = Ref0) ->
     #commit{} = Set = M1:commit_set(Db1),
     #commit{} = Set1 = Schema:pre_commit(Set, Ref),
     ?debug("~p: Commit set: ~p~n", [self(), Set]),
-    kvdb_lib:commit(Set1, KR2),
+    Res = kvdb_lib:commit(Set1, KR2),
+    ?debug("commit result = ~p~n", [Res]),
     catch Schema:post_commit(Set1, Ref),
     fire_events(Set1, Ref).
 

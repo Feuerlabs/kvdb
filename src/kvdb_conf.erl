@@ -434,9 +434,9 @@ xpath(Tab, Expr) ->
 xpath(Tab, Expr, Limit) ->
     xpath(Tab, Expr, Limit, <<>>).
 
-xpath(Tab, Expr, Limit, Prev) ->
+xpath(_Tab, Expr, _Limit, _Prev) ->
     case xmerl_xpath_parse:parse(xmerl_xpath_scan:tokens(Expr)) of
-	{ok, Abst} ->
+	{ok, _Abst} ->
 	    error(nyi);
 	{error,_} = E ->
 	    error(E)
@@ -774,20 +774,38 @@ next_at_level(Tab, K0) when is_binary(K0) ->
     next_at_level_(Tab, K).
 
 next_at_level_(Tab, K) ->
-    Len = length(raw_split_key(K)),
+    Len = length(SplitPrev = raw_split_key(K)),
+    Parent = lists:sublist(SplitPrev, 1, Len-1),
     Sz = byte_size(K),
     case raw_next(Tab, << K:Sz/binary, $+ >>) of
 	{ok, {Next,_,_}} ->
-	    case length(SplitNext = raw_split_key(Next)) of
-		Len ->
+	    SplitNext = raw_split_key(Next),
+	    case same_parent(Len, Parent, SplitNext) of
+		{true, Len} ->
 		    {ok, unescape_key(Next)};
-		L when L > Len ->
+		{true, L} when L > Len ->
 		    {ok, join_unescape_key(lists:sublist(SplitNext, 1, Len))};
 		_ ->
 		    done
 	    end;
 	done ->
 	    done
+    end.
+
+same_parent(Len, P, Next) ->
+    case length(Next) of
+	Len ->
+	    case lists:sublist(Next, 1, Len-1) of
+		P -> {true, Len};
+		_ -> false
+	    end;
+	L when L > Len ->
+	    case lists:sublist(Next, 1, Len-1) of
+		P -> {true, L};
+		_ -> false
+	    end;
+	_ ->
+	    false
     end.
 
 raw_first(Tab) ->
@@ -965,14 +983,14 @@ join_key([]) ->
 %% See {@link join_key/1}.
 %% @end
 join_key(<<>>, K) -> escape_key(K);
-join_key(K, <<>>) -> escape_key(K);
+join_key(K, <<>>) -> <<(escape_key(K))/binary, "*">>;
 join_key(K1, K2) when is_binary(K1), is_binary(K2) ->
     <<(escape_key(K1))/binary, "*", (escape_key(K2))/binary>>.
 
 join_key_([{K,I}|T], Acc) when is_binary(K), is_integer(I) ->
     join_key_(T, <<Acc/binary, "*", (list_key(K,I))/binary>>);
 join_key_([<<>>], Acc) ->
-    Acc;
+    <<Acc/binary, "*">>;
 join_key_([H|T], Acc) ->
     join_key_(T, <<Acc/binary, "*", (escape_key(H))/binary>>);
 join_key_([], Acc) ->

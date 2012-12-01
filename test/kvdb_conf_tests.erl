@@ -21,26 +21,36 @@
 
 
 conf_test_() ->
-    {setup,
-     fun() ->
-	     application:start(gproc),
-	     application:start(kvdb),
-	     kvdb_conf:open(undefined, [{backend, ets}]),
-	     ok
-     end,
-     fun(_) ->
-	     application:stop(kvdb),
-	     application:stop(gproc)
-     end,
-     [?my_t(read_write())
-      , ?my_t(prefix_match())
-      , ?my_t(next_at_level())
-      , ?my_t(conf_tree())
-      , ?my_t(write_tree())
-      , ?my_t(first_next_child())
-      , ?my_t(fold_list())
-      , ?my_t(fold_children())
-      ]}.
+    [
+     ?my_t(join_split_key()),
+     {setup,
+      fun() ->
+	      application:start(gproc),
+	      application:start(kvdb),
+	      kvdb_conf:open(undefined, [{backend, ets}]),
+	      ok
+      end,
+      fun(_) ->
+	      application:stop(kvdb),
+	      application:stop(gproc)
+      end,
+      [?my_t(read_write())
+       , ?my_t(prefix_match())
+       , ?my_t(next_at_level())
+       , ?my_t(conf_tree())
+       , ?my_t(write_tree())
+       , ?my_t(first_next_child())
+       , ?my_t(fold_list())
+       , ?my_t(fold_children())
+      ]}].
+
+join_split_key() ->
+    <<"=a*=b">> = kvdb_conf:join_key(<<"a">>, <<"b">>),
+    <<"=a*">> = kvdb_conf:join_key(<<"a">>, <<>>),
+    <<"=a*=b">> = kvdb_conf:join_key([<<"a">>, <<"b">>]),
+    <<"=a*">> = kvdb_conf:join_key([<<"a">>, <<>>]),
+    ok.
+
 
 read_write() ->
     ?mktab(T, []),
@@ -64,12 +74,22 @@ next_at_level() ->
     ok = kvdb_conf:write(T, {<<"aa">>, [], <<>>}),
     ok = kvdb_conf:write(T, {<<"aa*bb">>, [], <<>>}),
     ok = kvdb_conf:write(T, {<<"aa*bb*cc">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"aa*bb*dd">>, [], <<>>}),
     ok = kvdb_conf:write(T, {<<"aa*cc">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"aa*cc*cc">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"aa*cc*dd">>, [], <<>>}),
+    ok = kvdb_conf:write(T, {<<"aa*dd*dd">>, [], <<>>}),
     ok = kvdb_conf:write(T, {<<"bb">>, [], <<>>}),
     {ok, {<<"aa">>,_,_}} = kvdb_conf:first(T),
     {ok, <<"bb">>} = kvdb_conf:next_at_level(T, <<"aa">>),
     {ok, <<"aa*cc">>} = kvdb_conf:next_at_level(T, <<"aa*bb">>),
-    done = kvdb_conf:next_at_level(T, <<"aa*bb*cc">>),
+    {ok, <<"aa*bb*cc">>} = kvdb_conf:next_at_level(T, <<"aa*bb*">>),
+    %% Next - find an implicit node (its children are present, so therefore, it
+    %% exists conceptually, even if not physically present).
+    {ok, <<"aa*dd">>} = kvdb_conf:next_at_level(T, <<"aa*cc">>),
+    done = kvdb_conf:next_at_level(T, <<"aa*cc*dd">>),
+    {ok, <<"aa*bb*dd">>} = kvdb_conf:next_at_level(T, <<"aa*bb*cc">>),
+    done = kvdb_conf:next_at_level(T, <<"aa*bb*dd">>),
     ok = kvdb_conf:delete_table(T).
 
 first_next_tree() ->
