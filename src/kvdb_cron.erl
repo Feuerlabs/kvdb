@@ -20,7 +20,7 @@
 
 -include_lib("stdlib/include/qlc.hrl").
 -include_lib("parse_trans/include/exprecs.hrl").
--include_lib("kvdb/include/kvdb.hrl").
+-include_lib("kvdb.hrl").
 -include_lib("lager/include/log.hrl").
 
 -export_records([job]).
