@@ -580,7 +580,7 @@ in_spec(In, TS) ->
 at_spec(At, TS) ->
     lists:foldl(
       fun({{_,_,_},{_,_,_}} = DT, _) ->
-	      throw({result, kvdb_lib:datetime_to_timestamp(DT,0)});
+	      throw({result, kvdb_lib:datetime_to_timestamp({DT,0})});
 	 ({time,{_,_,_}=T}, TS1) ->
 	      {{D,_},US} = kvdb_lib:datetime_to_timestamp(TS1),
 	      kvdb_lib:timestamp_to_datetime({{D,T},US});
