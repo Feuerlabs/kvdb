@@ -116,11 +116,17 @@ conf_tree() ->
     ok = kvdb_conf:write(
 	   T,
 	   {kvdb_conf:join_key(<<"a">>, <<"c">>), [{c,1}],<<"2">>}),
+    ok = kvdb_conf:write(
+	   T,
+	   {kvdb_conf:join_key(<<"aa">>, <<"d">>), [{d,1}],<<"3">>}),
     [{<<"a*b">>,[{b,1}],<<"1">>},
-     {<<"a*c">>,[{c,1}],<<"2">>}] = kvdb_conf:all(T),
+     {<<"a*c">>,[{c,1}],<<"2">>},
+     {<<"aa*d">>,[{d,1}],<<"3">>}] = kvdb_conf:all(T),
     {conf_tree, <<"a">>, [{<<"b">>, [{b,1}], <<"1">>},
 			  {<<"c">>, [{c,1}], <<"2">>}]} =
 	kvdb_conf:read_tree(T, <<"a">>),
+    {conf_tree, <<"aa">>, [{<<"d">>, [{d,1}], <<"3">>}]} =
+	kvdb_conf:read_tree(T, <<"aa">>),
     ok = kvdb_conf:write(T, {<<"a">>, [], <<>>}),
     %% <<"a">> is a separate object, so must be part of the tree. It cannot
     %% be lifted into the root key.

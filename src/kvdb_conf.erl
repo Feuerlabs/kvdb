@@ -841,18 +841,30 @@ read_tree(Prefix) when is_binary(Prefix) ->
     read_tree(data, Prefix).
 
 -spec read_tree(kvdb:table(), binary()) -> #conf_tree{} | [].
-%% @doc Read a configuration (sub-)tree matching Prefix.
+%% @doc Read a configuration (sub-)tree corresponding to the given parent Key.
 %%
-%% This function does a prefix match on the configuration database, and builds
+%% This function reads all objects under the given node, and builds
 %% a tree from the result. The empty binary will result in the whole table
 %% being built as a tree. The returned tree is `[]' if nothing was found, or
 %% a `#conf_tree{}' record, which can be passed to e.g. {@link write_tree/3},
 %% {@link flatten_tree/1}, etc.
 %% @end
-read_tree(Tab, Prefix) when is_binary(Prefix) ->
-    {Objs,_} = kvdb:prefix_match(instance_(), Tab,
-				 escape_key(Prefix), infinity),
+read_tree(Tab, Node) when is_binary(Node) ->
+    %% {Objs,_} = kvdb:prefix_match(instance_(), Tab,
+    %% 				 escape_key(Prefix), infinity),
+    Objs = match_tree(Tab, Node),
     make_tree(Objs).
+
+match_tree(Tab, Node) ->
+    Top = case read(Tab, Key = escape_key(Node)) of
+	      {ok, Obj} ->
+		  [Obj];
+	      {error, not_found} ->
+		  []
+	  end,
+    {Objs,_} = kvdb:prefix_match(
+		 instance_(), Tab, <<Key/binary, "*">>, infinity),
+    Top ++ Objs.
 
 -spec make_tree([conf_obj()]) -> #conf_tree{}.
 %% @doc Converts an ordered list of configuration objects into a configuration tree.
