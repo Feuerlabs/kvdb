@@ -2,7 +2,6 @@
 
 #Module kvdb_conf#
 * [Description](#description)
-* [Data Types](#types)
 * [Function Index](#index)
 * [Function Details](#functions)
 
@@ -63,92 +62,15 @@ key starts with '='. The escaping character is '@', followed by the hex
 code of the escaped character. For efficiency, any key (or key part) that
 starts with '=' will be considered escaped. Thus, no unescaped key may
 begin with '=' (this is not enforced, but will lead to unpredictable
-behavior).
-<a name="types"></a>
-
-##Data Types##
-
-
-
-
-###<a name="type-attrs">attrs()</a>##
-
-
-
-<pre>attrs() = [{atom(), any()}]</pre>
-
-
-
-###<a name="type-conf_node">conf_node()</a>##
-
-
-
-<pre>conf_node() = {<a href="#type-node_key">node_key()</a>, <a href="#type-attrs">attrs()</a>, <a href="#type-value">value()</a>, <a href="#type-conf_tree">conf_tree()</a>} | {<a href="#type-node_key">node_key()</a>, <a href="#type-conf_tree">conf_tree()</a>}</pre>
-
-
-
-###<a name="type-conf_obj">conf_obj()</a>##
-
-
-
-<pre>conf_obj() = {<a href="#type-node_key">node_key()</a>, <a href="#type-attrs">attrs()</a>, <a href="#type-value">value()</a>}</pre>
-
-
-
-###<a name="type-conf_tree">conf_tree()</a>##
-
-
-
-<pre>conf_tree() = [<a href="#type-conf_node">conf_node()</a> | <a href="#type-conf_obj">conf_obj()</a>]</pre>
-
-
-
-###<a name="type-key">key()</a>##
-
-
-
-<pre>key() = binary()</pre>
-
-
-
-###<a name="type-key_part">key_part()</a>##
-
-
-
-<pre>key_part() = binary() | {binary(), integer()}</pre>
-
-
-
-###<a name="type-node_key">node_key()</a>##
-
-
-
-<pre>node_key() = <a href="#type-key">key()</a> | integer()</pre>
-
-
-
-###<a name="type-shift_op">shift_op()</a>##
-
-
-
-<pre>shift_op() = up | down | top | bottom</pre>
-
-
-
-###<a name="type-value">value()</a>##
-
-
-
-<pre>value() = any()</pre>
-<a name="index"></a>
+behavior).<a name="index"></a>
 
 ##Function Index##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_table-1">add_table/1</a></td><td>Equivalent to <a href="#add_table-2"><tt>add_table(T, [])</tt></a>.</td></tr><tr><td valign="top"><a href="#add_table-2">add_table/2</a></td><td>Adds a table to the <code>kvdb_conf</code> database.</td></tr><tr><td valign="top"><a href="#all-0">all/0</a></td><td>Equivalent to <a href="#all-1"><tt>all(&lt;&lt;"data"&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#all-1">all/1</a></td><td>Returns a list of all configuration objects in the given table.</td></tr><tr><td valign="top"><a href="#close-0">close/0</a></td><td>Closes the current <code>kvdb_conf</code> database.</td></tr><tr><td valign="top"><a href="#delete-1">delete/1</a></td><td>Equivalent to <a href="#delete-2"><tt>delete(&lt;&lt;"data"&gt;&gt;, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#delete-2">delete/2</a></td><td>Deletes an object denoted by Key, returns <code>ok</code> even if object not found.</td></tr><tr><td valign="top"><a href="#delete_all-1">delete_all/1</a></td><td>Equivalent to <a href="#delete_all-2"><tt>delete_all(&lt;&lt;"data"&gt;&gt;, Prefix)</tt></a>.</td></tr><tr><td valign="top"><a href="#delete_all-2">delete_all/2</a></td><td>Deletes all objects with a key matching <code>Prefix</code>.</td></tr><tr><td valign="top"><a href="#delete_table-1">delete_table/1</a></td><td>Equivalent to <a href="kvdb.md#delete_table-1"><tt>kvdb:delete_table(T)</tt></a>.</td></tr><tr><td valign="top"><a href="#escape_key-1">escape_key/1</a></td><td>Escapes a key; leaves it unchanged if already escaped.</td></tr><tr><td valign="top"><a href="#escape_key_part-1">escape_key_part/1</a></td><td>Escapes a key part according to <code>kvdb_conf</code> escaping rules.</td></tr><tr><td valign="top"><a href="#first-0">first/0</a></td><td>Equivalent to <a href="#first-1"><tt>first(&lt;&lt;"data"&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#first-1">first/1</a></td><td>Returns the first object in <code>Tab</code>, if there is one; otherwise <code>done</code>.</td></tr><tr><td valign="top"><a href="#first_child-1">first_child/1</a></td><td>Equivalent to <a href="#first_child-2"><tt>first_child(&lt;&lt;"data"&gt;&gt;, Parent)</tt></a>.</td></tr><tr><td valign="top"><a href="#first_child-2">first_child/2</a></td><td>Returns the first child, if any, of the given <code>Parent</code>.</td></tr><tr><td valign="top"><a href="#first_top_key-0">first_top_key/0</a></td><td>Equivalent to <a href="#first_top_key-1"><tt>first_top_key(&lt;&lt;"data"&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#first_top_key-1">first_top_key/1</a></td><td>Returns the first top-level key in <code>Table</code>, or <code>done</code> if empty.</td></tr><tr><td valign="top"><a href="#first_tree-0">first_tree/0</a></td><td>Equivalent to <a href="#first_tree-1"><tt>first_tree(&lt;&lt;"data"&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#first_tree-1">first_tree/1</a></td><td>Reads the first config tree from <code>Table</code>, returns <code>[]</code> if <code>Table</code> empty.</td></tr><tr><td valign="top"><a href="#flatten_tree-1">flatten_tree/1</a></td><td>Converts a configuration tree into an ordered list of configuration objects.</td></tr><tr><td valign="top"><a href="#fold_children-3">fold_children/3</a></td><td>Equivalent to <a href="#fold_children-4"><tt>fold_children(&lt;&lt;"data"&gt;&gt;, Fun, Acc, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#fold_children-4">fold_children/4</a></td><td>Folds over the immediate children of <code>K</code>, applying <code>Fun(K, Acc)</code>.</td></tr><tr><td valign="top"><a href="#fold_list-3">fold_list/3</a></td><td>Equivalent to <a href="#fold_list-4"><tt>fold_list(&lt;&lt;"data"&gt;&gt;, Fun, Acc, BaseKey)</tt></a>.</td></tr><tr><td valign="top"><a href="#fold_list-4">fold_list/4</a></td><td>Fold through a configuration list set.</td></tr><tr><td valign="top"><a href="#get_root-1">get_root/1</a></td><td>Returns the root key of the given config tree.</td></tr><tr><td valign="top"><a href="#in_transaction-1">in_transaction/1</a></td><td>Equivalent to <a href="kvdb.md#in_transaction-2"><tt>kvdb:in_transaction(kvdb_conf_instance(), Fun)</tt></a>.</td></tr><tr><td valign="top"><a href="#join_key-1">join_key/1</a></td><td>Joins a list of key parts into one key, ensuring all parts are escaped.</td></tr><tr><td valign="top"><a href="#join_key-2">join_key/2</a></td><td>Joins two key parts into one key, ensuring both parts are escaped.</td></tr><tr><td valign="top"><a href="#last-0">last/0</a></td><td>Equivalent to <a href="#last-1"><tt>last(&lt;&lt;"data"&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#last-1">last/1</a></td><td>Returns the last object in <code>Tab</code>, if there is one; otherwise
-<code>done</code>.</td></tr><tr><td valign="top"><a href="#last_child-1">last_child/1</a></td><td>Equivalent to <a href="#last_child-2"><tt>last_child(&lt;&lt;"data"&gt;&gt;, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#last_child-2">last_child/2</a></td><td>Returns the last child, if any, of the given <code>Parent</code>; otherwise <code>done</code>.</td></tr><tr><td valign="top"><a href="#last_tree-0">last_tree/0</a></td><td>Equivalent to <a href="#last_tree-1"><tt>last_tree(&lt;&lt;"data"&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#last_tree-1">last_tree/1</a></td><td>Returns the last config tree from <code>Table</code>, or <code>[]</code> if <code>Table</code> empty.</td></tr><tr><td valign="top"><a href="#list_key-2">list_key/2</a></td><td>Creates a "list key" part from a base (binary) and an index (integer).</td></tr><tr><td valign="top"><a href="#make_tree-1">make_tree/1</a></td><td>Converts an ordered list of configuration objects into a configuration tree.</td></tr><tr><td valign="top"><a href="#next-1">next/1</a></td><td>Equivalent to <a href="#next-2"><tt>next(&lt;&lt;"data"&gt;&gt;, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#next-2">next/2</a></td><td>Returns the next object in <code>Tab</code> following the key <code>K</code>,
-if there is one; otherwise <code>done</code>.</td></tr><tr><td valign="top"><a href="#next_at_level-1">next_at_level/1</a></td><td>Equivalent to <a href="#next_at_level-2"><tt>next_at_level(&lt;&lt;"data"&gt;&gt;, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#next_at_level-2">next_at_level/2</a></td><td>Skips to the next sibling at the same level in the subtree.</td></tr><tr><td valign="top"><a href="#next_child-1">next_child/1</a></td><td>Equivalent to <a href="#next_child-2"><tt>next_child(&lt;&lt;"data"&gt;&gt;, Prev)</tt></a>.</td></tr><tr><td valign="top"><a href="#next_child-2">next_child/2</a></td><td>Returns the next child at the same level as <code>PrevChild</code>.</td></tr><tr><td valign="top"><a href="#next_tree-1">next_tree/1</a></td><td>Equivalent to <a href="#next_tree-2"><tt>next_tree(&lt;&lt;"data"&gt;&gt;, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#next_tree-2">next_tree/2</a></td><td>Returns the next config tree in <code>Table</code> after <code>K</code>, or <code>[]</code> if not found.</td></tr><tr><td valign="top"><a href="#open-1">open/1</a></td><td>Equivalent to <a href="#open-2"><tt>open(File, [])</tt></a>.</td></tr><tr><td valign="top"><a href="#open-2">open/2</a></td><td>Opens a kvdb_conf-compliant kvdb database.</td></tr><tr><td valign="top"><a href="#prefix_match-1">prefix_match/1</a></td><td>Equivalent to <a href="#prefix_matc-2"><tt>prefix_matc(&lt;&lt;"data"&gt;&gt;, Prefix)</tt></a>.</td></tr><tr><td valign="top"><a href="#prefix_match-2">prefix_match/2</a></td><td>Performs a prefix match, returning all matching objects.</td></tr><tr><td valign="top"><a href="#prev-1">prev/1</a></td><td>Equivalent to <a href="#prev-2"><tt>prev(&lt;&lt;"data"&gt;&gt;, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#prev-2">prev/2</a></td><td>Returns the previous object in <code>Tab</code> before the key <code>K</code>,
-if there is one; otherwise <code>done</code>.</td></tr><tr><td valign="top"><a href="#read-1">read/1</a></td><td>Equivalent to <a href="#read-2"><tt>read(&lt;&lt;"data"&gt;&gt;, Key)</tt></a>.</td></tr><tr><td valign="top"><a href="#read-2">read/2</a></td><td>Reads a configuration object from the database.</td></tr><tr><td valign="top"><a href="#read_tree-1">read_tree/1</a></td><td>Equivalent to <a href="#read_tree-2"><tt>read_tree(&lt;&lt;"data"&gt;&gt;, Prefix)</tt></a>.</td></tr><tr><td valign="top"><a href="#read_tree-2">read_tree/2</a></td><td>Read a configuration (sub-)tree matching Prefix.</td></tr><tr><td valign="top"><a href="#set_root-2">set_root/2</a></td><td>Inserts a new root into a <code>#conf_tree{}</code> record.</td></tr><tr><td valign="top"><a href="#shift_root-2">shift_root/2</a></td><td>Shifts the config tree root upwards or downwards if possible.</td></tr><tr><td valign="top"><a href="#split_key-1">split_key/1</a></td><td>Splits a <code>kvdb_conf</code> key into a list of (unescaped) key parts.</td></tr><tr><td valign="top"><a href="#transaction-1">transaction/1</a></td><td>Equivalent to <a href="kvdb.md#transaction-2"><tt>kvdb:transaction(kvdb_conf_instance(), Fun)</tt></a>.</td></tr><tr><td valign="top"><a href="#unescape_key-1">unescape_key/1</a></td><td>Unescapes a key.</td></tr><tr><td valign="top"><a href="#unescape_key_part-1">unescape_key_part/1</a></td><td>Unescapes a key part; leaving it untouched if already escaped.</td></tr><tr><td valign="top"><a href="#update_counter-2">update_counter/2</a></td><td>Equivalent to <a href="#update_counter-3"><tt>update_counter(&lt;&lt;"data"&gt;&gt;, Key, Incr)</tt></a>.</td></tr><tr><td valign="top"><a href="#update_counter-3">update_counter/3</a></td><td>Updates a counter with the given increment.</td></tr><tr><td valign="top"><a href="#write-1">write/1</a></td><td>Equivalent to <a href="#write-2"><tt>write(&lt;&lt;"data"&gt;&gt;, Obj)</tt></a>.</td></tr><tr><td valign="top"><a href="#write-2">write/2</a></td><td>Writes a configuration object into the database.</td></tr><tr><td valign="top"><a href="#write_tree-2">write_tree/2</a></td><td>Equivalent to <a href="#write_tree-3"><tt>write_tree(&lt;&lt;"data"&gt;&gt;, Parent, T)</tt></a>.</td></tr><tr><td valign="top"><a href="#write_tree-3">write_tree/3</a></td><td>Writes a configuration tree under the given parent.</td></tr></table>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_table-1">add_table/1</a></td><td>Equivalent to <a href="#add_table-2"><tt>add_table(T, [])</tt></a>.</td></tr><tr><td valign="top"><a href="#add_table-2">add_table/2</a></td><td>Adds a table to the <code>kvdb_conf</code> database.</td></tr><tr><td valign="top"><a href="#all-0">all/0</a></td><td>Equivalent to <a href="#all-1"><tt>all(&lt;&lt;"data"&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#all-1">all/1</a></td><td>Returns a list of all configuration objects in the given table.</td></tr><tr><td valign="top"><a href="#close-0">close/0</a></td><td>Closes the current <code>kvdb_conf</code> database.</td></tr><tr><td valign="top"><a href="#delete-1">delete/1</a></td><td>Equivalent to <a href="#delete-2"><tt>delete(&lt;&lt;"data"&gt;&gt;, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#delete-2">delete/2</a></td><td>Deletes an object denoted by Key, returns <code>ok</code> even if object not found.</td></tr><tr><td valign="top"><a href="#delete_all-1">delete_all/1</a></td><td>Equivalent to <a href="#delete_all-2"><tt>delete_all(&lt;&lt;"data"&gt;&gt;, Prefix)</tt></a>.</td></tr><tr><td valign="top"><a href="#delete_all-2">delete_all/2</a></td><td>Deletes all objects with a key matching <code>Prefix</code>.</td></tr><tr><td valign="top"><a href="#delete_table-1">delete_table/1</a></td><td>Equivalent to <a href="kvdb.md#delete_table-1"><tt>kvdb:delete_table(T)</tt></a>.</td></tr><tr><td valign="top"><a href="#delete_tree-1">delete_tree/1</a></td><td></td></tr><tr><td valign="top"><a href="#delete_tree-2">delete_tree/2</a></td><td></td></tr><tr><td valign="top"><a href="#escape_key-1">escape_key/1</a></td><td>Escapes a key; leaves it unchanged if already escaped.</td></tr><tr><td valign="top"><a href="#escape_key_part-1">escape_key_part/1</a></td><td>Escapes a key part according to <code>kvdb_conf</code> escaping rules.</td></tr><tr><td valign="top"><a href="#first-0">first/0</a></td><td>Equivalent to <a href="#first-1"><tt>first(&lt;&lt;"data"&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#first-1">first/1</a></td><td>Returns the first object in <code>Tab</code>, if there is one; otherwise <code>done</code>.</td></tr><tr><td valign="top"><a href="#first_child-1">first_child/1</a></td><td>Equivalent to <a href="#first_child-2"><tt>first_child(&lt;&lt;"data"&gt;&gt;, Parent)</tt></a>.</td></tr><tr><td valign="top"><a href="#first_child-2">first_child/2</a></td><td>Returns the first child, if any, of the given <code>Parent</code>.</td></tr><tr><td valign="top"><a href="#first_top_key-0">first_top_key/0</a></td><td>Equivalent to <a href="#first_top_key-1"><tt>first_top_key(&lt;&lt;"data"&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#first_top_key-1">first_top_key/1</a></td><td>Returns the first top-level key in <code>Table</code>, or <code>done</code> if empty.</td></tr><tr><td valign="top"><a href="#first_tree-0">first_tree/0</a></td><td>Equivalent to <a href="#first_tree-1"><tt>first_tree(&lt;&lt;"data"&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#first_tree-1">first_tree/1</a></td><td>Reads the first config tree from <code>Table</code>, returns <code>[]</code> if <code>Table</code> empty.</td></tr><tr><td valign="top"><a href="#flatten_tree-1">flatten_tree/1</a></td><td>Converts a configuration tree into an ordered list of configuration objects.</td></tr><tr><td valign="top"><a href="#fold_children-3">fold_children/3</a></td><td>Equivalent to <a href="#fold_children-4"><tt>fold_children(&lt;&lt;"data"&gt;&gt;, Fun, Acc, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#fold_children-4">fold_children/4</a></td><td>Folds over the immediate children of <code>K</code>, applying <code>Fun(K, Acc)</code>.</td></tr><tr><td valign="top"><a href="#fold_list-3">fold_list/3</a></td><td>Equivalent to <a href="#fold_list-4"><tt>fold_list(&lt;&lt;"data"&gt;&gt;, Fun, Acc, BaseKey)</tt></a>.</td></tr><tr><td valign="top"><a href="#fold_list-4">fold_list/4</a></td><td>Fold through a configuration list set.</td></tr><tr><td valign="top"><a href="#get_root-1">get_root/1</a></td><td>Returns the root key of the given config tree.</td></tr><tr><td valign="top"><a href="#in_transaction-1">in_transaction/1</a></td><td>Equivalent to <a href="kvdb.md#in_transaction-2"><tt>kvdb:in_transaction(kvdb_conf_instance(), Fun)</tt></a>.</td></tr><tr><td valign="top"><a href="#join_key-1">join_key/1</a></td><td>Joins a list of key parts into one key, ensuring all parts are escaped.</td></tr><tr><td valign="top"><a href="#join_key-2">join_key/2</a></td><td>Joins two key parts into one key, ensuring both parts are escaped.</td></tr><tr><td valign="top"><a href="#last-0">last/0</a></td><td>Equivalent to <a href="#last-1"><tt>last(&lt;&lt;"data"&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#last-1">last/1</a></td><td>Returns the last object in <code>Tab</code>, if there is one; otherwise
+<code>done</code>.</td></tr><tr><td valign="top"><a href="#last_child-1">last_child/1</a></td><td>Equivalent to <a href="#last_child-2"><tt>last_child(&lt;&lt;"data"&gt;&gt;, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#last_child-2">last_child/2</a></td><td>Returns the last child, if any, of the given <code>Parent</code>; otherwise <code>done</code>.</td></tr><tr><td valign="top"><a href="#last_list_pos-1">last_list_pos/1</a></td><td></td></tr><tr><td valign="top"><a href="#last_list_pos-2">last_list_pos/2</a></td><td></td></tr><tr><td valign="top"><a href="#last_tree-0">last_tree/0</a></td><td>Equivalent to <a href="#last_tree-1"><tt>last_tree(&lt;&lt;"data"&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#last_tree-1">last_tree/1</a></td><td>Returns the last config tree from <code>Table</code>, or <code>[]</code> if <code>Table</code> empty.</td></tr><tr><td valign="top"><a href="#list_key-2">list_key/2</a></td><td>Creates a "list key" part from a base (binary) and an index (integer).</td></tr><tr><td valign="top"><a href="#make_tree-1">make_tree/1</a></td><td>Converts an ordered list of configuration objects into a configuration tree.</td></tr><tr><td valign="top"><a href="#next-1">next/1</a></td><td>Equivalent to <a href="#next-2"><tt>next(&lt;&lt;"data"&gt;&gt;, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#next-2">next/2</a></td><td>Returns the next object in <code>Tab</code> following the key <code>K</code>,
+if there is one; otherwise <code>done</code>.</td></tr><tr><td valign="top"><a href="#next_at_level-1">next_at_level/1</a></td><td>Equivalent to <a href="#next_at_level-2"><tt>next_at_level(&lt;&lt;"data"&gt;&gt;, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#next_at_level-2">next_at_level/2</a></td><td>Skips to the next sibling at the same level in the subtree.</td></tr><tr><td valign="top"><a href="#next_child-1">next_child/1</a></td><td>Equivalent to <a href="#next_child-2"><tt>next_child(&lt;&lt;"data"&gt;&gt;, Prev)</tt></a>.</td></tr><tr><td valign="top"><a href="#next_child-2">next_child/2</a></td><td>Returns the next child at the same level as <code>PrevChild</code>.</td></tr><tr><td valign="top"><a href="#next_tree-1">next_tree/1</a></td><td>Equivalent to <a href="#next_tree-2"><tt>next_tree(&lt;&lt;"data"&gt;&gt;, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#next_tree-2">next_tree/2</a></td><td>Returns the next config tree in <code>Table</code> after <code>K</code>, or <code>[]</code> if not found.</td></tr><tr><td valign="top"><a href="#open-1">open/1</a></td><td>Equivalent to <a href="#open-2"><tt>open(File, [])</tt></a>.</td></tr><tr><td valign="top"><a href="#open-2">open/2</a></td><td>Opens a kvdb_conf-compliant kvdb database.</td></tr><tr><td valign="top"><a href="#prefix_match-1">prefix_match/1</a></td><td>Equivalent to <a href="#prefix_matc-2"><tt>prefix_matc(&lt;&lt;"data"&gt;&gt;, Prefix)</tt></a>.</td></tr><tr><td valign="top"><a href="#prefix_match-2">prefix_match/2</a></td><td>Performs a prefix match, returning all matching objects.</td></tr><tr><td valign="top"><a href="#prefix_match-3">prefix_match/3</a></td><td></td></tr><tr><td valign="top"><a href="#prev-1">prev/1</a></td><td>Equivalent to <a href="#prev-2"><tt>prev(&lt;&lt;"data"&gt;&gt;, K)</tt></a>.</td></tr><tr><td valign="top"><a href="#prev-2">prev/2</a></td><td>Returns the previous object in <code>Tab</code> before the key <code>K</code>,
+if there is one; otherwise <code>done</code>.</td></tr><tr><td valign="top"><a href="#raw_join_key-1">raw_join_key/1</a></td><td>Joins key parts without escaping them.</td></tr><tr><td valign="top"><a href="#raw_split_key-1">raw_split_key/1</a></td><td></td></tr><tr><td valign="top"><a href="#read-1">read/1</a></td><td>Equivalent to <a href="#read-2"><tt>read(&lt;&lt;"data"&gt;&gt;, Key)</tt></a>.</td></tr><tr><td valign="top"><a href="#read-2">read/2</a></td><td>Reads a configuration object from the database.</td></tr><tr><td valign="top"><a href="#read_tree-1">read_tree/1</a></td><td>Equivalent to <a href="#read_tree-2"><tt>read_tree(&lt;&lt;"data"&gt;&gt;, Prefix)</tt></a>.</td></tr><tr><td valign="top"><a href="#read_tree-2">read_tree/2</a></td><td>Read a configuration (sub-)tree corresponding to the given parent Key.</td></tr><tr><td valign="top"><a href="#set_root-2">set_root/2</a></td><td>Inserts a new root into a <code>#conf_tree{}</code> record.</td></tr><tr><td valign="top"><a href="#shift_root-2">shift_root/2</a></td><td>Shifts the config tree root upwards or downwards if possible.</td></tr><tr><td valign="top"><a href="#split_key-1">split_key/1</a></td><td>Splits a <code>kvdb_conf</code> key into a list of (unescaped) key parts.</td></tr><tr><td valign="top"><a href="#transaction-1">transaction/1</a></td><td>Equivalent to <a href="kvdb.md#transaction-2"><tt>kvdb:transaction(kvdb_conf_instance(), Fun)</tt></a>.</td></tr><tr><td valign="top"><a href="#unescape_key-1">unescape_key/1</a></td><td>Unescapes a key.</td></tr><tr><td valign="top"><a href="#unescape_key_part-1">unescape_key_part/1</a></td><td>Unescapes a key part; leaving it untouched if already escaped.</td></tr><tr><td valign="top"><a href="#update_counter-2">update_counter/2</a></td><td>Equivalent to <a href="#update_counter-3"><tt>update_counter(&lt;&lt;"data"&gt;&gt;, Key, Incr)</tt></a>.</td></tr><tr><td valign="top"><a href="#update_counter-3">update_counter/3</a></td><td>Updates a counter with the given increment.</td></tr><tr><td valign="top"><a href="#write-1">write/1</a></td><td>Equivalent to <a href="#write-2"><tt>write(&lt;&lt;"data"&gt;&gt;, Obj)</tt></a>.</td></tr><tr><td valign="top"><a href="#write-2">write/2</a></td><td>Writes a configuration object into the database.</td></tr><tr><td valign="top"><a href="#write_tree-2">write_tree/2</a></td><td>Equivalent to <a href="#write_tree-3"><tt>write_tree(&lt;&lt;"data"&gt;&gt;, Parent, T)</tt></a>.</td></tr><tr><td valign="top"><a href="#write_tree-3">write_tree/3</a></td><td>Writes a configuration tree under the given parent.</td></tr><tr><td valign="top"><a href="#xpath-1">xpath/1</a></td><td></td></tr><tr><td valign="top"><a href="#xpath-2">xpath/2</a></td><td></td></tr><tr><td valign="top"><a href="#xpath-3">xpath/3</a></td><td></td></tr></table>
 
 
 <a name="functions"></a>
@@ -270,7 +192,21 @@ Deletes all objects with a key matching `Prefix`. Always returns `ok`.<a name="d
 <br></br>
 
 
-Equivalent to [`kvdb:delete_table(T)`](kvdb.md#delete_table-1).<a name="escape_key-1"></a>
+Equivalent to [`kvdb:delete_table(T)`](kvdb.md#delete_table-1).<a name="delete_tree-1"></a>
+
+###delete_tree/1##
+
+
+`delete_tree(K) -> any()`
+
+<a name="delete_tree-2"></a>
+
+###delete_tree/2##
+
+
+`delete_tree(Tab, K) -> any()`
+
+<a name="escape_key-1"></a>
 
 ###escape_key/1##
 
@@ -283,8 +219,13 @@ Equivalent to [`kvdb:delete_table(T)`](kvdb.md#delete_table-1).<a name="escape_k
 
 Escapes a key; leaves it unchanged if already escaped.
 
+
+
 Any key starting with "=" is assumed to be escaped already.
-<a name="escape_key_part-1"></a>
+
+NOTE: This function does not escape '*', '[' and ']', as they are key
+delimiters. If they are intended to be escaped as well, use
+[`escape_key_part/1`](#escape_key_part-1) instead.<a name="escape_key_part-1"></a>
 
 ###escape_key_part/1##
 
@@ -305,7 +246,11 @@ id has been encoded - so we don't encode it twice - we prepend a '='
 to the encoded key part. Since '=' lies between ASCII numbers and letters
 (just as '@' does), it won't upset the kvdb sort order.
 
-As a consequence, no unescaped key part string may begin with '='.<a name="first-0"></a>
+
+
+As a consequence, no unescaped key part string may begin with '='.
+
+NOTE: This function also escapes the key delimiters '*', '[' and ']'.<a name="first-0"></a>
 
 ###first/0##
 
@@ -467,11 +412,18 @@ Equivalent to [`kvdb:in_transaction(kvdb_conf_instance(), Fun)`](kvdb.md#in_tran
 
 Joins a list of key parts into one key, ensuring all parts are escaped.
 
+
+
 A key part can either be a `binary()` or a `{binary(), integer()}` tuple.
 The tuple construct corresponds to a "list key", where the first element
 is the base key, and the second, a list index.
 For example, `{<<"port">>, 1}` is expanded to `<<"port[00000001]">>` and
-then escaped.<a name="join_key-2"></a>
+then escaped.
+
+NOTE: This function does not automatically escape '*', '[' and ']', as
+they are key delimiters. If they are meant to be escaped, escape the parts
+explicitly with [`escape_key_part/1`](#escape_key_part-1) and then use
+[`raw_join_key/1`](#raw_join_key-1).<a name="join_key-2"></a>
 
 ###join_key/2##
 
@@ -518,7 +470,21 @@ Equivalent to [`last_child(<<"data">>, K)`](#last_child-2).<a name="last_child-2
 <br></br>
 
 
-Returns the last child, if any, of the given `Parent`; otherwise `done`.<a name="last_tree-0"></a>
+Returns the last child, if any, of the given `Parent`; otherwise `done`.<a name="last_list_pos-1"></a>
+
+###last_list_pos/1##
+
+
+`last_list_pos(Prefix) -> any()`
+
+<a name="last_list_pos-2"></a>
+
+###last_list_pos/2##
+
+
+`last_list_pos(Table, Prefix0) -> any()`
+
+<a name="last_tree-0"></a>
 
 ###last_tree/0##
 
@@ -727,7 +693,14 @@ Performs a prefix match, returning all matching objects.
 
 The difference between this function and [`kvdb:prefix_match/3`](kvdb.md#prefix_match-3) is that
 this function automatically ensures that the prefix is escaped using the
-`kvdb_conf` escaping rules.<a name="prev-1"></a>
+`kvdb_conf` escaping rules.<a name="prefix_match-3"></a>
+
+###prefix_match/3##
+
+
+`prefix_match(Tab, Prefix, Limit) -> any()`
+
+<a name="prev-1"></a>
 
 ###prev/1##
 
@@ -746,7 +719,25 @@ Equivalent to [`prev(<<"data">>, K)`](#prev-2).<a name="prev-2"></a>
 
 
 Returns the previous object in `Tab` before the key `K`,
-if there is one; otherwise `done`.<a name="read-1"></a>
+if there is one; otherwise `done`.<a name="raw_join_key-1"></a>
+
+###raw_join_key/1##
+
+
+<pre>raw_join_key(T::[<a href="#type-key_part">key_part()</a>]) -> <a href="#type-key">key()</a></pre>
+<br></br>
+
+
+Joins key parts without escaping them.
+Use this function when you either don't care about escaping/unescaping,
+or know it has already been done (e.g. with [`escape_key_part/1`](#escape_key_part-1)).<a name="raw_split_key-1"></a>
+
+###raw_split_key/1##
+
+
+`raw_split_key(K) -> any()`
+
+<a name="read-1"></a>
 
 ###read/1##
 
@@ -781,15 +772,15 @@ Equivalent to [`read_tree(<<"data">>, Prefix)`](#read_tree-2).<a name="read_tree
 ###read_tree/2##
 
 
-<pre>read_tree(Tab::<a href="kvdb.md#type-table">kvdb:table()</a>, Prefix::binary()) -> #conf_tree{} | []</pre>
+<pre>read_tree(Tab::<a href="kvdb.md#type-table">kvdb:table()</a>, Node::binary()) -> #conf_tree{} | []</pre>
 <br></br>
 
 
 
 
-Read a configuration (sub-)tree matching Prefix.
+Read a configuration (sub-)tree corresponding to the given parent Key.
 
-This function does a prefix match on the configuration database, and builds
+This function reads all objects under the given node, and builds
 a tree from the result. The empty binary will result in the whole table
 being built as a tree. The returned tree is `[]` if nothing was found, or
 a `#conf_tree{}` record, which can be passed to e.g. [`write_tree/3`](#write_tree-3),
@@ -952,4 +943,24 @@ Writes a configuration tree under the given parent.
 This function inserts a config tree, such as is returned from e.g.
 [`read_tree/3`](#read_tree-3). The root to insert it under must be made explicit,
 but could of course be the same root as in the original tree
-(can be retrieved using [`get_root/1`](#get_root-1)).
+(can be retrieved using [`get_root/1`](#get_root-1)).<a name="xpath-1"></a>
+
+###xpath/1##
+
+
+`xpath(Expr) -> any()`
+
+<a name="xpath-2"></a>
+
+###xpath/2##
+
+
+`xpath(Tab, Expr) -> any()`
+
+<a name="xpath-3"></a>
+
+###xpath/3##
+
+
+`xpath(Tab, Expr, Limit) -> any()`
+

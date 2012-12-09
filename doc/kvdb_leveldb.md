@@ -245,7 +245,7 @@ __Authors:__ Tony Rogvall ([`tony@rogvall.se`](mailto:tony@rogvall.se)).<a name=
 ###put/3##
 
 
-`put(Db, Table, X3) -> any()`
+`put(Db, Table, Obj) -> any()`
 
 <a name="queue_delete-3"></a>
 

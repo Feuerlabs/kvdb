@@ -62,7 +62,7 @@ testf() ->
     io:fwrite("~nCRON!! ~p~n", [kvdb_lib:timestamp_to_datetime(
 				  kvdb_lib:timestamp())]).
 
-%%% @spec (When::timespec(), Key::any(),
+%%% @spec (Db, Tab, When::timespec(), Key::any(),
 %%%        M::atom(), F::atom(), As::[any()]) -> ok | error()
 %%%
 add(Db, Tab, When, Options, M, F, As) ->

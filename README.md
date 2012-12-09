@@ -10,6 +10,11 @@
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb.md" class="module">kvdb</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_app.md" class="module">kvdb_app</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_conf.md" class="module">kvdb_conf</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_cron.md" class="module">kvdb_cron</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_cron_parse.md" class="module">kvdb_cron_parse</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_cron_scan.md" class="module">kvdb_cron_scan</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_cron_sup.md" class="module">kvdb_cron_sup</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_db_sup.md" class="module">kvdb_db_sup</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_diff.md" class="module">kvdb_diff</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_direct.md" class="module">kvdb_direct</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_ets.md" class="module">kvdb_ets</a></td></tr>
@@ -20,6 +25,7 @@
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_schema.md" class="module">kvdb_schema</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_schema_events.md" class="module">kvdb_schema_events</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_server.md" class="module">kvdb_server</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_server_sup.md" class="module">kvdb_server_sup</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_sqlite3.md" class="module">kvdb_sqlite3</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_sup.md" class="module">kvdb_sup</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_trans.md" class="module">kvdb_trans</a></td></tr></table>

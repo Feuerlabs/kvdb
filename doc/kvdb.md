@@ -61,7 +61,7 @@ Feature overview:
 ##Function Index##
 
 
-<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_table-2">add_table/2</a></td><td>Equivalent to <a href="#add_table-3"><tt>add_table(Name, Table, [{type, set}])</tt></a>.</td></tr><tr><td valign="top"><a href="#add_table-3">add_table/3</a></td><td>Add a table to the database.</td></tr><tr><td valign="top"><a href="#close-1">close/1</a></td><td></td></tr><tr><td valign="top"><a href="#db-1">db/1</a></td><td>Returns a low-level handle for accessing the data via kvdb_direct:* functions.</td></tr><tr><td valign="top"><a href="#delete-3">delete/3</a></td><td></td></tr><tr><td valign="top"><a href="#delete_table-2">delete_table/2</a></td><td>Delete <code>Table</code> from the database.</td></tr><tr><td valign="top"><a href="#dump_tables-1">dump_tables/1</a></td><td>Returns the contents of the database as a list of objects.</td></tr><tr><td valign="top"><a href="#extract-3">extract/3</a></td><td></td></tr><tr><td valign="top"><a href="#first-2">first/2</a></td><td></td></tr><tr><td valign="top"><a href="#first_queue-2">first_queue/2</a></td><td></td></tr><tr><td valign="top"><a href="#get-3">get/3</a></td><td>Perform a lookup on <code>Key</code> in <code>Table</code></td></tr><tr><td valign="top"><a href="#get_attrs-4">get_attrs/4</a></td><td></td></tr><tr><td valign="top"><a href="#in_transaction-2">in_transaction/2</a></td><td>Runs inside an existing transaction if ongoing, or starts a new one.</td></tr><tr><td valign="top"><a href="#index_get-4">index_get/4</a></td><td>Perform an index lookup on the named index of Table.</td></tr><tr><td valign="top"><a href="#index_keys-4">index_keys/4</a></td><td>Perform an index lookup on the named index of Table, return matchin keys.</td></tr><tr><td valign="top"><a href="#info-2">info/2</a></td><td></td></tr><tr><td valign="top"><a href="#is_queue_empty-3">is_queue_empty/3</a></td><td></td></tr><tr><td valign="top"><a href="#last-2">last/2</a></td><td></td></tr><tr><td valign="top"><a href="#list_queue-3">list_queue/3</a></td><td></td></tr><tr><td valign="top"><a href="#list_queue-6">list_queue/6</a></td><td></td></tr><tr><td valign="top"><a href="#list_tables-1">list_tables/1</a></td><td>Lists the tables defined in the database.</td></tr><tr><td valign="top"><a href="#mark_queue_object-4">mark_queue_object/4</a></td><td></td></tr><tr><td valign="top"><a href="#next-3">next/3</a></td><td></td></tr><tr><td valign="top"><a href="#next_queue-3">next_queue/3</a></td><td></td></tr><tr><td valign="top"><a href="#open-2">open/2</a></td><td>Opens a database.</td></tr><tr><td valign="top"><a href="#pop-2">pop/2</a></td><td>Equivalent to <a href="#pop-3"><tt>pop(Name, Table, &lt;&lt;&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#pop-3">pop/3</a></td><td>Fetches and deletes the 'first' object in the given queue.</td></tr><tr><td valign="top"><a href="#prefix_match-3">prefix_match/3</a></td><td></td></tr><tr><td valign="top"><a href="#prefix_match-4">prefix_match/4</a></td><td></td></tr><tr><td valign="top"><a href="#prefix_match_rel-5">prefix_match_rel/5</a></td><td></td></tr><tr><td valign="top"><a href="#prel_pop-2">prel_pop/2</a></td><td></td></tr><tr><td valign="top"><a href="#prel_pop-3">prel_pop/3</a></td><td></td></tr><tr><td valign="top"><a href="#prev-3">prev/3</a></td><td></td></tr><tr><td valign="top"><a href="#push-3">push/3</a></td><td>Equivalent to <a href="#push-4"><tt>push(Name, Table, &lt;&lt;&gt;&gt;, Obj)</tt></a>.</td></tr><tr><td valign="top"><a href="#push-4">push/4</a></td><td>Push an object onto a persistent queue.</td></tr><tr><td valign="top"><a href="#put-3">put/3</a></td><td>Inserts an object into Table.</td></tr><tr><td valign="top"><a href="#queue_delete-3">queue_delete/3</a></td><td></td></tr><tr><td valign="top"><a href="#queue_insert-5">queue_insert/5</a></td><td></td></tr><tr><td valign="top"><a href="#queue_read-3">queue_read/3</a></td><td></td></tr><tr><td valign="top"><a href="#select-3">select/3</a></td><td>Similar to ets:select/3.</td></tr><tr><td valign="top"><a href="#select-4">select/4</a></td><td></td></tr><tr><td valign="top"><a href="#start_link-2">start_link/2</a></td><td></td></tr><tr><td valign="top"><a href="#start_session-2">start_session/2</a></td><td></td></tr><tr><td valign="top"><a href="#transaction-2">transaction/2</a></td><td>Runs a transaction with commit/rollback semantics.</td></tr><tr><td valign="top"><a href="#update_counter-4">update_counter/4</a></td><td></td></tr></table>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#add_table-2">add_table/2</a></td><td>Equivalent to <a href="#add_table-3"><tt>add_table(Name, Table, [{type, set}])</tt></a>.</td></tr><tr><td valign="top"><a href="#add_table-3">add_table/3</a></td><td>Add a table to the database.</td></tr><tr><td valign="top"><a href="#await-1">await/1</a></td><td>Equivalent to <a href="#await-2"><tt>await(DbName, 60000)</tt></a>.</td></tr><tr><td valign="top"><a href="#await-2">await/2</a></td><td>Waits for the kvdb database <code>DbName</code> to become available.</td></tr><tr><td valign="top"><a href="#close-1">close/1</a></td><td></td></tr><tr><td valign="top"><a href="#db-1">db/1</a></td><td>Returns a low-level handle for accessing the data via kvdb_direct:* functions.</td></tr><tr><td valign="top"><a href="#db_name-1">db_name/1</a></td><td></td></tr><tr><td valign="top"><a href="#delete-3">delete/3</a></td><td></td></tr><tr><td valign="top"><a href="#delete_table-2">delete_table/2</a></td><td>Delete <code>Table</code> from the database.</td></tr><tr><td valign="top"><a href="#dump_tables-1">dump_tables/1</a></td><td>Returns the contents of the database as a list of objects.</td></tr><tr><td valign="top"><a href="#extract-3">extract/3</a></td><td></td></tr><tr><td valign="top"><a href="#first-2">first/2</a></td><td></td></tr><tr><td valign="top"><a href="#first_queue-2">first_queue/2</a></td><td></td></tr><tr><td valign="top"><a href="#get-3">get/3</a></td><td>Perform a lookup on <code>Key</code> in <code>Table</code></td></tr><tr><td valign="top"><a href="#get_attrs-4">get_attrs/4</a></td><td></td></tr><tr><td valign="top"><a href="#in_transaction-2">in_transaction/2</a></td><td>Runs inside an existing transaction if ongoing, or starts a new one.</td></tr><tr><td valign="top"><a href="#index_get-4">index_get/4</a></td><td>Perform an index lookup on the named index of Table.</td></tr><tr><td valign="top"><a href="#index_keys-4">index_keys/4</a></td><td>Perform an index lookup on the named index of Table, return matchin keys.</td></tr><tr><td valign="top"><a href="#info-2">info/2</a></td><td></td></tr><tr><td valign="top"><a href="#is_queue_empty-3">is_queue_empty/3</a></td><td></td></tr><tr><td valign="top"><a href="#last-2">last/2</a></td><td></td></tr><tr><td valign="top"><a href="#list_queue-3">list_queue/3</a></td><td></td></tr><tr><td valign="top"><a href="#list_queue-6">list_queue/6</a></td><td></td></tr><tr><td valign="top"><a href="#list_tables-1">list_tables/1</a></td><td>Lists the tables defined in the database.</td></tr><tr><td valign="top"><a href="#mark_queue_object-4">mark_queue_object/4</a></td><td></td></tr><tr><td valign="top"><a href="#meta_table-0">meta_table/0</a></td><td></td></tr><tr><td valign="top"><a href="#next-3">next/3</a></td><td></td></tr><tr><td valign="top"><a href="#next_queue-3">next_queue/3</a></td><td></td></tr><tr><td valign="top"><a href="#open-2">open/2</a></td><td>Opens a database.</td></tr><tr><td valign="top"><a href="#peek-2">peek/2</a></td><td></td></tr><tr><td valign="top"><a href="#peek-3">peek/3</a></td><td></td></tr><tr><td valign="top"><a href="#pop-2">pop/2</a></td><td>Equivalent to <a href="#pop-3"><tt>pop(Name, Table, &lt;&lt;&gt;&gt;)</tt></a>.</td></tr><tr><td valign="top"><a href="#pop-3">pop/3</a></td><td>Fetches and deletes the 'first' object in the given queue.</td></tr><tr><td valign="top"><a href="#prefix_match-3">prefix_match/3</a></td><td></td></tr><tr><td valign="top"><a href="#prefix_match-4">prefix_match/4</a></td><td></td></tr><tr><td valign="top"><a href="#prefix_match_rel-5">prefix_match_rel/5</a></td><td></td></tr><tr><td valign="top"><a href="#prel_pop-2">prel_pop/2</a></td><td></td></tr><tr><td valign="top"><a href="#prel_pop-3">prel_pop/3</a></td><td></td></tr><tr><td valign="top"><a href="#prev-3">prev/3</a></td><td></td></tr><tr><td valign="top"><a href="#push-3">push/3</a></td><td>Equivalent to <a href="#push-4"><tt>push(Name, Table, &lt;&lt;&gt;&gt;, Obj)</tt></a>.</td></tr><tr><td valign="top"><a href="#push-4">push/4</a></td><td>Push an object onto a persistent queue.</td></tr><tr><td valign="top"><a href="#put-3">put/3</a></td><td>Inserts an object into Table.</td></tr><tr><td valign="top"><a href="#queue_delete-3">queue_delete/3</a></td><td></td></tr><tr><td valign="top"><a href="#queue_insert-5">queue_insert/5</a></td><td></td></tr><tr><td valign="top"><a href="#queue_read-3">queue_read/3</a></td><td></td></tr><tr><td valign="top"><a href="#select-3">select/3</a></td><td>Similar to ets:select/3.</td></tr><tr><td valign="top"><a href="#select-4">select/4</a></td><td></td></tr><tr><td valign="top"><a href="#start_link-2">start_link/2</a></td><td></td></tr><tr><td valign="top"><a href="#start_session-2">start_session/2</a></td><td></td></tr><tr><td valign="top"><a href="#transaction-2">transaction/2</a></td><td>Runs a transaction with commit/rollback semantics.</td></tr><tr><td valign="top"><a href="#update_counter-4">update_counter/4</a></td><td></td></tr></table>
 
 
 <a name="functions"></a>
@@ -178,7 +178,25 @@ the tuple `{value}`, meaning the actual value part of the object,
 or `{M, F}`, identifying a callback function, which will be called as
 `M:F({Key, Attrs, Value}) -> IndexBase`. The type of `IndexBase` should
 suit the specified operation: it can be anything for `value`, should be
-a list for `each`, and a string or binary for `words`.<a name="close-1"></a>
+a list for `each`, and a string or binary for `words`.<a name="await-1"></a>
+
+###await/1##
+
+
+<pre>await(DbName::<a href="#type-db_name">db_name()</a>) -> ok</pre>
+<br></br>
+
+
+Equivalent to [`await(DbName, 60000)`](#await-2).<a name="await-2"></a>
+
+###await/2##
+
+
+<pre>await(DbName::<a href="#type-db_name">db_name()</a>, Timeout::integer() | infinity) -> ok</pre>
+<br></br>
+
+
+Waits for the kvdb database `DbName` to become available.<a name="close-1"></a>
 
 ###close/1##
 
@@ -200,7 +218,14 @@ Returns a low-level handle for accessing the data via kvdb_direct:* functions.
 
 Note that not all functions are safe to use concurrently from different
 processes. When accessing a database via Name, update functions are
-serialized so that database corruption won't occur.<a name="delete-3"></a>
+serialized so that database corruption won't occur.<a name="db_name-1"></a>
+
+###db_name/1##
+
+
+`db_name(Kvdb_ref) -> any()`
+
+<a name="delete-3"></a>
 
 ###delete/3##
 
@@ -361,7 +386,7 @@ raises an exception, if there is no such index for the Table.<a name="info-2"></
 ###list_queue/6##
 
 
-`list_queue(Name, Table, Q, Fltr, Inactive, Limit) -> any()`
+`list_queue(Name, Table, Q, Fltr, HeedBlock, Limit) -> any()`
 
 <a name="list_tables-1"></a>
 
@@ -380,6 +405,13 @@ Lists the tables defined in the database<a name="mark_queue_object-4"></a>
 <pre>mark_queue_object(Name::<a href="#type-db_name">db_name()</a>, Table::<a href="#type-table">table()</a>, Key::binary(), St::<a href="#type-status">status()</a>) -> ok | {error, any()}</pre>
 <br></br>
 
+
+<a name="meta_table-0"></a>
+
+###meta_table/0##
+
+
+`meta_table() -> any()`
 
 <a name="next-3"></a>
 
@@ -419,7 +451,7 @@ Options:
 - `{backend, Backend}` - select a backend
 <br></br>
 
-Supported backends are Sqlite3 (`sqlite` or `sqlite3`) and `leveldb`,
+Supported backends are Sqlite3 (`sqlite` or `sqlite3`), `ets` and `leveldb`,
 or any module that implements the `kvdb` behaviour.
 
 
@@ -435,7 +467,25 @@ The module must implement the `kvdb_schema` behaviour.
 
 - `{encoding, Encoding}` - Default encoding for tables.
 
-- `{db_opts, DbOpts}` - Backend-specific options.<a name="pop-2"></a>
+
+
+- `{db_opts, DbOpts}` - Backend-specific options.
+
+- `{set_timers, boolean()}` - If true, process kvdb_cron timers at startup.<a name="peek-2"></a>
+
+###peek/2##
+
+
+`peek(Name, Table) -> any()`
+
+<a name="peek-3"></a>
+
+###peek/3##
+
+
+`peek(Name, Table, Q) -> any()`
+
+<a name="pop-2"></a>
 
 ###pop/2##
 
