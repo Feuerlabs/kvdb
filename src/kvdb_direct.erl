@@ -190,7 +190,9 @@ index_get(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
 	   [DbMod, Table0, IxName, IxVal]),
     Table = table_name(Table0),
     case DbMod:index_get(Db, Table, IxName, IxVal) of
-	Res when is_list(Res) -> Res
+	Res when is_list(Res) -> Res;
+	{error,_} = Error ->
+	    Error
     end.
 
 %% @doc Low-level equivalent of {@link index_keys/4}
@@ -200,7 +202,9 @@ index_keys(#kvdb_ref{mod = DbMod, db = Db}, Table0, IxName, IxVal) ->
 	   [DbMod, Table0, IxName, IxVal]),
     Table = table_name(Table0),
     case DbMod:index_keys(Db, Table, IxName, IxVal) of
-	Res when is_list(Res) -> Res
+	Res when is_list(Res) -> Res;
+	{error,_} = Error ->
+	    Error
     end.
 
 -spec update_counter(Db::db_ref(), Table::table(), Key::binary(),

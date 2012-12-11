@@ -394,9 +394,16 @@ get_attrs(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
 index_get(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
 		     #kvdb_ref{mod=M2,db=Db2} = KR2}}, Tab, Ix, IxK) ->
     ensure_table(Tab, KR1, KR2),
-    Set1 = M1:index_get(Db1, Tab, Ix, IxK),
-    Set2 = M2:index_get(Db2, Tab, Ix, IxK),
-    merge_sets(Set1, Set2, obj, M1, Db1, Tab).
+    case M1:index_get(Db1, Tab, Ix, IxK) of
+	{error, no_index} = Err ->
+	    Err;
+	Set1 when is_list(Set1) ->
+	    case M2:index_get(Db2, Tab, Ix, IxK) of
+		{error, _} -> Set1;
+		Set2 when is_list(Set2) ->
+		    merge_sets(Set1, Set2, obj, M1, Db1, Tab)
+	    end
+    end.
 
 merge_sets(S1, S2, Type, M, Db, Tab) ->
     %% small optimization: we *hope* that most people will not perform
@@ -585,9 +592,16 @@ any_deleted(#db{ref = Ets}, Tab) ->
 index_keys(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
 		      #kvdb_ref{mod=M2,db=Db2} = KR2}}, Tab, Ix, IxK) ->
     ensure_table(Tab, KR1, KR2),
-    Set1 = M1:index_keys(Db1, Tab, Ix, IxK),
-    Set2 = M2:index_keys(Db2, Tab, Ix, IxK),
-    merge_sets(Set1, Set2, key, M1, Db1, Tab).
+    case M1:index_keys(Db1, Tab, Ix, IxK) of
+	{error, no_index} ->
+	    {error, no_index};
+	Set1 when is_list(Set1) ->
+	    case M2:index_keys(Db2, Tab, Ix, IxK) of
+		{error,_} -> Set1;
+		Set2 when is_list(Set2) ->
+		    merge_sets(Set1, Set2, key, M1, Db1, Tab)
+	    end
+    end.
 
 is_queue_empty(#db{ref = {K1, K2}} = Ref, Tab, Q) ->
     ensure_table(Tab, K1, K2),
