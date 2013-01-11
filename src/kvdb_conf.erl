@@ -121,6 +121,7 @@
 	 join_key/1,
 	 join_key/2,
 	 raw_join_key/1,
+	 raw_join_key/2,
 	 raw_split_key/1,
 	 list_key/2,
 	 %% is_list_key/1,
