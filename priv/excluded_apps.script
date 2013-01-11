@@ -1,0 +1,20 @@
+%% -*- erlang -*-
+case os:getenv("KVDB_BACKENDS") of
+    Str when is_list(Str) ->
+	Split = re:split(Str, "[, ]+", [{return,list}]),
+	{ok, Backends} =
+	    file:consult(filename:join(CWD, "all_apps.config")),
+	case [B || B <- Split, not lists:member(
+				     B, ["none", "ets",
+					 "leveldb", "sqlite3"])] of
+	    [] -> [];
+	    [_|_] = Unknown ->
+		io:fwrite("Error - unknown backends: ~p~n", [Unknown]),
+		error({unknown_backends, Unknown})
+	end,
+	io:fwrite("Backends selected: ~p~n", [Split]),
+	[App || {K, App} = Pair <- Backends,
+		not lists:member(K, Split)];
+    false ->
+	[]
+end.

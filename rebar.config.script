@@ -8,26 +8,13 @@
 %%
 CFG1 = case os:getenv("KVDB_BACKENDS") of
 	   Str when is_list(Str) ->
-	       Backends = [{"leveldb",eleveldb},
-			   {"sqlite3",sqlite3}],
-	       Split = re:split(Str, "[, ]+", [{return,list}]),
-	       case [B || B <- Split, not lists:member(
-					    B, ["none", "ets",
-						"leveldb", "sqlite3"])] of
-		   [] -> ok;
-		   [_|_] = Unknown ->
-		       io:fwrite("Error - unknown backends: ~p~n", [Unknown]),
-		       error({unknown_backends, Unknown})
-	       end,
-	       io:fwrite("Backends selected: ~p~n", [Split]),
-	       Exclude = case Split of
-			     "none" -> Backends;
-			     _ -> [Pair || {K,_} = Pair <- Backends,
-					   not lists:member(K, Split)]
-			 end,
+	       Priv = filename:join(filename:dirname(SCRIPT), "priv"),
+	       {ok,Exclude} = file:script(
+			       filename:join(Priv, "excluded_apps.script"),
+					 [{'CWD', Priv}]),
 	       Deps0 = proplists:get_value(deps, CONFIG, []),
 	       Deps1 = [D || D <- Deps0,
-			     not lists:keymember(element(1,D), 2, Exclude)],
+			     not lists:member(element(1,D), Exclude)],
 	       lists:keystore(deps, 1, CONFIG, {deps, Deps1});
 	   false ->
 	       io:fwrite("Using all backends~n", []),
