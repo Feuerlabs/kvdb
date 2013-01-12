@@ -863,9 +863,13 @@ match_tree(Tab, Node) ->
 	      {error, not_found} ->
 		  []
 	  end,
-    {Objs,_} = kvdb:prefix_match(
-		 instance_(), Tab, <<Key/binary, "*">>, infinity),
-    Top ++ Objs.
+    case kvdb:prefix_match(
+	   instance_(), Tab, <<Key/binary, "*">>, infinity) of
+	{Objs,_} ->
+	    Top ++ Objs;
+	done ->
+	    []
+    end.
 
 -spec make_tree([conf_obj()]) -> #conf_tree{}.
 %% @doc Converts an ordered list of configuration objects into a configuration tree.
