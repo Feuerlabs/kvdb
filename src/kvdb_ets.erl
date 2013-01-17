@@ -504,10 +504,10 @@ do_pop(#db{ref = Ets} = Db, Table, Type, Q, Remove, ReturnKey) ->
 	case Type of
 	    _ when Type == fifo; element(2,Type) == fifo ->
 		{fun() -> ets:next(Ets, #k{t=Table, k={{Q,0},0,0}}) end,
-		 fun(K) -> ets:next(Ets, #k{t=Table, k=K}) end};
+		 fun(K) -> ets:next(Ets, K) end};
 	    _ when Type == lifo; element(2,Type) == lifo ->
 		{fun() -> ets:prev(Ets, #k{t=Table, k={{Q,2},0,0}}) end,
-		 fun(K) -> ets:prev(Ets, #k{t=Table, k=K}) end};
+		 fun(K) -> ets:prev(Ets, K) end};
 	    _ -> error(illegal)
 	 end,
     case do_pop_(First(), Table, Q, Next, Ets, Type, Enc) of
