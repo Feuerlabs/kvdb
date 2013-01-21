@@ -1148,3 +1148,10 @@ schema_delete(#db{metadata = ETS} = Db, Key) ->
     delete(Db, ?META_TABLE, Key).
 
 
+%% Need to convert error result
+sqlite_call(M,F,Args) ->
+    case M:F(Args) of
+	{error, Int, String} -> {error, {Int, String}};
+	Other -> Other
+    end.
+	    
