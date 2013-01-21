@@ -585,7 +585,7 @@ queue_insert(#db{ref = Ref} = Db, Table, #q_key{} = QKey, St, Obj) when
 			    ActiveCol]
 		   end) of
 		ok ->
-		    {ok, QKey};
+		    ok;
 		{error,Error} ->
 		    error(Error)
 	    end;

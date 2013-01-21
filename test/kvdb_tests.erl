@@ -87,6 +87,7 @@ basic_test_() ->
 			    , ?_test(?dbg(Db,subqueues(Db1)))
 			    , ?_test(?dbg(Db,first_next_queue(Db1)))
 			    , ?_test(?dbg(Db,prel_pop(Db1)))
+			    , ?_test(?dbg(Db,q_inactive(Db1)))
 			    , ?_test(?dbg(Db,each_index(Db1)))
 			    , ?_test(?dbg(Db,word_index(Db1)))
 			   ]
@@ -454,6 +455,21 @@ prel_pop(Db) ->
     ?match(M, blocked, kvdb:prel_pop(Db, T, Q)),
     ?match(M, ok, kvdb:queue_delete(Db, T, Key)),
     ?match(M, {ok, {2,b}}, kvdb:pop(Db, T, Q)),
+    ?match(M, ok, catch kvdb:delete_table(Db, T)),
+    ok.
+
+q_inactive(Db) ->
+    M = {_, Type,Enc,T} = {Db,fifo,sext,qi_fifo_sext},
+    Q = <<"q">>,
+    ?match(M, ok, kvdb:add_table(Db, T, [{type,Type},{encoding,Enc}])),
+    ok = kvdb:queue_insert(Db, T, #q_key{queue = Q,
+					 ts = 0,
+					 key = <<>>}, inactive, {0,a}),
+    _PushResults =
+	[kvdb:push(Db, T, Q, Obj)
+	 || Obj <- [{1,a},
+		    {2,b}]],
+    {ok, {1,a}} = kvdb:pop(Db, T, Q),
     ?match(M, ok, catch kvdb:delete_table(Db, T)),
     ok.
 
