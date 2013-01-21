@@ -788,6 +788,7 @@ table_queue_prefix(Table, Q, Enc) when Enc == sext; element(1, Enc) == sext ->
 
 
 get(Db, Table, Key) ->
+    lager:debug("get: Db = ~p, Table = ~p, Key = ~p ~n",  [Db, Table, Key]),
     case type(Db, Table) of
 	set ->
 	    get(Db, Table, Key, encoding(Db, Table), set);
