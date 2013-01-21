@@ -710,6 +710,8 @@ matches_encoding(Enc, Obj) ->
     end.
 
 get(#db{ref = Ets} = Db, Table, Key) ->
+    ?debug("get: Ets = ~p, Db = ~p, Table = ~p, Key = ~p ~n",  
+	   [Ets, Db, Table, Key]),
     case type(Db, Table) of
 	undefined ->
 	    {error, not_found};
