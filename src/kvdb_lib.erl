@@ -677,6 +677,7 @@ log(#db{log = {Log,Thr}} = Db, Data) ->
     Term = {os:timestamp(), Data},
     Bytes = erts_debug:flat_size(Term),
     disk_log:log(Log, Term),
+    disk_log:sync(Log),
     SumBytes = kvdb_meta:update_counter(Db, logged_bytes, Bytes),
     SumWrites = kvdb_meta:update_counter(Db, logged_writes, 1),
     case threshold_reached(#thr{bytes = SumBytes, writes = SumWrites}, Thr) of
