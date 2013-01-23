@@ -132,7 +132,8 @@
 
 -export([open/1, open/2, close/0, % options/1,
 	 add_table/1, add_table/2,
-	 delete_table/1]).
+	 delete_table/1,
+	 info/1]).
 
 -include("kvdb_conf.hrl").
 
@@ -300,6 +301,9 @@ add_table(T, Opts) ->
 %% @equiv kvdb:delete_table(T)
 delete_table(T) ->
     kvdb:delete_table(instance_(), T).
+
+info(I) ->
+    kvdb:info(instance_(), I).
 
 -spec close() -> ok.
 %% @doc Closes the current `kvdb_conf' database.
