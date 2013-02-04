@@ -98,6 +98,7 @@ dump_tables(#db{ref = Ref}) ->
     ets:tab2list(Ref).
 
 open(DbName, Options) ->
+    ?debug("open(~p, ~p)~n", [DbName, Options]),
     case do_open(Options) of
 	{ok, #db{} = Db} ->
 	    SaveMode = proplists:get_value(save_mode, Options, []),
@@ -110,6 +111,7 @@ open(DbName, Options) ->
     end.
 
 do_open(Options) ->
+    ?debug("do_open(~p)~n", [Options]),
     case proplists:get_value(file, Options) of
 	undefined ->
 	    create_new_ets(Options);
@@ -127,11 +129,13 @@ create_new_ets(Options) ->
     {ok, Db}.
 
 load_from_file(FileName, Options) ->
+    ?debug("load_from_file(~p, ~p)~n", [FileName, Options]),
     case filelib:is_regular(FileName) of
 	false ->
 	    ?error("Cannot load from file; ~s doesn't exist~n", [FileName]),
 	    create_new_ets(Options);
 	true ->
+	    ?debug("Loading from file ~p~n", [FileName]),
 	    case ets:file2tab(FileName) of
 		{ok, T} ->
 		    %% FIXME: also need to read transaction log, but as yet,

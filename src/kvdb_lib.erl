@@ -43,6 +43,9 @@
 	 on_update/4,
 	 commit/2]).
 
+%% Intended for replication
+-export([nodes_of/2]).
+
 -include("kvdb.hrl").
 -include_lib("lager/include/log.hrl").
 
@@ -327,7 +330,7 @@ timestamp_to_datetime(TS) ->
 %% calendar:datetime_to_gregorian_seconds({{2009,11,12}, {4,26,40}})
 -define(EPOCH_GREGORIAN_SECS, 63425219200).
 
-datetime_to_timestamp({{{Y,Mo,D},{H,Mi,S}} = DT, US}) ->
+datetime_to_timestamp({{{_Y,_Mo,_D},{_H,_Mi,_S}} = DT, US}) ->
     ((calendar:datetime_to_gregorian_seconds(DT)
       - ?EPOCH_GREGORIAN_SECS) * 1000000) + US.
 
@@ -492,6 +495,7 @@ replay_logs(Dir, Module, #db{} = Db) ->
     end.
 
 replay_log(LogF, Module, Db, LastDump) ->
+    ?debug("replay_log(~p, ~p, Db, ~p)~n", [LogF, Module, LastDump]),
     case open_log(LogF, self()) of
 	{ok, Info} ->
 	    {_, Log} = lists:keyfind(id, 1, Info),
@@ -603,8 +607,8 @@ open_log(F, Pid) ->
 		  {name, Name},
 		  {file, F}]};
 	{repaired, Log, Rec, Bad} ->
-	    ?error("Log file ~p repaired: ~p; ~p.~n",
-		   [F, Rec, Bad]),
+	    ?warning("Log file ~p repaired: ~p; ~p.~n",
+		     [F, Rec, Bad]),
 	    {ok, [{id, Log},
 		  {name, Name},
 		  {file, F}]};
@@ -697,7 +701,7 @@ log(#db{log = {Log,Thr}} = Db, Data) ->
 
 nodes_of({commit, #commit{add_tables = [], del_tables = []} = Rec}, Db) ->
     lists:usort(lists:append(([nodes_of_(T, Db) || T <- updated_tables(Rec)])));
-nodes_of(_Commit, Db) ->
+nodes_of({commit, _Commit}, Db) ->
     kvdb_meta:read(Db, schema_nodes, [node()]);
 nodes_of(Evt, Db) ->
     nodes_of_(element(2, Evt), Db).
