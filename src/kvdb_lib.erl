@@ -32,7 +32,7 @@
 	 timestamp_to_datetime/1,
 	 datetime_to_timestamp/1,
 	 good_string/1]).
--export([common_open/4,
+-export([common_open/3,
 	 log_filename/1,
 	 open_log/2,
 	 replay_logs/3,
@@ -449,8 +449,7 @@ bin(T) ->
     iolist_to_binary(io_lib:fwrite("~w", [T])).
 
 
-common_open(Name, Module, #db{} = Db, Options) ->
-    kvdb_meta:write(Db, name, Name),
+common_open(Module, #db{} = Db, Options) ->
     case proplists:get_value(log_dir, Options, undefined) of
 	undefined ->
 	    {ok, Db#db{log = false}};
@@ -514,9 +513,10 @@ eat_log({Cont, Terms}, Log, Mod, Db, Last) ->
 			  process_log_event(Event, Mod, Db);
 		     (_) -> skip
 		  end, Terms),
-eat_log(disk_log:chunk(Log, Cont), Log, Mod, Db, Last).
+    eat_log(disk_log:chunk(Log, Cont), Log, Mod, Db, Last).
 
 process_log_event({_TS, Op}, Mod, Db) ->
+    ?debug("process_log_event(Op = ~p)~n", [Op]),
     case Op of
 	?KVDB_LOG_INSERT(Table, Obj) ->
 	    Mod:put(Db, Table, Obj);
@@ -661,7 +661,7 @@ commit(#commit{write = Writes,
 	   {fun({T, #q_key{} = QK, St, Obj}) ->
 		    M:queue_insert(Db, T, QK, St, Obj);
 		({T, Obj}) ->
-		    M:put(Db, T, Obj)
+		    _Res = M:put(Db, T, Obj)
 	    end, Writes},
 	   {fun({T, K}) ->
 		    M:delete(Db, T, K)

@@ -193,9 +193,7 @@ open(DbName, Options) ->
 	  end,
     case Res of
 	{ok, Ref} ->
-	    kvdb_lib:common_open(
-	      DbName, ?MODULE,
-	      ensure_schema(#db{ref = Ref, encoding = E}, Options), Options);
+	    {ok, ensure_schema(#db{ref = Ref, encoding = E}, Options)};
 	Error ->
 	    Error
     end.

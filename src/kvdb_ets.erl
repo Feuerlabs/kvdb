@@ -104,8 +104,7 @@ open(DbName, Options) ->
 	    SaveMode = proplists:get_value(save_mode, Options, []),
 	    kvdb_meta:write(Db, save_mode, SaveMode),
 	    kvdb_meta:write(Db, options, Options),
-	    kvdb_lib:common_open(
-	      DbName, ?MODULE, Db, Options);
+	    {ok, Db};
 	Error ->
 	    Error
     end.
@@ -144,9 +143,26 @@ load_from_file(FileName, Options) ->
 		    Enc = encoding(Db0, ?META_TABLE),
 		    {ok, Db0#db{metadata = T, encoding = Enc}};
 		Error ->
-		    Error
+		    ?error("Cannot load from file ~s: ~p~n", [FileName, Error]),
+		    case mark_as_bad(FileName) of
+			ok -> create_new_ets(Options);
+			MarkError ->
+			    ?error("Cannot mark ~s as bad: ~p~n", [MarkError]),
+			    Error
+		    end
 	    end
     end.
+
+mark_as_bad(FileName) ->
+    Ext = filename:extension(FileName),
+    Root = filename:rootname(FileName),
+    {MS,S,US} = os:timestamp(),
+    NewFileName = Root ++ "-bad-"++i2l(MS)++"-"++i2l(S)++"-"++i2l(US) ++ Ext,
+    ?debug("Saving bad db file as ~s~n", [NewFileName]),
+    file:rename(FileName, NewFileName).
+
+i2l(I) ->
+    integer_to_list(I).
 
 switch_logs(#db{ref = Ets, log = {_OldLog, Thr}} = Db, LogInfo) ->
     %% io:fwrite("switch_logs; Ets=~p, ~p~n", [Ets, LogInfo]),

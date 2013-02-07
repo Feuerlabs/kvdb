@@ -149,15 +149,6 @@ init_({owner, Name, Opts}) ->
     Backend = proplists:get_value(backend, Opts, ets),
     gproc:reg({n, l, {kvdb,Name}}, Backend),
     DbMod = mod(Backend),
-    %% F = name2file(Name),
-    %% File = case proplists:get_value(file, Opts) of
-    %% 	       undefined ->
-    %% 		   {ok, CWD} = file:get_cwd(),
-    %% 		   filename:join(CWD, F);
-    %% 	       F1 ->
-    %% 		   F1
-    %% 	   end,
-    %% ok = filelib:ensure_dir(File),
     NewOpts = lists:keystore(backend, 1,
 			     %% lists:keystore(file, 1, Opts, {file, File}),
 			     Opts,
@@ -166,7 +157,12 @@ init_({owner, Name, Opts}) ->
 	{ok, Db} ->
 	    kvdb_cron:init_meta(Db),
 	    create_tables_(Db, Opts),
-	    {ok, #st{name = Name, db = Db, is_owner = true}};
+	    case common_open(Db, NewOpts) of
+		{ok, Db1} ->
+		    {ok, #st{name = Name, db = Db1, is_owner = true}};
+		{error,_} = CommonOpenErr ->
+		    CommonOpenErr
+	    end;
 	{error,_} = Error ->
 	    io:fwrite("error opening kvdb database ~w:~n"
 		      "Error: ~p~n"
@@ -394,6 +390,13 @@ do_open(Name, Options) when is_list(Options) ->
 	    Error
     end.
 
+common_open(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Options) ->
+    case kvdb_lib:common_open(DbMod, Db, Options) of
+	{ok, Db1} ->
+	    {ok, DbRef#kvdb_ref{db = Db1}};
+	Other ->
+	    Other
+    end.
 
 
 mod(mnesia ) -> kvdb_mnesia;
