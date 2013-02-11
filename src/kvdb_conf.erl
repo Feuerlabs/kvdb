@@ -133,7 +133,8 @@
 -export([open/1, open/2, close/0, % options/1,
 	 add_table/1, add_table/2,
 	 delete_table/1,
-	 info/1]).
+	 info/1,
+	 instance/0]).
 
 -include("kvdb_conf.hrl").
 
@@ -178,6 +179,9 @@
 -define(is_id2(X), ?is_set(?bm_id2,(X))).
 -define(is_id3(X), ?is_set(?bm_id3,(X))).
 
+
+instance() ->
+    instance_().
 
 instance_() ->
     Name = case get(kvdb_conf) of
