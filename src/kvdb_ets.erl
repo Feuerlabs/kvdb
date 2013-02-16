@@ -135,7 +135,7 @@ load_from_file(FileName, Options) ->
 	    create_new_ets(Options);
 	true ->
 	    ?debug("Loading from file ~p~n", [FileName]),
-	    case ets:file2tab(FileName) of
+	    case ets:file2tab(FileName, [{verify,true}]) of
 		{ok, T} ->
 		    %% FIXME: also need to read transaction log, but as yet,
 		    %% we don't have one.
@@ -196,7 +196,8 @@ save(#db{} = Db) ->
 
 save(#db{ref = Ets} = Db, FileName) ->
     kvdb_meta:write(Db, last_dump, os:timestamp()),
-    ets:tab2file(Ets, FileName).
+    %% ets:tab2file(Ets, FileName).
+    kvdb_ets_dumper:tab2file(Ets, FileName, [md5sum, sync]).
 
 
 close(#db{ref = Ets} = Db) ->

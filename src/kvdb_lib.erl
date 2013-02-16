@@ -480,7 +480,9 @@ replay_logs(Dir, Module, #db{} = Db) ->
 			ok ->
 			    lists:foreach(
 			      fun(F) ->
-				      file:delete(F)
+				      _DeleteRes = file:delete(F),
+				      ?debug("delete(~s) -> ~p~n",
+					     [F, _DeleteRes])
 			      end, UseFiles);
 			Error ->
 			    error({save_error, Error})
