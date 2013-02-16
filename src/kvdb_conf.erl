@@ -471,7 +471,9 @@ all(Tab) ->
 	set ->
 	    all_(raw_first(Tab), Tab);
 	T when T==fifo; T==lifo; element(1,T) == keyed ->
-	    iterate_all(kvdb_queue:list_queues(Db, Tab))
+	    iterate_all(kvdb_queue:list_queues(Db, Tab));
+	undefined ->
+	    error({no_such_table, [Tab]})
     end.
 
 iterate_all({L, Cont}) ->
