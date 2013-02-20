@@ -351,8 +351,9 @@ list_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
     DbMod:list_queue(Db, Table, Q).
 
 -spec list_queue(#kvdb_ref{}, Table::table(), Q::queue_name(),
-		 _Fltr :: fun((active|inactive, #q_key{}, tuple()) ->
-				     keep | keep_raw | skip | {keep, tuple()}),
+		 _Fltr :: fun((active|inactive|blocking, #q_key{}, tuple()) ->
+				     keep | keep_raw | skip |
+				     stop |{keep, tuple()}),
 		 _HeedBlock :: boolean(), _Limit :: integer() | infinity) ->
 			[object()] | {error,any()}.
 list_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q,

@@ -504,6 +504,11 @@ pop(Name, Table, Q) ->
 peek(Name, Table) ->
     peek(Name, Table, <<>>).
 
+%% @doc Returns the first (active) object in the queue, without removing it
+%%
+%% If there is no active object, or it is preceded by a blocking object,
+%% `done' is returned.
+%% @end
 peek(Name, Table, Q) ->
     ?IF_TRANS(
        Name,
@@ -513,9 +518,15 @@ peek(Name, Table, Q) ->
 
 peek_(Ref, Table, Q) ->
     case kvdb_direct:list_queue(
-	   Ref, Table, Q, fun(S,K,O) -> {keep,{S,K,O}} end, false, 1) of
-	{[{S,K,O}], _} ->
-	    {ok, S, K, O};
+	   Ref, Table, Q, fun(active,K,O) ->
+				  {keep,{K,O}};
+			     (disabled,_,_) ->
+				  skip;
+			     (blocking, _, _) -> % strictly not necessary
+				  stop
+			  end, false, 1) of
+	{[{K,O}], _} ->
+	    {ok, K, O};
 	_ ->
 	    done
     end.
@@ -564,6 +575,13 @@ list_queue(Name, Table, Q) ->
        kvdb_direct:list_queue(Ref, Table, Q),
        kvdb_direct:list_queue(db(Name), Table, Q),
        [Name, Table, Q]).
+
+-spec list_queue(db_name(), Table::table(), Q::queue_name(),
+		 _Fltr :: fun((active|inactive|blocking, #q_key{}, tuple()) ->
+				     keep | keep_raw | skip |
+				     stop |{keep, tuple()}),
+		 _HeedBlock :: boolean(), _Limit :: integer() | infinity) ->
+			[object()] | {error,any()}.
 
 list_queue(Name, Table, Q, Fltr, HeedBlock, Limit) ->
     ?IF_TRANS(

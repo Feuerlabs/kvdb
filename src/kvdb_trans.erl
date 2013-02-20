@@ -34,6 +34,9 @@
 	 extract/3,
 	 list_queue/3,
 	 list_queue/6,
+	 queue_insert/5,
+	 queue_delete/3,
+	 queue_read/3,
 	 is_queue_empty/3,
 	 is_table/2,
 	 first_queue/2,
@@ -719,6 +722,23 @@ mark_queue_object(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 	{ok, _OldSt, Obj} ->
 	    M1:queue_insert(Db1, Tab, QK, St, Obj)
     end.
+
+queue_insert(#db{ref = {#kvdb_ref{mod = M1, db = Db1} = K1, K2}},
+	     Tab, #q_key{} = QKey, St, Obj) ->
+    ensure_table(Tab, K1, K2),
+    case M1:queue_insert(Db1, Tab, QKey, St, Obj) of
+	ok = Res ->
+	    M1:int_delete(Db1, {deleted, Tab, QKey}),
+	    Res;
+	Other ->
+	    Other
+    end.
+
+queue_delete(#db{ref = {#kvdb_ref{mod = M1, db = Db1} = K1, K2}}, Tab, QKey) ->
+    ensure_table(Tab, K1, K2),
+    Res = M1:queue_delete(Db1, Tab, QKey),
+    M1:int_write(Db1, {deleted, Tab, QKey}, true),
+    Res.
 
 queue_read(#db{ref = {K1, K2}} = Ref, Tab, #q_key{} = QKey) ->
     ensure_table(Tab, K1, K2),

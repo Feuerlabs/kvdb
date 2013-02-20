@@ -331,7 +331,7 @@ revisit_queues({ok, Q}, Db, Tab, Acc) ->
 	  fun(undefined) ->
 		  TS = kvdb_lib:timestamp(),
 		  case kvdb:peek(Db, Tab, Q) of
-		      {ok, active, #q_key{key = TS1}, _} ->
+		      {ok, #q_key{key = TS1}, _} ->
 			  Time = erlang:max(
 				   0, erlang:min((TS1-TS) div 1000,
 						 timer:minutes(10))),
@@ -398,7 +398,7 @@ do_dispatch(TS, Tab, Q, Db, Parent) ->
 do_dispatch_(TS, Tab, Q, Db, Parent) ->
     ?debug("do_dispatch_(~p, ~p, ~p, ~p, ~p)~n", [TS,Tab,Q,Db,Parent]),
     case kvdb:peek(Db, Tab, Q) of
-	{ok, active, #q_key{key = TS1} = QK, {_,Opts,Job}} when TS1-TS < 1000 ->
+	{ok, #q_key{key = TS1} = QK, {_,Opts,Job}} when TS1-TS < 1000 ->
 	    ?debug("peek(~p, ~p) -> ~p; ~p~n", [kvdb:db_name(Db),
 						Tab,QK,Job]),
 	    case should_i_call(TS1 - TS, Opts) of
@@ -413,7 +413,7 @@ do_dispatch_(TS, Tab, Q, Db, Parent) ->
 	    delete_abs(Db, Tab, QK),
 	    reschedule_job(Job, Tab, Q, Db, Opts, Parent),
 	    do_dispatch_(TS, Tab, Q, Db, Parent);
-	{ok, active, #q_key{key = TS1} = QK, _} ->
+	{ok, #q_key{key = TS1} = QK, _} ->
 	    ?debug("peek(~p, ~p) -> ~p; future job~n",
 		   [kvdb:db_name(Db), Tab, QK]),
 	    gen_server:cast(Parent, {next_time, TS1, Tab, Q});
