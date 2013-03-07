@@ -15,14 +15,17 @@
 -type key()       :: binary().
 -type attrs()     :: [{atom(), any()}].
 -type value()     :: any().
--type conf_tree() :: [conf_node() | conf_obj()].
+-type conf_data() :: [conf_node() | conf_obj()].
+
+-record(conf_tree, {root = <<>> :: key(),
+		    tree = []   :: conf_data()
+		   }).
+-type conf_tree() :: #conf_tree{}.
+
 -type node_key()  :: key() | integer().
 -type conf_obj()  :: {node_key(), attrs(), value()}.
 -type conf_node() :: {node_key(), attrs(), value(), conf_tree()}
 		   | {node_key(), conf_tree()}.
 -type shift_op()  :: up | down | top | bottom.
 
--record(conf_tree, {root = <<>> :: key(),
-		    tree = []   :: conf_tree()
-		   }).
 

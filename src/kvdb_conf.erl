@@ -138,18 +138,7 @@
 
 -include("kvdb_conf.hrl").
 
-%% -type key_part()  :: binary() | {binary(), integer()}.
-%% -type key()       :: binary().
-%% -type attrs()     :: [{atom(), any()}].
-%% -type value()     :: any().
-%% -type conf_tree() :: [conf_node() | conf_obj()].
-%% -type node_key()  :: key() | integer().
-%% -type conf_obj()  :: {node_key(), attrs(), value()}.
-%% -type conf_node() :: {node_key(), attrs(), value(), conf_tree()}
-%% 		   | {node_key(), conf_tree()}.
-%% -type shift_op()  :: up | down | top | bottom.
-
--export_types([key_part/0, key/0, attrs/0, value/0, conf_obj/0]).
+-export_types([key_part/0, key/0, attrs/0, value/0, conf_obj/0, conf_tree/0]).
 
 %% Macros for kvdb key escaping
 %%
@@ -1312,7 +1301,7 @@ write_tree_(Table, #conf_tree{root = Parent, tree = Tree}) ->
     [write(Table, Obj) || Obj <- Objs],
     ok.
 
--spec flatten_tree(#conf_tree{} | conf_tree()) -> [conf_obj()].
+-spec flatten_tree(#conf_tree{} | conf_data()) -> [conf_obj()].
 %% @doc Converts a configuration tree into an ordered list of configuration objects.
 %% @end
 %%
