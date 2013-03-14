@@ -1312,10 +1312,10 @@ flatten_tree(Tree) when is_list(Tree) ->
 
 flatten_tree({K, C}, Parent) ->
     C1 = lists:map(fun(X) when is_integer(element(1,X)) ->
-			   Kl = list_key(K, element(1,X)),
+			   Kl = unescape_key(list_key(K, element(1,X))),
 			   setelement(1, X, Kl);
 		      (X) when is_binary(element(1, X)) ->
-			   K1 = next_key(K, element(1, X)),
+			   K1 = unescape_key(next_key(K, element(1, X))),
 			   setelement(1, X, K1)
 		   end, C),
     [flatten_tree(Ch, Parent) || Ch <- C1];
@@ -1324,14 +1324,14 @@ flatten_tree({K, A, V}, Parent) ->
 	true ->
 	    [];
 	false ->
-	    Key = next_key(Parent, K),
+	    Key = unescape_key(next_key(Parent, K)),
 	    [{Key, A, V}]
     end;
 flatten_tree({K, A, V, C}, Parent) ->
     Key = next_key(Parent, K),
     case lists:member({1,1}, A) of
 	false ->
-	    [{Key, A, V} | [flatten_tree(Ch, Key) || Ch <- C]];
+	    [{unescape_key(Key), A, V} | [flatten_tree(Ch, Key) || Ch <- C]];
 	true  ->
 	    [flatten_tree(Ch, Key) || Ch <- C]
     end.

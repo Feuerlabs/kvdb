@@ -202,7 +202,7 @@ Low-level equivalent of [`index_keys/4`](#index_keys-4)<a name="info-2"></a>
 ###list_queue/6##
 
 
-<pre>list_queue(Kvdb_ref::#kvdb_ref{}, Table::<a href="#type-table">table()</a>, Q::<a href="#type-queue_name">queue_name()</a>, _Fltr::fun((active | inactive, #q_key{}, tuple()) -> keep | keep_raw | skip | {keep, tuple()}), _HeedBlock::boolean(), _Limit::integer() | infinity) -> [<a href="#type-object">object()</a>] | {error, any()}</pre>
+<pre>list_queue(Kvdb_ref::#kvdb_ref{}, Table::<a href="#type-table">table()</a>, Q::<a href="#type-queue_name">queue_name()</a>, _Fltr::fun((active | inactive | blocking, #q_key{}, tuple()) -> keep | keep_raw | skip | stop | {keep, tuple()}), _HeedBlock::boolean(), _Limit::integer() | infinity) -> [<a href="#type-object">object()</a>] | {error, any()}</pre>
 <br></br>
 
 

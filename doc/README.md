@@ -18,8 +18,10 @@
 <tr><td><a href="kvdb_diff.md" class="module">kvdb_diff</a></td></tr>
 <tr><td><a href="kvdb_direct.md" class="module">kvdb_direct</a></td></tr>
 <tr><td><a href="kvdb_ets.md" class="module">kvdb_ets</a></td></tr>
+<tr><td><a href="kvdb_ets_dumper.md" class="module">kvdb_ets_dumper</a></td></tr>
 <tr><td><a href="kvdb_leveldb.md" class="module">kvdb_leveldb</a></td></tr>
 <tr><td><a href="kvdb_lib.md" class="module">kvdb_lib</a></td></tr>
+<tr><td><a href="kvdb_log.md" class="module">kvdb_log</a></td></tr>
 <tr><td><a href="kvdb_meta.md" class="module">kvdb_meta</a></td></tr>
 <tr><td><a href="kvdb_queue.md" class="module">kvdb_queue</a></td></tr>
 <tr><td><a href="kvdb_schema.md" class="module">kvdb_schema</a></td></tr>
