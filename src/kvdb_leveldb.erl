@@ -7,7 +7,9 @@
 %%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
 %%% @author Tony Rogvall <tony@rogvall.se>
+%%% @hidden
 %%% @doc
 %%%    LevelDB backend to kvdb
 %%% @end

@@ -8,10 +8,13 @@
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Ulf Wiger <ulf@feuerlabs.com>
+%%% @doc
+%%%   KVDB schema callback module behavior
+%%% @end
 -module(kvdb_schema).
 
 -export([
-	 validate/3, validate_attr/3, on_update/4
+	 validate/3, on_update/4
 	]).
 -export([write/2, read/1, read/2]).
 -export([pre_commit/2, post_commit/2]).
@@ -22,17 +25,15 @@
 
 behaviour_info(callbacks) ->
     [{validate, 3},
-     {validate_attr, 3},
-     {on_update, 4}];
+     {on_update, 4},
+     {pre_commit, 2},
+     {post_commit, 2}];
 behaviour_info(_) ->
     undefined.
 
 
 validate(_Db, _Type, Obj) ->
     Obj.
-
-validate_attr(_Db, _Type, Attr) ->
-    Attr.
 
 on_update(_Op, _Db, _Table, _Obj) ->
     ok.

@@ -9,6 +9,7 @@
 %%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Tony Rogvall <tony@rogvall.se>
 %%% @author Ulf Wiger <ulf@feuerlabs.com>
+%%% @hidden
 %%% @doc
 %%%    ETS backend to kvdb
 %%% @end

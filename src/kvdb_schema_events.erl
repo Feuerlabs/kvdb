@@ -8,6 +8,9 @@
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Ulf Wiger <ulf@feuerlabs.com>
+%%% @doc
+%%%    KVDB schema callback module for queue-related events
+%%% @end
 %%%
 -module(kvdb_schema_events).
 -behaviour(kvdb_schema).
@@ -20,7 +23,6 @@
 
 %% kvdb_schema callbacks
 -export([validate/3,
-	 validate_attr/3,
 	 on_update/4,
 	 pre_commit/2,
 	 post_commit/2]).
@@ -44,9 +46,6 @@ cancel_notify_all_queues(#kvdb_ref{name = DBN}, Table0) ->
 
 validate(_, _, Obj) ->
     Obj.
-
-validate_attr(_, _, Attr) ->
-    Attr.
 
 on_update({q_op,_,Q,true}, DB, Table, _) ->
     notify_queue_status(DB, Table, Q, empty),

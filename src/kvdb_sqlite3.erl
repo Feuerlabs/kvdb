@@ -7,7 +7,9 @@
 %%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
 %%% @author Tony Rogvall <tony@rogvall.se>
+%%% @hidden
 %%% @doc
 %%%    SQLITE3 backend to kvdb
 %%% @end
@@ -1147,9 +1149,8 @@ schema_delete(#db{metadata = ETS} = Db, Key) ->
 
 
 %% Need to convert error result
-sqlite_call(M,F,Args) ->
-    case M:F(Args) of
-	{error, Int, String} -> {error, {Int, String}};
-	Other -> Other
-    end.
-	    
+%% sqlite_call(M,F,Args) ->
+%%     case M:F(Args) of
+%% 	{error, Int, String} -> {error, {Int, String}};
+%% 	Other -> Other
+%%     end.

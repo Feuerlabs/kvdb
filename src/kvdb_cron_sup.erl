@@ -7,7 +7,8 @@
 %%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
-%%% @author Ulf Wiger <ulf@wiger.net>
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
+%%% @hidden
 %%%
 -module(kvdb_cron_sup).
 

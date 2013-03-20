@@ -7,7 +7,11 @@
 %%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
-%%% @author Ulf Wiger <ulf@wiger.net>
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
+%%% @hidden
+%%% @doc
+%%%   KVDB database instance supervisor
+%%% @end
 %%%
 -module(kvdb_server_sup).
 

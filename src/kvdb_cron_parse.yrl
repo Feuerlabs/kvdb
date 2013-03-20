@@ -1,4 +1,13 @@
 %% -*- erlang -*-
+%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%
+%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%
+%% This Source Code Form is subject to the terms of the Mozilla Public
+%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%
+%%---- END COPYRIGHT ---------------------------------------------------------
 
 Nonterminals
 expr time_spec in_spec at_spec in_expr at_expr each_spec each_expr
@@ -78,6 +87,8 @@ time_unit -> years   : '$1'.
 
 
 Erlang code.
+
+%% @hidden
 
 -define(line(T), line_of(T)).
 

@@ -8,6 +8,20 @@
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Ulf Wiger <ulf@feuerlabs.com>
+%%% @hidden
+%%% @doc
+%%%    KVDB Transaction plugin
+%%%
+%%% This module functions roughly like a backend plugin, but with a set of
+%%% special-purpose functions for starting and ending transactions.
+%%%
+%%% Each transaction uses the `kvdb_ets` backend module as a transaction store,
+%%% and each database operation callback function coordinates between the main
+%%% storage and the transaction store. The `#kvdb_ref{}' record holds the
+%%% transaction store and the main storage as a pair. A transaction record is
+%%% collected at commit, including all objects (or tables) added, modified or
+%%% deleted during the transaction.
+%%% @end
 -module(kvdb_trans).
 -behaviour(kvdb).
 

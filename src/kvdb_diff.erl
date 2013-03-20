@@ -7,10 +7,11 @@
 %%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
-%%% @author Ulf Wiger <ulf@wiger.net>
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
 %%% @author Tony Rogvall <tony@rogvall.se>
+%%% @hidden
 %%% @doc
-%%%     Simple diff algorithm 
+%%%     Simple diff algorithm
 %%% @end
 
 -module(kvdb_diff).
@@ -25,7 +26,7 @@
 %% return a list of items:
 %% [ {add,{Key,As,Value,Tree}} | {delete,Key}, {update,Key,Value} ]
 %% that when applied to A make that subtree equal to B's subtree
-%% 
+%%
 tree(A, B) ->
     tree_obj(A, prefix_read(A,A), B, prefix_read(B,B), []).
 
@@ -48,7 +49,7 @@ tree_obj(Ax, done, Bx, {B,{Bk,Bs,Bv}}, Acc) ->
     tree_obj(Ax, done, Bx, prefix_next(Bx,Bk),[{add,{B,Bs,Bv}}|Acc]);
 tree_obj(Ax, {A,{Ak,_,_}}, Bx, done, Acc) ->
     tree_obj(Ax, prefix_next(Ax,Ak), Bx, done, [{delete,A}|Acc]).
-    
+
 prefix_read(Prefix, Key) ->
     case kvdb_conf:read(Key) of
 	{ok, Obj} ->
@@ -79,7 +80,7 @@ remove_prefix(Prefix, Key) ->
 	<<Prefix:PrefixSz/binary,Key1/binary>> ->
 	    Key1
     end.
-    
+
 
 prefix(Key1, Key2) ->
     Key1Sz = byte_size(Key1),
@@ -98,18 +99,3 @@ trim_parts([K|Ks], [{K,[],<<>>,T}]) ->
     trim_parts(Ks, T);
 trim_parts([], T) ->
     T.
-
-
-    
-
-
-	    
-	    
-    
-
-
-
-    
-
-    
-    

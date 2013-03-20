@@ -96,7 +96,6 @@
 -export([behaviour_info/1]).
 -export([start_link/2]).
 
-%% -import(kvdb_schema, [validate/3, validate_attr/3, on_update/4]).
 -import(kvdb_lib, [table_name/1]).
 
 -include("kvdb.hrl").

@@ -9,31 +9,14 @@
 %%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Ulf Wiger <ulf@feuerlabs.com>
 %%% @author Tony Rogvall <tony@rogvall.se>
+%%% @hidden
 %%% @doc
-%%% Key-value database frontend
+%%% KVDB API Implementation module
 %%%
-%%% Kvdb is a key-value database library, supporting different backends
-%%% (currently: sqlite3 and leveldb), and a number of different table types.
-%%%
-%%% Feature overview:
-%%%
-%%% - Multiple logical tables per database
-%%%
-%%% - Persistent ordered-set semantics
-%%%
-%%% - `{Key, Value}' or `{Key, Attributes, Value}' structure (per-table)
-%%%
-%%% - Table types: set (normal) or queue (FIFO, LIFO or keyed FIFO or LIFO)
-%%%
-%%% - Attributes can be indexed
-%%%
-%%% - Schema-based validation (per-database) with update triggers
-%%%
-%%% - Prefix matching
-%%%
-%%% - ETS-style select() operations
-%%%
-%%% - Configurable encoding schemes (raw, sext or term_to_binary)
+%%% The kvdb_direct interface implements a direct interface to the backend
+%%% plugins. Note that using this interface directly subverts transaction-
+%%% concurrency and serialization mechanisms needed to keep the database
+%%% consistent.
 %%%
 %%% @end
 
@@ -76,7 +59,6 @@
 	 info/2,
 	 dump_tables/1]).
 
-%% -import(kvdb_schema, [validate/3, validate_attr/3, on_update/4]).
 -import(kvdb_lib, [table_name/1, on_update/4]).
 
 -include("kvdb.hrl").

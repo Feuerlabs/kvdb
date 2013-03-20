@@ -117,6 +117,7 @@
 	 next_tree/2,       %% (Tab, Key)
 	 make_tree/1,       %% (Objects)
 	 flatten_tree/1,
+	 key/1,
 	 split_key/1,
 	 join_key/1,
 	 join_key/2,
@@ -315,7 +316,7 @@ read(Key) when is_binary(Key) ->
 %% entire tree structure.
 %% @end
 read(Tab, Key) when is_binary(Key) ->
-    case kvdb:get(instance_(), Tab, escape_key(Key)) of
+    case kvdb:get(instance_(), Tab, key(Key)) of
 	{ok, {K,A,V}} ->
 	    {ok, {unescape_key(K), A, V}};
 	Other ->
@@ -340,7 +341,7 @@ write(Tab, {K, As, Data} = Obj0) when is_binary(K) ->
     Obj = case K of
 	       <<"=", _/binary>> -> Obj0;
 	       _ ->
-		   {escape_key(K), As, Data}
+		   {key(K), As, Data}
 	   end,
     case kvdb:put(instance_(), Tab, Obj) of
 	ok ->
@@ -917,11 +918,11 @@ shift_root(up, #conf_tree{root = <<>>}) ->
     error;
 shift_root(up, #conf_tree{root = R, tree = T} = CT) ->
     [Last|RevTail] = lists:reverse(split_key(R)),
-    CT#conf_tree{root = join_key(lists:reverse(RevTail)),
+    CT#conf_tree{root = unescape_key(join_key(lists:reverse(RevTail))),
 		 tree = [{Last, T}]};
 shift_root(down, #conf_tree{root = R, tree = [{K,L}]} = CT) when
       is_binary(K) ->
-    CT#conf_tree{root = join_key(R, K), tree = L};
+    CT#conf_tree{root = unescape_key(join_key(R, K)), tree = L};
 shift_root(down, #conf_tree{}) ->
     error;
 shift_root(top, #conf_tree{} = CT) ->
@@ -972,6 +973,18 @@ raw_split_key(K) when is_binary(K) ->
 
 raw_drop_last_key_part(K) ->
     raw_join_key(lists:reverse(tl(lists:reverse(raw_split_key(K))))).
+
+-spec key(key() | [key_part()]) -> key().
+%% @doc Normalizes a key or list of key parts.
+%%
+%% This function tries to ensure that a key is properly escaped, including
+%% properly encoded array indices.
+%% @end
+key(Parts) when is_list(Parts) ->
+    join_key(Parts);
+key(Key) when is_binary(Key) ->
+    join_key(split_key(Key)).
+
 
 -spec join_key([key_part()]) -> key().
 %% @doc Joins a list of key parts into one key, ensuring all parts are escaped.

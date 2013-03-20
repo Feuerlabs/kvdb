@@ -7,7 +7,10 @@
 %%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
-%%% @author Ulf Wiger <ulf@wiger.net>
+%%% @author Ulf Wiger <ulf@feuerlabs.com>
+%%% @doc
+%%%    Useful queue inspection and management functions
+%%% @end
 %%%
 -module(kvdb_queue).
 

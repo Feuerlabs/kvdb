@@ -1,3 +1,56 @@
+%%---- BEGIN COPYRIGHT -------------------------------------------------------
+%%
+%% Copyright (C) 2012 Feuerlabs, Inc. All rights reserved.
+%%
+%% This Source Code Form is subject to the terms of the Mozilla Public
+%% License, v. 2.0. If a copy of the MPL was not distributed with this
+%% file, You can obtain one at http://mozilla.org/MPL/2.0/.
+%%
+%%---- END COPYRIGHT ---------------------------------------------------------
+%% @author Ulf Wiger <ulf@feuerlabs.com>
+%% @doc Persistent timers for KVDB
+%%
+%% Grammar for timer expressions:
+%%
+%% <verbatim>```
+%% <expr> ::= "{" <time> "}"
+%%          | "{" <time> ";" <repeat> "}"
+%%          | "{" <time> ";" <repeat> ";" <until> "}"
+%%
+%% <time>    ::= "in" <in> | "at" <at>
+%% <in>      ::= <int> | <in_expr>
+%%             | <in_expr> "," <in>
+%% <in_expr> ::= <int> <unit>
+%%             | <ldom>
+%% <at>      ::= <at_expr>
+%%             | <at_expr> "," <at>
+%% <at_expr> ::= <date_expr> | <time_expr>
+%% <date_expr> ::= <int> "/" <int> "/" <int>
+%%               | <int> "-" <int> "-" <int>
+%% <time_expr> ::= <int> ":" <int> ":" <int>
+%%               | <int> ":" <int> ":" <fixnum>
+%% <repeat>  ::= "repeat"
+%%             | "once"
+%%             | <int> "times"
+%%             | "each" <each>
+%%             | "daily" | "weekly" | "monthly" | "yearly" | "annually"
+%%             | <ldom>
+%% <until>   ::= <until_expr>
+%%             | "until" <until_expr>
+%% <until_expr> ::= "forever"
+%%                | <at>
+%% <each>    ::= <each_expr>
+%%             | <each_expr> "," <each>
+%% <each_expr> ::= <int> <unit>
+%% <ldom>    ::= "last_day_of_month" | "ldom"
+%% <unit>    ::= "ms"
+%%             | "sec" | "secs" | "seconds"
+%%             | "min" | "minutes"
+%%             | "hr" | "hrs" | "hours"
+%%             | "mo" | "months"
+%%             | "y" | "yr" | "years"
+%% '''</verbatim>
+%% @end
 -module(kvdb_cron).
 -behaviour(gen_server).
 
