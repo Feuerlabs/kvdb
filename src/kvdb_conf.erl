@@ -854,7 +854,15 @@ read_tree(Tab, Node) when is_binary(Node) ->
     %% {Objs,_} = kvdb:prefix_match(instance_(), Tab,
     %% 				 escape_key(Prefix), infinity),
     Objs = match_tree(Tab, Node),
-    make_tree(Objs).
+    adjust_tree(make_tree(Objs), length(raw_split_key(Node))).
+
+adjust_tree(#conf_tree{root = R} = T, Level) ->
+    case length(raw_split_key(R)) of
+	Level ->
+	    T;
+	CurLevel when CurLevel > Level ->
+	    shift_up(CurLevel - Level, T)
+    end.
 
 match_tree(Tab, Node) ->
     Top = case read(Tab, Key = escape_key(Node)) of
@@ -944,6 +952,10 @@ shift_root(Dirs, #conf_tree{} = CT) ->
 	    error
     end.
 
+shift_up(N, T) when N > 0 ->
+    shift_up(N-1, shift_root(up, T));
+shift_up(0, T) ->
+    T.
 
 shift_root_full(Dir, #conf_tree{} = CT) ->
     case shift_root(Dir, CT) of
