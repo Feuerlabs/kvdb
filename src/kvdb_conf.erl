@@ -853,8 +853,11 @@ read_tree(Prefix) when is_binary(Prefix) ->
 read_tree(Tab, Node) when is_binary(Node) ->
     %% {Objs,_} = kvdb:prefix_match(instance_(), Tab,
     %% 				 escape_key(Prefix), infinity),
-    Objs = match_tree(Tab, Node),
-    adjust_tree(make_tree(Objs), length(raw_split_key(Node))).
+    case match_tree(Tab, Node) of
+	[] -> [];
+	[_|_] = Objs ->
+	    adjust_tree(make_tree(Objs), length(raw_split_key(Node)))
+    end.
 
 adjust_tree(#conf_tree{root = R} = T, Level) ->
     case length(raw_split_key(R)) of
