@@ -1,0 +1,26 @@
+@author Ulf Wiger <ulf@feuerlabs.com>
+@author Tony Rogvall <tony@rogvall.se>
+
+@doc KVDB - Database Management System for Connected Device Management
+
+KVDB was initially designed to support the requirements of the Exosense
+system for managing Connected Devices, but is essentially a general-purpose
+DBMS. A requirement was that it should be useable both in an embedded device
+and on the device management server. To this end, KVDB supports a number of
+different storage backends, each with different characteristics.
+
+Features:
+
+<ul>
+<li>Ordered-set semantics</li>
+<li>Transaction semantics</li>
+<li>Persistent queues</li>
+<li>CRON-like persistent timers</li>
+<li>Extensible indexing</li>
+<li>Storage backend plugins</li>
+<li>Schema callback behavior</li>
+</ul>
+
+See also the <a href="http://github.com/Feuerlabs/kvdb/wiki">Wiki</a> for further description and examples.
+
+@end
