@@ -473,9 +473,13 @@ replay_logs(Dir, Module, #db{} = Db) ->
 	    io:fwrite("Logs = ~p~n"
 		      "FileKey = ~p~n"
 		      "UseLogs = ~p~n", [Fs, FileKey, UseFiles]),
-	    Res = lists:foreach(fun(F) ->
-					ok = replay_log(F, Module, Db, LastDump)
-				end, UseFiles),
+	    Res = try
+		      lists:foreach(fun(F) ->
+					    ok = replay_log(F, Module, Db, LastDump)
+				    end, UseFiles)
+		  catch
+		      { error_opening_log, [_LogF, _Error]} -> ok
+		  end,
 	    if Res == ok ->
 		    case Module:save(Db) of
 			ok ->
@@ -506,7 +510,7 @@ replay_log(LogF, Module, Db, LastDump) ->
 		disk_log:close(Log)
 	    end;
 	Error ->
-	    error({error_opening_log, [LogF, Error]})
+	    throw({error_opening_log, [LogF, Error]})
     end.
 
 eat_log(eof, _, _, _, _) ->

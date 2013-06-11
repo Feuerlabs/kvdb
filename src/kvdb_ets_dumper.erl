@@ -90,9 +90,9 @@ tab2file(Tab, File, Options) ->
             _ -> throw(eaccess)
         end,
         Name = make_ref(),
-        case disk_log:open([{name, Name}, {file, File}]) of
-            {ok, Name} ->
-                ok;
+        case disk_log:open([{name, Name}, {file, File}, {repair, truncate }]) of
+            {ok, Name} -> ok;
+            {repaired, Name} -> ok;
             {error, Reason} ->
                 throw(Reason)
         end,
