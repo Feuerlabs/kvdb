@@ -831,7 +831,7 @@ first_top_key() ->
 first_top_key(Table) ->
     case raw_first(Table) of
 	{ok, Obj} ->
-	    {ok, element(1, Obj)};
+	    {ok, hd(split_key(element(1, Obj)))};
 	_ ->
 	    done
     end.
