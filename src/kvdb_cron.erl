@@ -211,10 +211,10 @@ parse_spec(W) ->
 		{ok, Form} ->
 		    normalize_form(Form);
 		ParseErr ->
-		    error(ParseErr)
+		    erlang:error(ParseErr)
 	    end;
 	ScanErr ->
-	    error(ScanErr)
+	    erlang:error(ScanErr)
     end.
 
 normalize_form({Time, Repeat, Until}) ->
@@ -536,7 +536,7 @@ valid_repeat(Spec, #job{repeat = undefined}) ->
 	{each, _} -> Spec;
 	{times, _} -> Spec;
 	Other ->
-	    error({bad_repeat, Other})
+	    erlang:error({bad_repeat, Other})
     end.
 
 valid_interval(_, _, #job{interval = I}) when I =/= undefined ->
@@ -552,7 +552,7 @@ valid_interval(Time, Repeat, #job{interval = undefined}) ->
 		{in, In} ->
 		    In;
 		_ ->
-		    error(unknown_interval)
+		    erlang:error(unknown_interval)
 	    end
     end.
 
@@ -618,7 +618,7 @@ get_datetime({in, In}, Now) ->
 get_datetime({at, At}, Now) ->
     at_spec(At, Now);
 get_datetime(Other, _) ->
-    error(invalid_time_spec, Other).
+    erlang:error(invalid_time_spec, Other).
 
 in_spec(In, TS) ->
     lists:foldl(
@@ -627,7 +627,7 @@ in_spec(In, TS) ->
 	 (MS, TS1) when is_integer(MS) ->
 	      step_interval({MS,ms}, TS1);
 	 (Other, _) ->
-	      error(invalid_spec, [in, Other])
+	      erlang:error(invalid_spec, [in, Other])
       end, TS, In).
 
 at_spec(At, TS) ->

@@ -72,7 +72,7 @@ start_commit(Name, TRef) ->
 	#kvdb_ref{} = Res ->
 	    Res;
 	Other ->
-	    error(Other)
+	    erlang:error(Other)
     catch
 	exit:Err ->
 	    io:fwrite(user, "kvdb_server status:~n~s~n",
@@ -141,7 +141,7 @@ init(Alias) ->
 	    error_logger:error_report([{error_opening_kvdb_db, Alias},
 				       {error, Reason},
 				       {stacktrace, Trace}]),
-	    error({Reason, Trace}, [Alias])
+	    erlang:error({Reason, Trace}, [Alias])
     end.
 
 init_({Name, session, _Id} = Alias) ->

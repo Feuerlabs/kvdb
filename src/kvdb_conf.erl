@@ -287,7 +287,7 @@ add_table(T, Opts) ->
 		   end,
     case Enc of
 	{raw,_,_} -> ok;
-	Other -> error({illegal_encoding, [T, Other]})
+	Other -> erlang:error({illegal_encoding, [T, Other]})
     end,
     kvdb:add_table(instance_(), T, Opts1).
 
@@ -436,9 +436,9 @@ xpath(Tab, Expr, Limit) ->
 xpath(_Tab, Expr, _Limit, _Prev) ->
     case xmerl_xpath_parse:parse(xmerl_xpath_scan:tokens(Expr)) of
 	{ok, _Abst} ->
-	    error(nyi);
+	    erlang:error(nyi);
 	{error,_} = E ->
-	    error(E)
+	    erlang:error(E)
     end.
 
 -spec all() -> [conf_obj()].
@@ -463,7 +463,7 @@ all(Tab) ->
 	T when T==fifo; T==lifo; element(1,T) == keyed ->
 	    iterate_all(kvdb_queue:list_queues(Db, Tab));
 	undefined ->
-	    error({no_such_table, [Tab]})
+	    erlang:error({no_such_table, [Tab]})
     end.
 
 iterate_all({L, Cont}) ->
@@ -648,7 +648,7 @@ fold_list_({ok, {K,_,_}}, Tab, PfxSz, Prefix, Base, Fun, Acc) ->
     case K of
 	<<Prefix:PfxSz/binary, Rest/binary>> ->
 	    [<<Pos:8/binary,"]">>|_] = binary:split(Rest, <<"*">>),
-	    I = list_to_integer(binary_to_list(Pos), 16),
+	    I = erlang:list_to_integer(binary_to_list(Pos), 16),
 	    ListKey = <<Base/binary, "[", Pos/binary, "]">>,
 	    Acc1 = Fun(I, ListKey, Acc),
 	    Res = kvdb:next(instance_(), Tab,
@@ -668,7 +668,7 @@ last_list_pos(Table, Prefix0) ->
     PfxSz = byte_size(Prefix),
     case kvdb:prev(instance_(), Table, <<Prefix/binary, "[~">>) of
 	{ok, {<<Prefix:PfxSz/binary, "[", Pos:8/binary, "]", _/binary>>,_,_}} ->
-	    {ok, list_to_integer(binary_to_list(Pos), 16)};
+	    {ok, erlang:list_to_integer(binary_to_list(Pos), 16)};
 	{ok, {<<Prefix:PfxSz/binary, _/binary>>,_,_}} ->
 	    {error, not_a_list};
 	_ ->
@@ -1137,7 +1137,7 @@ unescape_key_part(Bin) when is_binary(Bin) ->
     Bin.
 
 unescape_key_part_(<<$@, A, B, Rest/binary>>) ->
-    <<(list_to_integer([A,B], 16)):8/integer,
+    <<(erlang:list_to_integer([A,B], 16)):8/integer,
       (unescape_key_part_(Rest))/binary>>;
 unescape_key_part_(<<C, Rest/binary>>) ->
     <<C, (unescape_key_part_(Rest))/binary>>;
@@ -1160,13 +1160,13 @@ decode_list_key_(K) ->
 
 decode_list_key_(<<"@", A, B, Rest/binary>>, Acc) ->
     decode_list_key_(
-      Rest, <<Acc/binary, (list_to_integer([A,B], 16)):8/integer>>);
+      Rest, <<Acc/binary, (erlang:list_to_integer([A,B], 16)):8/integer>>);
 decode_list_key_(<<"[", Rest/binary>>, Acc) ->
     Sz = byte_size(Rest),
     N = Sz - 1,
     case Rest of
 	<<Pb:N/binary, "]">> ->
-	    {Acc, list_to_integer(binary_to_list(Pb), 16)};
+	    {Acc, erlang:list_to_integer(binary_to_list(Pb), 16)};
 	_ ->
 	    decode_list_key_(Rest, <<Acc/binary, "]">>)
     end;
@@ -1200,7 +1200,7 @@ to_hex(C) ->
 %% Example: `list_key(<<"port">>, 28) -> <<"=port[0000001C]">>'
 %% @end
 list_key(Name, Pos) when is_binary(Name), is_integer(Pos), Pos >= 0 ->
-    %% IX = list_to_binary(integer_to_list(Pos, 19)),
+    %% IX = list_to_binary(integer_to_list(Pos, 19)), 19????
     IX = list_to_binary(pos_key(Pos)),
     <<(escape_key_part(Name))/binary, "[", IX/binary, "]">>.
 
@@ -1213,9 +1213,9 @@ raw_list_key(Name, Pos) when is_binary(Name), is_integer(Pos) ->
     <<Name/binary, "[", IX/binary, "]">>.
 
 pos_key(ID) when is_integer(ID), ID >= 0, ID =< 16#ffffffff ->
-    tl(integer_to_list(16#100000000+ID,16)).
+    tl(erlang:integer_to_list(16#100000000+ID,16)).
 %% pos_key(<<ID:32/integer>>) ->
-%%     tl(integer_to_list(16#100000000+ID,16)).
+%%     tl(erlang:integer_to_list(16#100000000+ID,16)).
 
 
 is_list_key(I) when is_integer(I) -> false;
@@ -1227,7 +1227,7 @@ is_list_key(K) ->
 	    N = Sz - P -2,
 	    case K of
 		<<Base:P/binary, "[", Ib:N/binary, "]">> ->
-		    Pos = list_to_integer(binary_to_list(Ib), 16),
+		    Pos = erlang:list_to_integer(binary_to_list(Ib), 16),
 		    {true, Base, Pos};
 		_ ->
 		    false

@@ -54,7 +54,7 @@ valid_table_name(Table0) ->
     Table = table_name(Table0),
     case [C || <<C:8>> <= Table, lists:member(C, "-=?+.,:;^*/")] of
 	[_|_] ->
-	    error({illegal_table_name, Table0});
+	    erlang:error({illegal_table_name, Table0});
 	[] ->
 	    Table
     end.
@@ -195,7 +195,7 @@ enc(value, X, {_,Enc}  ) -> enc(value, X, Enc);
 enc(value, X, {_,_,Enc}) -> enc(value, X, Enc);
 enc(attrs, X, {_,Enc,_}) -> enc(attrs, X, Enc);
 enc(W, X, E) ->
-    error({cannot_encode, [W,X,E]}).
+    erlang:error({cannot_encode, [W,X,E]}).
 
 dec(_, X, raw ) when is_binary(X) -> X;
 dec(_, X, term) -> binary_to_term(X);
@@ -206,7 +206,7 @@ dec(value, X, {_,Enc}  ) -> dec(value, X, Enc);
 dec(value, X, {_,_,Enc}) -> dec(value, X, Enc);
 dec(attrs, X, {_,Enc,_}) -> dec(attrs, X, Enc);
 dec(W,X,E) ->
-    error({cannot_decode, [W,X,E]}).
+    erlang:error({cannot_decode, [W,X,E]}).
 
 try_decode(V) ->
     try binary_to_term(V)
@@ -246,7 +246,7 @@ check_valid_encoding({E1,E2,E3}) when ?VALID_ENC(E1)
 				      andalso ?VALID_ENC(E2)
 				      andalso ?VALID_ENC(E3) -> true;
 check_valid_encoding(E) when ?VALID_ENC(E) -> true;
-check_valid_encoding(E) -> error({illegal_encoding, E}).
+check_valid_encoding(E) -> erlang:error({illegal_encoding, E}).
 
 
 queue_prefix(Enc, Q) when Enc == raw; element(1, Enc) == raw ->
@@ -490,10 +490,10 @@ replay_logs(Dir, Module, #db{} = Db) ->
 					     [F, _DeleteRes])
 			      end, UseFiles);
 			Error ->
-			    error({save_error, Error})
+			    erlang:error({save_error, Error})
 		    end;
 	       true ->
-		    error({replay_error, Res})
+		    erlang:error({replay_error, Res})
 	    end;
 	Other ->
 	    io:fwrite("No logs? ~p~n"
@@ -575,7 +575,7 @@ log_filename(D) ->
 		ok ->
 		    F;
 		{error, E} ->
-		    error({log_filename, [D, E]})
+		    erlang:error({log_filename, [D, E]})
 	    end
     end.
 

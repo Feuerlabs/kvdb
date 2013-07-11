@@ -556,7 +556,7 @@ fix_attrs(As) ->
     lists:foldr(fun({K,V}, Acc) when is_atom(K) ->
 			orddict:store(K, V, Acc);
 		   (A, _) ->
-			error({bad_attribute, A})
+			erlang:error({bad_attribute, A})
 		end, orddict:new(), As).
 
 
@@ -565,7 +565,7 @@ if_table(DbMod, Db, Table, F) ->
 	true ->
 	    F();
 	false ->
-	    error({no_such_table, Table})
+	    erlang:error({no_such_table, Table})
     end.
 
 
