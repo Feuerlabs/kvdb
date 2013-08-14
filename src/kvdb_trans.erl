@@ -176,15 +176,21 @@ on_update(Event, #kvdb_ref{schema = Schema} = Ref0, Tab, Info) ->
 			 info = Info},
 	    M:store_event(Db, Rec);
  	false ->
-	    Schema:on_update(Event, Ref0, Tab, Info)
+	    on_update_event(Schema, Event, Ref0, Tab, Info)
     end.
 
 fire_events(#commit{events = Events},
 	    #kvdb_ref{schema = Schema} = Ref) ->
     deep_foreach(
       fun(#event{event = E, tab = T, info = I}) ->
-	      Schema:on_update(E, Ref, T, I)
+	      on_update_event(Schema, E, Ref, T, I)
       end, Events).
+
+on_update_event(Schema, Event, Ref, Tab, Info) ->
+    kvdb_schema:all_ok(
+      Schema, fun(S, _) ->
+		      S:on_update(Event, Ref, Tab, Info)
+	      end, on_update).
 
 deep_foreach(F, [[]|T]) -> deep_foreach(F, T);
 deep_foreach(F, [[_|_] = H|T]) -> deep_foreach(F, H), deep_foreach(F, T);
@@ -199,11 +205,15 @@ commit(#kvdb_ref{tref = TRef, schema = Schema} = Ref0) ->
 			       #kvdb_ref{} = KR2}}} = Ref =
 	switch_db(Ref0, NewDb),
     #commit{} = Set = M1:commit_set(Db1),
-    #commit{} = Set1 = Schema:pre_commit(Set, Ref),
+    #commit{} = Set1 = kvdb_schema:fold_schema(
+			 Schema, fun(S, Acc) -> S:pre_commit(Acc, Ref) end,
+			 Set),
     ?debug("~p: Commit set: ~p~n", [self(), Set]),
     Res = kvdb_lib:commit(Set1, KR2),
     ?debug("commit result = ~p~n", [Res]),
-    catch Schema:post_commit(Set1, Ref),
+    kvdb_schema:all_ok(Schema, fun(S, Acc) -> S:post_commit(Acc, Ref) end,
+		       Set1),
+    %% catch Schema:post_commit(Set1, Ref),
     fire_events(Set1, Ref).
 
 switch_db(#kvdb_ref{tref = undefined}, #kvdb_ref{} = New) ->

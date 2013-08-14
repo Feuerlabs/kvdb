@@ -89,7 +89,10 @@
 	 mark_queue_object/4,
 	 queue_insert/5,
 	 queue_delete/3,
-	 queue_read/3]).
+	 queue_read/3,
+	 queue_head_write/4,
+	 queue_head_read/3,
+	 queue_head_delete/3]).
 %% debugging
 -export([dump_tables/1]).
 
@@ -635,6 +638,27 @@ queue_delete(Name, Table, #q_key{} = QKey) ->
        kvdb_direct:queue_delete(Ref, Table, QKey),
        kvdb_direct:queue_delete(db(Name), Table, QKey),
        [Name, Table, QKey]).
+
+queue_head_write(Name, Table, Queue, Data) ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:queue_head_write(Ref, Table, Queue, Data),
+       kvdb_direct:queue_head_write(db(Name), Table, Queue, Data),
+       [Name, Table, Queue, Data]).
+
+queue_head_read(Name, Table, Queue) ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:queue_head_read(Ref, Table, Queue),
+       kvdb_direct:queue_head_read(db(Name), Table, Queue),
+       [Name, Table, Queue]).
+
+queue_head_delete(Name, Table, Queue) ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:queue_head_delete(Ref, Table, Queue),
+       kvdb_direct:queue_head_delete(db(Name), Table, Queue),
+       [Name, Table, Queue]).
 
 -spec get_attrs(db_name(), table(), _Key::any(), [attr_name()]) ->
 		       {ok, attrs()} | {error, any()}.

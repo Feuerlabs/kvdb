@@ -8,21 +8,20 @@
 %%%
 %%%---- END COPYRIGHT ---------------------------------------------------------
 %%% @author Ulf Wiger <ulf@feuerlabs.com>
-%%% @hidden
+%%% @doc
+%%% Database proxy supervisor.
 %%%
--module(kvdb_db_sup).
-
+%%% NOTE: This is work in progress, highly experimental.
+%%% The general idea is that a backend can specify 'proxy processes'
+%%% as a list of childspecs. An example of such a proxy is kvdb_riak_proxy.
+%%%
+%%% @end
+-module(kvdb_proxy_sup).
 -behaviour(supervisor).
 
-%% API
--export([start_link/2,
-	stop_child/1]).
+-export([start_link/2]).
 
-%% Supervisor callbacks
 -export([init/1]).
-
-%% Helper macro for declaring children of supervisor
--define(CHILD(I, Type), {I, {I, start_link, []}, permanent, 5000, Type, [I]}).
 
 %% ===================================================================
 %% API functions
@@ -36,20 +35,12 @@ start_link(Name, Options) ->
 %% ===================================================================
 
 init({Name, Options}) ->
-    gproc:reg({n,l,{?MODULE, Name}}),
-    {ok, { {rest_for_one, 5, 10},
-	   [{proxy, {kvdb_proxy_sup, start_link, [Name, Options]},
-	     permanent, infinity, supervisor, [kvdb_proxy_sup]},
-	    {db, {kvdb_server, start_link, [Name, Options]},
-	     permanent, 5000, worker, [kvdb_server]},
-	    {cron, {kvdb_cron, start_link, [Name, Options]},
-	     permanent, 5000, worker, [kvdb_cron]}
-	   ]}}.
-
-stop_child(Name) ->
-    case gproc:where({n,l,{?MODULE,Name}}) of
-	Pid when is_pid(Pid) ->
-	    supervisor:terminate_child(kvdb_sup, Pid);
-	_ ->
-	    {error, unknown_db}
-    end.
+    gproc:reg({n,l,{?MODULE,Name}}),
+    Backend = proplists:get_value(backend, Options, ets),
+    Mod = kvdb_lib:backend_mod(Backend),
+    Children = try Mod:proxy_childspecs(Name, Options)
+	       catch
+		   error:undef ->
+		       []
+	       end,
+    {ok, { {one_for_one, 5, 10}, Children } }.

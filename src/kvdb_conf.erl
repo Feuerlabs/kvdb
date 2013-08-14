@@ -250,7 +250,7 @@ options(File) ->
 
 options_() ->
     [{backend, sqlite},
-     {tables, [data]},
+     {tables, [{data, [{encoding, {raw, term, raw}}]}]},
      {encoding, {raw,term,raw}}].
 
 options(File, Opts) ->

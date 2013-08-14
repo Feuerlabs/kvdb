@@ -29,6 +29,7 @@
 	 q_key_to_actual/3,
 	 queue_prefix/2,
 	 queue_prefix/3,
+	 raw_queue_prefix/2,
 	 timestamp/0, timestamp/1,
 	 timestamp_to_datetime/1,
 	 datetime_to_timestamp/1,
@@ -42,7 +43,10 @@
 	 log/2,
 	 process_log_event/3,
 	 on_update/4,
-	 commit/2]).
+	 commit/2,
+	 make_tabrec/2]).
+
+-export([backend_mod/1]).
 
 %% Intended for replication
 -export([nodes_of/2]).
@@ -343,11 +347,23 @@ datetime_to_timestamp({{{_Y,_Mo,_D},{_H,_Mi,_S}} = DT, US}) ->
 %% raw_queue_key(Q, _, K) when is_binary(Q), is_binary(K) ->
 %%     raw_queue_key_(Q, timestamp(), K).
 
+raw_queue_head_key(Q, Type) when Type == fifo; element(2,Type) == fifo ->
+    <<Q/binary, ",">>;
+raw_queue_head_key(Q, Type) when Type == lifo; element(2,Type) == lifo ->
+    <<Q/binary, ".">>.
+
+sext_queue_head_key(Q, Type) when Type == fifo; element(2,Type) == fifo ->
+    Pfx = sext:prefix({Q,'_','_'}),
+    if Type == fifo; element(2, Type) == fifo ->
+	    <<Pfx/binary, 0>>;
+       Type == lifo; element(2, Type) == lifo ->
+	    <<Pfx/binary, 127>>
+    end.
+
 raw_queue_key(Q, {keyed,_}, TS, K) when is_binary(Q), is_binary(K) ->
     raw_keyed_queue_key(Q, TS, K);
 raw_queue_key(Q, _, TS, K) ->
     raw_queue_key_(Q, TS, K).
-
 
 raw_queue_key_(Q, TS, K) ->
     <<Q/binary, "-", TS:56/integer, K/binary>>.
@@ -733,3 +749,55 @@ clear_log_thresholds(Db) ->
     kvdb_meta:write(Db, logged_bytes, 0),
     kvdb_meta:write(Db, logged_writes, 0),
     kvdb_meta:delete(Db, log_threshold).
+
+
+backend_mod(mnesia ) -> kvdb_mnesia;
+backend_mod(leveldb) -> kvdb_leveldb;
+backend_mod(sqlite3) -> kvdb_sqlite3;
+backend_mod(sqlite ) -> kvdb_sqlite3;
+backend_mod(ets    ) -> kvdb_ets;
+backend_mod(riak   ) -> kvdb_riak;
+backend_mod(M) ->
+    case is_behaviour(M) of
+        true ->
+            M   % TODO: implement actual check
+        %% false ->
+        %%     error(illegal_backend_type)
+    end.
+
+is_behaviour(_M) ->
+    %% TODO: check that exported functions match those listed in
+    %% behaviour_info(callbacks).
+    true.
+
+make_tabrec(Tab, Opts) ->
+    check_options(Opts, record_info(fields, table), #table{name = Tab}).
+
+check_options([{type, T}|Tl], Flds, Rec)
+  when T==set; T==lifo; T==fifo; T=={keyed,fifo}; T=={keyed,lifo} ->
+    check_options(Tl, Flds, Rec#table{type = T});
+check_options([{encoding, E}|Tl], Flds, Rec) ->
+    Rec1 = Rec#table{encoding = E},
+    kvdb_lib:check_valid_encoding(E),
+    check_options(Tl, Flds, Rec1);
+check_options([{index, Ix}|Tl], Flds, Rec) ->
+    case kvdb_lib:valid_indexes(Ix) of
+	ok -> check_options(Tl, Flds, Rec#table{index = Ix});
+	{error, Bad} ->
+	    error({invalid_index, Bad})
+    end;
+check_options([{K,V}|T], Flds, Rec) ->
+    case key_pos(K, Flds) of
+	0 -> error({invalid_option, K});
+	P -> check_options(T, Flds, setelement(P, Rec, V))
+    end;
+check_options([], _, Rec) ->
+    Rec.
+
+key_pos(K, L) ->
+    key_pos(K, L, 2).
+
+key_pos(K, [K|_], P) -> P;
+key_pos(K, [_|T], P) -> key_pos(K, T, P+1);
+key_pos(_, [], _)    -> 0.
+

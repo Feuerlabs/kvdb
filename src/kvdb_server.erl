@@ -224,10 +224,6 @@ handle_call_({start_commit, Ref}, {Pid,_} = From, #st{switch_pending = SwPend,
 	{no, Reason} ->
 	    {reply, {error, Reason}, St}
     end;
-%% handle_call_(begin_trans, From, #st{switch_pending = {true,_,_},
-%% 				    pending_commits = Pend} = St) ->
-%%     %% io:fwrite("buffering begin_trans ~p; St=~p~n", [From,St]),
-%%     {noreply, St#st{pending_commits = [From|Pend]}};
 handle_call_({new_log, Log}, From, #st{db = Db, commits = Commits} = St) ->
     %% Need to switch logs. We try to do this atomically. For individual
     %% updates, it's no problem, since they will call on us for the db ref.
@@ -244,19 +240,6 @@ handle_call_({new_log, Log}, From, #st{db = Db, commits = Commits} = St) ->
 handle_call_(db, _From, #st{db = Db} = St) ->
     {reply, Db, St}.
 
-%% @private
-%% handle_info({'DOWN',Ref,_,_,_}, #st{db = OldDb, transactions = Ts} = St) ->
-%%     %% FIXME: We shouldn't get here unless the log switcher process dies badly.
-%%     %% Probably a good thing to manage that, but that's for later.
-%%     Ts1 = lists:delete(Ref, Ts),
-%%     case {St#st.switch_pending, Ts1} of
-%% 	{false, _} ->
-%% 	    {noreply, St#st{transactions = Ts1}};
-%% 	{{true,From,Log}, []} ->
-%% 	    NewDb = kvdb_direct:switch_logs(OldDb, Log),
-%% 	    gen_server:reply(From, {ok, NewDb}),
-%% 	    {noreply, logs_switched(NewDb, St#st{transactions = Ts1})}
-%%     end;
 handle_info({'DOWN', Ref, _,_,_}, #st{transactions = Ts,
 				      commits = Commits,
 				      switch_pending = Pend} = St) ->

@@ -46,6 +46,9 @@
 	 queue_insert/5,
 	 queue_delete/3,
 	 queue_read/3,
+	 queue_head_write/4,
+	 queue_head_read/3,
+	 queue_head_delete/3,
 	 delete/3,
 	 add_table/3,
 	 delete_table/2,
@@ -134,7 +137,8 @@ put_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Obj) ->
 	     fun() ->
 		     case DbMod:put(Db, Table,
 				    Actual =
-					Schema:validate(DbRef, put, Obj)) of
+					schema_validate(
+					  DbRef, put, Obj)) of
 			 ok ->
 			     on_update(put, DbRef, Table, Actual),
 			     ok;
@@ -142,6 +146,11 @@ put_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Obj) ->
 			     Error
 		     end
 	     end).
+
+schema_validate(#kvdb_ref{schema = Schema} = DbRef, Op, Obj) ->
+    kvdb_schema:all_ok(Schema, fun(S, O) ->
+				       S:validate(DbRef, Op, O)
+			       end, Obj).
 
 -spec get(Db::db_ref(), Table::table(), Key::any()) ->
 		    {ok, object()} | {error,any()}.
@@ -229,7 +238,8 @@ push_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
       DbMod, Db, Table,
       fun() ->
 	      case DbMod:push(Db, Table, Q,
-			      Actual = Schema:validate(DbRef, put, Obj)) of
+			      Actual = schema_validate(
+					 DbRef, put, Obj)) of
 		  {ok, ActualKey} ->
 		      on_update({q_op,push,Q,false}, DbRef, Table,
 				{Actual,Obj}),
@@ -361,17 +371,21 @@ next_queue(#kvdb_ref{mod = DbMod, db = Db}, Table0, Q) ->
 -spec queue_insert(#kvdb_ref{}, table(), #q_key{}, status(), object()) ->
 			  ok.
 queue_insert(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table0,
-	     #q_key{queue = Q} = QKey, St, Obj) when
+	     #q_key{} = QKey, St, Obj) when
       St == active; St == inactive; St == blocking ->
     Table = table_name(Table0),
     if_table(DbMod, Db, Table,
 	     fun() ->
-		     ok = DbMod:queue_insert(Db, Table, QKey, St, Obj),
-		     IsEmpty = is_queue_empty(DbRef, Table, Q),
-		     on_update({q_op, push,Q,IsEmpty}, DbRef, Table,
-			       {QKey, Obj}),
-		     ok
+		     queue_insert_(DbRef, Table, QKey, St, Obj)
 	     end).
+
+queue_insert_(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, QKey, St, Obj) ->
+    ok = DbMod:queue_insert(Db, Table, QKey, St, Obj),
+    #q_key{queue = Q} = QKey,
+    IsEmpty = is_queue_empty(DbRef, Table, Q),
+    on_update({q_op, push,Q,IsEmpty}, DbRef, Table,
+	      {QKey, Obj}),
+    ok.
 
 -spec queue_delete(#kvdb_ref{}, table(), #q_key{}) -> ok.
 queue_delete(#kvdb_ref{mod = DbMod, db = Db}, Table0, #q_key{} = QKey) ->
@@ -388,6 +402,30 @@ queue_read(#kvdb_ref{mod = DbMod, db = Db}, Table0, #q_key{} = QKey) ->
     if_table(DbMod, Db, Table,
 	     fun() ->
 		     DbMod:queue_read(Db, Table, QKey)
+	     end).
+
+-spec queue_head_write(#kvdb_ref{}, table(), queue_name(), object()) -> ok.
+queue_head_write(#kvdb_ref{mod = DbMod, db = Db}, Table0, Queue, Obj) ->
+    Table = table_name(Table0),
+    if_table(DbMod, Db, Table,
+	     fun() ->
+		     DbMod:queue_head_write(Db, Table, Queue, Obj)
+	     end).
+
+-spec queue_head_read(#kvdb_ref{}, table(), queue_name()) -> object().
+queue_head_read(#kvdb_ref{mod = DbMod, db = Db}, Table0, Queue) ->
+    Table = table_name(Table0),
+    if_table(DbMod, Db, Table,
+	     fun() ->
+		     DbMod:queue_head_read(Db, Table, Queue)
+	     end).
+
+-spec queue_head_delete(#kvdb_ref{}, table(), queue_name()) -> ok.
+queue_head_delete(#kvdb_ref{mod = DbMod, db = Db}, Table0, Queue) ->
+    Table = table_name(Table0),
+    if_table(DbMod, Db, Table,
+	     fun() ->
+		     DbMod:queue_head_delete(Db, Table, Queue)
 	     end).
 
 -spec delete(Db::db_ref(), Table::table(), Key::binary()) ->

@@ -342,6 +342,7 @@ subqueues(Db) ->
     subqueues(Db, lifo, sext).
 
 subqueues(Db, Type, Enc) ->
+    io:fwrite(user, "subqueues(~p, ~p, ~p)~n", [Db, Type, Enc]),
     T = <<"q_",(atom_to_binary(Type,latin1))/binary, "_",
 	  (atom_to_binary(Enc, latin1))/binary>>, % binary, parameterized table name
     M = {Db,Type,Enc,T},
@@ -395,6 +396,7 @@ subqueues(Db, Type, Enc) ->
 		done], [kvdb:pop(Db, T, lists:nth(1,Qs)) || _ <- [1, 2, 3, 4]])
     end,
     ?match(M, ok, catch kvdb:delete_table(Db, T)),
+    io:fwrite(user, "...done~n", []),
     ok.
 
 first_next_queue(Db) ->
@@ -427,10 +429,10 @@ first_next_queue(Db, Type, Enc) ->
 	    Obj <- [{<<"1">>,<<"a">>},
 		    {<<"2">>,<<"b">>},
 		    {<<"3">>,<<"c">>}]],
-    kvdb:push(Db, T, Third, {<<"1">>, <<"a">>}),
-    ?match(M, {ok,{<<"1">>,<<"a">>}}, kvdb:pop(Db, T, Third)),
+    kvdb:push(Db, T, Third, {<<"4">>, <<"d">>}),
+    ?match(M, {ok,{<<"4">>,<<"d">>}}, kvdb:pop(Db, T, Third)),
     %% Third is now empty
-    kvdb:first_queue(Db, T),
+    ?match(M, {ok, First}, kvdb:first_queue(Db, T)),
     ?match(M, {ok, Second}, kvdb:next_queue(Db, T, First)),
     ?match(M, {ok, Fourth}, kvdb:next_queue(Db, T, Second)),
     ?match(M, {ok, Fourth}, kvdb:next_queue(Db, T, Third)),

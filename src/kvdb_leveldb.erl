@@ -23,7 +23,8 @@
 -export([put/3, push/4, get/3, get_attrs/4, index_get/4, index_keys/4,
 	 update_counter/4, pop/3, prel_pop/3, extract/3, delete/3,
 	 list_queue/3, list_queue/6, is_queue_empty/3,
-	 queue_read/3, queue_insert/5, queue_delete/3, mark_queue_object/4]).
+	 queue_read/3, queue_insert/5, queue_delete/3, mark_queue_object/4,
+	 queue_head_write/4, queue_head_read/3, queue_head_delete/3]).
 -export([first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3,
 	 prefix_match/3, prefix_match/4, prefix_match_rel/5]).
@@ -407,13 +408,15 @@ queue_insert(#db{} = Db, Table, #q_key{} = QKey, St, Obj) when
     %% put_(Db, Table, Obj1, put).
     {EncKey, Attrs, Value} = encode_queue_obj(Enc, Obj1, St),
     put_(Db, Table, {EncKey, Attrs, Value}, push).
-    %% PutAttrs = attrs_to_put(Table, EncKey, Attrs),
-    %% Put = {put, make_table_key(Table, EncKey), Value},
-    %% case eleveldb:write(Ref, [Put|PutAttrs], []) of
-    %% 	ok -> ok;
-    %% 	{error, Error} ->
-    %% 	    error(Error)
-    %% end.
+
+queue_head_write(#db{} = _Db, _Table, _Queue, _Data) ->
+    exit(nyi).
+
+queue_head_read(#db{} = _Db, _Table, _Queue) ->
+    exit(nyi).
+
+queue_head_delete(#db{} = _Db, _Table, _Queue) ->
+    exit(nyi).
 
 queue_delete(Db, Table, #q_key{} = QKey) ->
     _ = extract(Db, Table, QKey),

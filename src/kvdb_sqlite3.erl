@@ -140,7 +140,7 @@ open(DbName, Options) ->
 %% make_atom_name(B) when is_binary(B) ->
 %%     binary_to_atom(B, latin1);
 make_atom_name(X) ->
-    list_to_atom(lists:flatten(io_lib:fwrite("~w", [X]))).
+    list_to_atom(lists:flatten(io_lib:fwrite("~s", [X]))).
 
 
 
@@ -348,6 +348,10 @@ index(#db{} = Db, Table) ->
 encoding(#db{encoding = Enc} = Db, Table) ->
     schema_lookup(Db, {a, Table, encoding}, Enc).
 
+key_encoding(E) when E==sext; element(1, E) == sext -> sext;
+key_encoding(E) when E==raw ; element(1, E) == raw  -> raw.
+
+
 type(Db, Table) ->
     schema_lookup(Db, {a, Table, type}, set).
 
@@ -445,18 +449,6 @@ index_keys(#db{ref = Ref} = Db, Table, IxName, IxVal) ->
 	    {error, no_index}
     end.
 
-%% get(Db, Table, #q_key{} = QKey) ->
-%%     case type(Db, Table) of
-%% 	set -> get(Db, Table, QKey, false);
-%% 	_ ->
-%% 	    error(illegal)
-%% 	    %% case queue_read(Db, Table, QKey) of
-%% 	    %% 	{ok, _St, Obj} ->
-%% 	    %% 	    {ok, Obj};
-%% 	    %% 	{error, _} = Err ->
-%% 	    %% 	    Err
-%% 	    %% end
-%%     end;
 get(Db, Table, Key) ->
     case type(Db, Table) of
 	set ->
@@ -602,16 +594,18 @@ do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
     Enc = encoding(Db, Table),
     QPfx = kvdb_lib:queue_prefix(Enc, Q),
     EncQPfx = kvdb_lib:enc_prefix(key, QPfx, Enc),
+    EncFirst = kvdb_lib:enc(key, queue_meta(Enc, Q, order(Type)), Enc),
+    Rel = {true, EncFirst},
     Fltr = fun(inactive, _, _) -> skip;
 	      (_, Kr, O) ->
 		   {keep, {Kr,O}}
 	   end,
     case case Type of
 	     _ when Type==fifo; element(2, Type) == fifo ->
-		 prefix_match_(Db, Table, EncQPfx, false, QPfx, Enc,
+		 prefix_match_(Db, Table, EncQPfx, Rel, QPfx, Enc,
 			       Fltr, true, 2, asc);
 	     _ when Type==lifo; element(2, Type) == lifo ->
-		 prefix_match_(Db, Table, EncQPfx, false, QPfx, Enc,
+		 prefix_match_(Db, Table, EncQPfx, Rel, QPfx, Enc,
 			       Fltr, true, 2, desc);
 	     _ -> error(illegal)
 	 end of
@@ -683,24 +677,28 @@ list_queue(Db, Table, Q, Limit) ->
 
 list_queue(Db, Table, Q, Fltr, HeedBlock, Limit) when Limit > 0 ->
     Type = type(Db, Table),
-    list_queue(Db, Table, Q, Fltr, HeedBlock,
-	       case Type of
-		   fifo -> asc;
-		   lifo -> desc;
-		   {keyed,fifo} -> asc;
-		   {keyed,lifo} -> desc;
-		   _ -> error(illegal)
-	       end, Limit).
+    list_queue(Db, Table, Q, Fltr, HeedBlock, order(Type), Limit).
 
 list_queue(Db, Table, Q, Fltr, HeedBlock, Order, Limit)
   when Order==asc; Order==desc ->
     Enc = encoding(Db, Table),
     QPfx = kvdb_lib:queue_prefix(Enc, Q),
     EncQPfx = kvdb_lib:enc_prefix(key, QPfx, Enc),
-    prefix_match_(Db, Table, EncQPfx, false, QPfx, Enc, Fltr,
+    EncFirst = kvdb_lib:enc(key, queue_meta(Enc, Q, Order), Enc),
+    prefix_match_(Db, Table, EncQPfx, {true, EncFirst}, QPfx, Enc, Fltr,
 		  HeedBlock, Limit, Order);
 list_queue(_, _, _, _, _, _, 0) ->
     [].
+
+queue_meta(Enc, Q, asc ) -> kvdb_lib:queue_prefix(Enc, Q, first);
+queue_meta(Enc, Q, desc) -> kvdb_lib:queue_prefix(Enc, Q, last).
+
+order(fifo) -> asc;
+order(lifo) -> desc;
+order({_,fifo}) -> asc;
+order({_,lifo}) -> desc;
+order(_) -> error(illegal).
+
 
 first_queue(#db{} = Db, Table) ->
     Type = type(Db, Table),
@@ -721,22 +719,41 @@ first_queue(#db{} = Db, Table) ->
 
 next_queue(Db, Table, Q) ->
     Enc = encoding(Db, Table),
-    RelK = case list_queue(Db, Table, Q,
-			   fun(_,K,_O) -> {keep,K} end, false, desc, 1) of
-	       {[Last],_} ->
-		   Last;
-	       _ ->
-		   kvdb_lib:queue_prefix(Enc, Q)
-	   end,
-    case next(Db, Table, RelK) of
+    KEnc = key_encoding(Enc),
+    Type = type(Db, Table),
+    Pfx = if Type == fifo; Type == lifo ->
+		  kvdb_lib:queue_prefix(KEnc, Q, last);
+	     element(1, Type) == keyed, KEnc == raw ->
+		  kvdb_lib:raw_queue_prefix(Q, last);
+	     element(1, Type) == keyed, KEnc == sext ->
+		  kvdb_lib:queue_prefix(KEnc, Q);
+	     true ->
+		  error(illegal)
+	  end,
+    EncPfx = enc_queue_prefix(Pfx, Enc),
+    next_queue_(Db, Table, Q, EncPfx, Type, Enc).
+
+next_queue_(Db, Table, Q, Prev, Type, Enc) ->
+    case next_(Db, Table, Prev, Enc) of
 	{ok, Obj} ->
-	    Type = type(Db, Table),
-	    #q_key{queue = Q1} =
-		kvdb_lib:split_queue_key(Enc, Type, element(1, Obj)),
-	    {ok, Q1};
+	    Key = element(1, Obj),
+	    case kvdb_lib:split_queue_key(Enc, Type, Key) of
+		#q_key{queue = Q} ->
+		    next_queue_(Db, Table, Q, Key, Type, Enc);
+		#q_key{queue = NextQ} ->
+		    {ok, NextQ}
+	    end;
 	done ->
 	    done
     end.
+
+enc_queue_prefix(Pfx, sext) when is_tuple(Pfx) ->
+    EncPfx = sext:prefix(Pfx),
+    %% add a byte that's guaranteed to be higher than the next sext-encoded
+    %% element.
+    <<EncPfx/binary, 127>>;
+enc_queue_prefix(Pfx, raw) ->
+    Pfx.
 
 get_attrs(#db{ref = Ref} = Db, Table, Key, As) ->
     Enc = encoding(Db, Table),
@@ -819,8 +836,10 @@ prefix_match_(#db{ref = Ref} = Db, Table, EncPrefix, Rel, Prefix,
 	   end,
     AndStart = case Rel of
 		   false -> "";
-		   {true, _} ->
-		       " AND key > ?"
+		   {true, _} when Dir==asc ->
+		       " AND key > ?";
+		   {true, _} when Dir==desc ->
+		       " AND key < ?"
 	       end,
     AndActive = case {HeedBlock, type(Db, Table)} of
 		    {_, set} -> "";
@@ -1011,15 +1030,20 @@ last(#db{ref = Ref} = Db, Table) ->
     select_one(Ref, Enc, ["SELECT ", sel_cols(Enc), " FROM ", Table, Where,
 			 " ORDER BY key DESC LIMIT 1"]).
 
-next(#db{ref = Ref} = Db, Table, Key) ->
+next(#db{} = Db, Table, Key) ->
     Enc = encoding(Db, Table),
+    next_(Db, Table, enc(key, Key, Enc), Enc).
+
+next_(#db{ref = Ref} = Db, Table, EncKey, Enc) ->
     IsActive = case type(Db, Table) == set of
 		   true -> "";
 		   false -> " AND active == 1"
 	       end,
     select_one(Ref, Enc, ["SELECT ", sel_cols(Enc), " FROM ", Table,
-			 " WHERE key > ?", IsActive,
-			 " ORDER BY key ASC LIMIT 1"], [{blob, enc(key, Key, Enc)}]).
+			  " WHERE key > ?", IsActive,
+			  " ORDER BY key ASC LIMIT 1"], [{blob, EncKey}]).
+
+
 
 prev(#db{ref = Ref} = Db, Table, Key) ->
     Enc = encoding(Db, Table),

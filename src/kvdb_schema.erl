@@ -19,6 +19,8 @@
 -export([write/2, read/1, read/2]).
 -export([pre_commit/2, post_commit/2]).
 
+-export([fold_schema/3, all_ok/3]).
+
 -export([behaviour_info/1]).
 
 -include("kvdb.hrl").
@@ -30,6 +32,40 @@ behaviour_info(callbacks) ->
      {post_commit, 2}];
 behaviour_info(_) ->
     undefined.
+
+fold_schema(Schema, F, Obj) when is_function(F, 2) ->
+    if is_atom(Schema) ->
+	    F(Schema, Obj);
+       is_list(Schema) ->
+	    lists:foldl(
+	      fun(S, Acc) ->
+		      fold_schema(S, F, Acc)
+	      end, Schema, Obj);
+       is_tuple(Schema), tuple_size(Schema) == 1 ->
+	    {M} = Schema,
+	    Expanded = M:expand_schema(),
+	    fold_schema(Expanded, F, Obj)
+    end.
+
+all_ok(Schema, F, Obj) ->
+    R = if is_atom(Schema) -> F(Schema, Obj);
+	   is_list(Schema) -> catch all_ok_(Schema, F, Obj);
+	   is_tuple(Schema), tuple_size(Schema) == 1 ->
+		{M} = Schema,
+		catch all_ok_([_|_] = M:expand_schema(), F, Obj)
+	end,
+    case R of
+	{'EXIT', Reason} -> {error, Reason};
+	Other -> Other
+    end.
+
+all_ok_([H|T], F, Obj) ->
+    case F(H, Obj) of
+	ok -> all_ok_(T, F, Obj);
+	Other -> Other
+    end;
+all_ok_([], _, _) ->
+    ok.
 
 
 validate(_Db, _Type, Obj) ->
