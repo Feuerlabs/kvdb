@@ -42,13 +42,13 @@ add_log(Db, Table, Log, Max) when Max == infinity;
     end.
 
 log(_Db, _Table, _Obj) ->
-    error(nyi).
+    erlang:error(nyi).
 
 adjust(_Db, _Table, _Info) ->
-    error(nyi).
+    erlang:error(nyi).
 
 list(_Db, _Table, _Filter) ->
-    error(nyi).
+    erlang:error(nyi).
 
 meta_key(Log) ->
     #q_key{queue = Log, ts = 0, key = <<>>}.

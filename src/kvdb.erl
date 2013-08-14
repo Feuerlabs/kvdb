@@ -781,7 +781,7 @@ start_session(Name, Id) ->
 not_meta_table(Table0) ->
     Table = kvdb_lib:table_name(Table0),
     if Table == ?META_TABLE ->
-	    error(illegal_operation);
+	    erlang:error(illegal_operation);
        true ->
 	    Table
     end.

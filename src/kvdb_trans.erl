@@ -285,7 +285,7 @@ get_schema_mod(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
     end.
 
 open(#db{} = _Db, _Opts) ->
-    error(nyi).
+    erlang:error(nyi).
 
 add_table(#db{ref = {#kvdb_ref{mod=M1,db=Db1}, _}} = DbT, Tab, Opts) ->
     case info(DbT, {Tab, type}) of
@@ -305,7 +305,7 @@ add_table(#db{ref = {#kvdb_ref{mod=M1,db=Db1}, _}} = DbT, Tab, Opts) ->
 
 close(_Db) ->
     %% does this even make sense in a transaction?
-    error(illegal).
+    erlang:error(illegal).
 
 delete_table(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}} = Db, Tab) ->
     case info(Db, {Tab, type}) of
@@ -924,7 +924,7 @@ update_counter(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}} = Db, Tab, K, Incr) ->
 	    M1:put(Db1, Tab, setelement(Sz, Obj, NewV)),
 	    NewV;
 	_ ->
-	    error(not_found)
+	    erlang:error(not_found)
     end.
 
 ensure_table(Tab, #kvdb_ref{mod = M1, db = Db1},
@@ -933,7 +933,7 @@ ensure_table(Tab, #kvdb_ref{mod = M1, db = Db1},
 	undefined ->
 	    case M2:info(Db2, {Tab, tabrec}) of
 		undefined ->
-		    error({no_such_table, Tab});
+		    erlang:error({no_such_table, Tab});
 		#table{} = TabR ->
 		    M1:int_write(Db1, {tabrec, Tab}, TabR),
 		    true

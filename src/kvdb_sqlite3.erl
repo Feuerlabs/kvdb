@@ -296,7 +296,7 @@ update_counter(#db{} = Db, Table, K, Incr) ->
 			      is_integer(V) ->
 				   V+Incr;
 			      true ->
-				   error(illegal)
+				   erlang:error(illegal)
 			   end,
 		    NewObj = setelement(Sz, Obj, NewV),
 		    ok = put(Db, Table, NewObj),
@@ -305,7 +305,7 @@ update_counter(#db{} = Db, Table, K, Incr) ->
 		    E
 	    end;
 	_ ->
-	    error(illegal)
+	    erlang:error(illegal)
     end.
 
 push(#db{ref = Ref} = Db, Table, Q, {Key, Value}) ->
@@ -454,7 +454,7 @@ get(Db, Table, Key) ->
 	set ->
 	    get_(Db, Table, Key, false);
 	_ ->
-	    error(illegal)
+	    erlang:error(illegal)
     end.
 
 get_(#db{ref = Ref} = Db, Table, Key, IncludeActive) when
@@ -499,7 +499,7 @@ get_value(Db, Table, Key) ->
 
 pop(Db, Table, Q) ->
     case type(Db, Table) of
-	set -> error(illegal);
+	set -> erlang:error(illegal);
 	T ->
 	    Remove = fun(Obj, _) ->
 			     delete(Db, Table, element(1, Obj))
@@ -510,7 +510,7 @@ pop(Db, Table, Q) ->
 prel_pop(Db, Table, Q) ->
     case type(Db, Table) of
 	set ->
-	    error(illegal);
+	    erlang:error(illegal);
 	T ->
 	    Remove = fun(Obj, Enc) ->
 			     mark_queue_object(Db, Table, Enc, Obj, blocking)
@@ -579,10 +579,10 @@ queue_insert(#db{ref = Ref} = Db, Table, #q_key{} = QKey, St, Obj) when
 		ok ->
 		    ok;
 		{error,Error} ->
-		    error(Error)
+		    erlang:error(Error)
 	    end;
        true ->
-	    error(badarg)
+	    erlang:error(badarg)
     end.
 
 queue_delete(Db, Table, #q_key{} = QKey) ->
@@ -607,7 +607,7 @@ do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
 	     _ when Type==lifo; element(2, Type) == lifo ->
 		 prefix_match_(Db, Table, EncQPfx, Rel, QPfx, Enc,
 			       Fltr, true, 2, desc);
-	     _ -> error(illegal)
+	     _ -> erlang:error(illegal)
 	 end of
 	{[{RawKey,Obj}|More], _} ->
 	    Remove(setelement(1, Obj, RawKey), Enc),
@@ -637,7 +637,7 @@ extract(#db{} = Db, Table, #q_key{queue = Q} = QKey) ->
 		    Error
 	    end;
        true ->
-	    error(illegal)
+	    erlang:error(illegal)
     end.
 
 queue_read(#db{} = Db, Table, #q_key{key = K} = QKey) ->
@@ -652,7 +652,7 @@ queue_read(#db{} = Db, Table, #q_key{key = K} = QKey) ->
 		    Error
 	    end;
        true ->
-	    error(illegal)
+	    erlang:error(illegal)
     end.
 
 is_queue_empty(Db, Table, Q) ->
@@ -703,7 +703,7 @@ order(_) -> error(illegal).
 first_queue(#db{} = Db, Table) ->
     Type = type(Db, Table),
     case Type of
-	set -> error(illegal);
+	set -> erlang:error(illegal);
 	_ ->
 	    Enc = encoding(Db, Table),
 	    case first(Db, Table, Enc) of
@@ -1100,7 +1100,7 @@ check_options([{index, Ix}|Tl], Db, Rec) ->
     case kvdb_lib:valid_indexes(Ix) of
 	ok -> check_options(Tl, Db, Rec#table{index = Ix});
 	{error, Bad} ->
-	    error({invalid_index, Bad})
+	    erlang:error({invalid_index, Bad})
     end;
 check_options([], _, Rec) ->
     Rec.

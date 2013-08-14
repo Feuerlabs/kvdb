@@ -336,7 +336,7 @@ put_(#db{ref = Ets} = Db, Table, {K, Value} = Obj) ->
 queue_insert(#db{ref = Ets} = Db, Table, #q_key{} = QKey, St, Obj) ->
     case type(Db, Table) of
 	set ->
-	    error(illegal);
+	    erlang:error(illegal);
 	T ->
 	    Enc = encoding(Db, Table),
 	    case matches_encoding(Enc, Obj) of
@@ -354,7 +354,7 @@ queue_insert(#db{ref = Ets} = Db, Table, #q_key{} = QKey, St, Obj) ->
 		    ok;
 		false ->
 		    %% oops! But this function is called from the log replay...
-		    error({encoding_mismatch, [Enc, Obj]})
+		    erlang:error({encoding_mismatch, [Enc, Obj]})
 	    end
     end.
 
@@ -365,7 +365,7 @@ queue_delete(Db, Table, #q_key{} = QKey) ->
 queue_read(#db{ref = Ets} = Db, Table, #q_key{} = QKey) ->
     case type(Db, Table) of
 	set ->
-	    error(illegal);
+	    erlang:error(illegal);
 	T ->
 	    AbsKey = q_key_to_int(QKey, T),
 	    LookupKey = #k{t=Table, k=AbsKey},
@@ -412,16 +412,16 @@ update_counter(#db{} = Db0, Table, K, Incr) when is_integer(Incr) ->
 				NewI = I + Incr,
 				<<NewI:Sz/integer>>;
 			   true ->
-				error(illegal)
+				erlang:error(illegal)
 			end,
 		    NewObj = setelement(Sz, Obj, NewV),
 		    put(Db, Table, NewObj),  % logs an insert operation
 		    NewV;
 		_ ->
-		    error(not_found)
+		    erlang:error(not_found)
 	    end;
 	_ ->
-	    error(illegal)
+	    erlang:error(illegal)
     end.
 
 
@@ -530,7 +530,7 @@ do_pop(#db{ref = Ets} = Db, Table, Type, Q, Remove, ReturnKey) ->
 	    _ when Type == lifo; element(2,Type) == lifo ->
 		{fun() -> ets:prev(Ets, #k{t=Table, k={{Q,2},0,0}}) end,
 		 fun(K) -> ets:prev(Ets, K) end};
-	    _ -> error(illegal)
+	    _ -> erlang:error(illegal)
 	 end,
     case do_pop_(First(), Table, Q, Next, Ets, Type, Enc) of
 	blocked -> blocked;
@@ -585,7 +585,7 @@ first_queue(#db{ref = Ets} = Db, Table) ->
 		    {ok, Q}
 	    end;
 	_ ->
-	    error(illegal)
+	    erlang:error(illegal)
     end.
 
 next_queue(#db{ref = Ets} = Db, Table, Q) ->
@@ -598,7 +598,7 @@ next_queue(#db{ref = Ets} = Db, Table, Q) ->
 		    done
 	    end;
 	_ ->
-	    error(illegal)
+	    erlang:error(illegal)
     end.
 
 extract(#db{ref = Ets} = Db0, Table, #q_key{queue = Q} = QKey) ->
@@ -630,7 +630,7 @@ extract(#db{ref = Ets} = Db0, Table, #q_key{queue = Q} = QKey) ->
 			    {error, not_found}
 		    end;
 	       true ->
-		    error(illegal)
+		    erlang:error(illegal)
 	    end
     end.
 
@@ -664,7 +664,7 @@ list_queue(#db{ref = Ets} = Db0, Table, Q, Fltr, HeedBlock, Limit)
 	    _ when T == lifo; element(2,T) == lifo ->
 		{fun() -> ets:prev(Ets, #k{t=Table, k={{Q,2},0,0}}) end,
 		 fun(K) -> ets:prev(Ets, #k{t=Table, k=K}) end};
-	    _ -> error(illegal)
+	    _ -> erlang:error(illegal)
 	end,
     list_queue(Limit, First(), Next, Ets, Db, Table, T, Q, Fltr, HeedBlock,
 	       Limit, []).
@@ -776,7 +776,7 @@ get_attrs(Db0, Table, Key, As) ->
 		    {error, not_found}
 	    end;
 	_ ->
-	    error(badarg)
+	    erlang:error(badarg)
     end.
 
 index_get(#db{ref = Ets} = Db, Table, IxName, IxVal) ->
@@ -1117,7 +1117,7 @@ check_options([{index, Ix}|Tl], Db, Rec) ->
     case kvdb_lib:valid_indexes(Ix) of
 	ok -> check_options(Tl, Db, Rec#table{index = Ix});
 	{error, Bad} ->
-	    error({invalid_index, Bad})
+	    erlang:error({invalid_index, Bad})
     end;
 check_options([], _, Rec) ->
     Rec.

@@ -74,7 +74,7 @@
 		__R;
 	    throw:{kvdb_throw, __E} ->
 		%% error(__E, Args)
-		error(__E, erlang:get_stacktrace())
+		erlang:error(__E, erlang:get_stacktrace())
 	end).
 
 -define(KVDB_THROW(E), throw({kvdb_throw, E})).

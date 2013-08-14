@@ -361,15 +361,15 @@ update_counter(#db{ref = Ref} = Db, Table, K, Incr) when is_integer(Incr) ->
 				NewI = I + Incr,
 				enc(value, <<NewI:Sz/integer>>, Enc);
 			    _ ->
-				error(illegal)
+				erlang:error(illegal)
 			end,
 		    ok = eleveldb:put(Ref, TabKey, NewV, []),
 		    dec(value, NewV, Enc);
 		_ ->
-		    error(not_found)
+		    erlang:error(not_found)
 	    end;
 	_ ->
-	    error(illegal)
+	    erlang:error(illegal)
     end.
 
 
@@ -396,7 +396,7 @@ push(#db{} = Db, Table, Q, Obj) ->
 	    %% 	    Other
 	    %% end;
        true ->
-	    error(illegal)
+	    erlang:error(illegal)
     end.
 
 queue_insert(#db{} = Db, Table, #q_key{} = QKey, St, Obj) when
@@ -441,7 +441,7 @@ mark_queue_obj(#db{ref = Ref} = Db, Table, Enc, QK, Obj, St) when
 
 pop(#db{} = Db, Table, Q) ->
     case type(Db, Table) of
-	set -> error(illegal);
+	set -> erlang:error(illegal);
 	T ->
 	    Remove = fun(QKey, _Obj, _) ->
 			     delete(Db, Table, QKey)
@@ -451,7 +451,7 @@ pop(#db{} = Db, Table, Q) ->
 
 prel_pop(Db, Table, Q) ->
     case type(Db, Table) of
-	set -> error(illegal);
+	set -> erlang:error(illegal);
 	T ->
 	    Remove = fun(QKey, Obj, Enc) ->
 			     mark_queue_obj(Db, Table, Enc, QKey, Obj, blocking)
@@ -483,7 +483,7 @@ do_pop(Db, Table, _Type, Q, Remove, ReturnKey) ->
 
 extract(#db{ref = Ref} = Db, Table, #q_key{queue = Q, key = Key} = QKey) ->
     case type(Db, Table) of
-	set -> error(illegal);
+	set -> erlang:error(illegal);
 	Type ->
 	    Enc = encoding(Db, Table),
 	    AKey = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
@@ -542,7 +542,7 @@ is_queue_empty(#db{ref = Ref} = Db, Table, Q) ->
 first_queue(#db{ref = Ref} = Db, Table) ->
     Type = type(Db, Table),
     case Type of
-	set -> error(illegal);
+	set -> erlang:error(illegal);
 	_ ->
 	    TPrefix = make_table_key(Table),
 	    TPSz = byte_size(TPrefix),
@@ -571,7 +571,7 @@ first_queue_(Res, I, Db, Table, TPrefix, TPSz) ->
 next_queue(#db{ref = Ref} = Db, Table, Q) ->
     Type = type(Db, Table),
     case Type of
-	set -> error(illegal);
+	set -> erlang:error(illegal);
 	_ ->
 	    Enc = encoding(Db, Table),
 	    QPfx = kvdb_lib:queue_prefix(Enc, Q, last),
@@ -796,7 +796,7 @@ get(Db, Table, Key) ->
 	set ->
 	    get(Db, Table, Key, encoding(Db, Table), set);
 	_ ->
-	    error(illegal)
+	    erlang:error(illegal)
     end.
 
 %% get(#db{} = Db, Table, #q_key{} = QKey, Enc, Type) ->
@@ -949,7 +949,7 @@ get_attrs(#db{ref = Ref} = Db, Table, Key, As) ->
 		    {error, not_found}
 	    end;
 	_ ->
-	    error(badarg)
+	    erlang:error(badarg)
     end.
 
 get_attrs_(#db{ref = Ref}, Table, EncKey, As) ->
@@ -1146,7 +1146,7 @@ prev(Db, Enc, Table, Rel) ->
     catch
 	error:Err ->
 	    io:fwrite("CRASH: ~p, ~p~n", [Err, erlang:get_stacktrace()]),
-	    error(Err)
+	    erlang:error(Err)
     end.
 
 iterator_move(#db{ref = Ref} = Db, Enc, Table, Rel, Comp, Dir) ->
@@ -1283,7 +1283,7 @@ check_options([{index, Ix}|Tl], Db, Rec) ->
     case kvdb_lib:valid_indexes(Ix) of
 	ok -> check_options(Tl, Db, Rec#table{index = Ix});
 	{error, Bad} ->
-	    error({invalid_index, Bad})
+	    erlang:error({invalid_index, Bad})
     end;
 check_options([], _, Rec) ->
     Rec.
