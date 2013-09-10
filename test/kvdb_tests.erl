@@ -120,14 +120,26 @@ dbs() ->
      {l1,sext,leveldb},
      {l2,raw,leveldb},
      {e1,sext,ets},
-     {e2,raw,ets}
+     {e2,raw,ets},
+     {p1,raw,{kvdb_paired, [{module1, kvdb_ets},
+			    {module2, kvdb_leveldb},
+			    {options2, [{update_index, false}]}]}}
     ].
 
 create_db(Name, Encoding, Backend) ->
-    File = db_file(Name, Backend),
-    ok = delete_db_file(Name, Backend),
-    {ok,Db} = kvdb:open(Name, [{file,File},{backend,Backend},
-			       {encoding,Encoding}]),
+    BackendName = if is_tuple(Backend) -> element(1, Backend);
+		     is_atom(Backend)  -> Backend
+	      end,
+    File = db_file(Name, BackendName),
+    ok = delete_db_file(Name, BackendName),
+    BasicOpts = [{file,File},{encoding,Encoding}],
+    Opts = case Backend of
+	       {B, ExtraOpts} when is_list(ExtraOpts) ->
+		   BasicOpts ++ [{backend, B} | ExtraOpts];
+	       B when is_atom(Backend) ->
+		   [{backend, B} | BasicOpts]
+	   end,
+    {ok,Db} = kvdb:open(Name, Opts),
     kvdb:add_table(Db, type),
     kvdb:add_table(Db, value),
     Name.
@@ -716,7 +728,7 @@ get_all({ok,{Key,Value}}, Db, Table) ->
 
 
 delete_db_file(Name, Backend) ->
-    File = db_file(Name, Backend),
+    File = db_file(Name, backend_name(Backend)),
     case file:delete(File) of
 	{error,enoent} -> ok;
 	ok -> ok;
@@ -724,6 +736,12 @@ delete_db_file(Name, Backend) ->
 	    delete_db_dir(File, Backend, {error,eperm});
 	Result -> Result
     end.
+
+backend_name({B, _}) ->
+    B;
+backend_name(B) when is_atom(B) ->
+    B.
+
 
 delete_db_dir(Dir, Be, _Error) when Be==leveldb; Be==kvdb_leveldb ->
     case file:read_file_info(Dir) of

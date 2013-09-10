@@ -125,8 +125,43 @@ load(#db{ref = {{M1,Db1}, {M2, Db2}}}) ->
 	      M1:delete_table(Db1, T),
 	      TabR = M2:info(Db2, {T, tabrec}),
 	      M1:add_table(Db1, T, TabR),
-	      chunk_load(M2:prefix_match(Db2, T, <<>>, 100), M1, Db1, T)
+	      case TabR#table.type of
+		  set ->
+		      chunk_load(M2:prefix_match(Db2, T, <<>>, 100),
+				 M1, Db1, T);
+		  Type when Type==fifo; Type==lifo;
+			    Type=={keyed,fifo}; Type=={keyed,lifo} ->
+		      Filter = fun(St, QKey, Obj) ->
+				       {keep, {QKey, St, Obj}}
+			       end,
+		      all_queues(
+			fun(Q) ->
+				load_queue(
+				  M2:list_queue(Db2, T, Q,
+						Filter, false, 100),
+				 M1, Db1, T)
+			end, M2, Db2, T)
+	      end
       end, Tabs).
+
+all_queues(F, M, Db, T) ->
+    all_queues(M:first_queue(Db, T), F, M, Db, T).
+
+all_queues(done, _, _, _, _) ->
+    done;
+all_queues({ok,Q}, F, M, Db, T) ->
+    F(Q),
+    all_queues(M:next_queue(Db, T, Q), F, M, Db, T).
+
+load_queue({Objs, Cont}, M, Db, T) ->
+    lists:foreach(
+      fun({QKey, St, Obj}) ->
+	      M:queue_insert(Db, T, QKey, St, Obj)
+      end, Objs),
+    load_queue(Cont(), M, Db, T);
+load_queue(done, _, _, _) ->
+    done.
+
 
 
 chunk_load({Objs, Cont}, M, Db, T) ->
@@ -143,13 +178,13 @@ close(#db{ref = {{M1,Db1},{M2,Db2}}}) ->
 add_table(#db{ref = {{M1,Db1},{M2,Db2}}}, Table, Opts) when is_list(Opts) ->
     case M1:info(Db1, {Table, type}) of
 	undefined ->
-	    TabR = kvdb_lib:make_tabrec(Table, Opts),
+	    TabR = kvdb_lib:make_tabrec(Table, check_encoding(Opts, Db1)),
 	    M2:add_table(Db2, Table, TabR),
 	    M1:add_table(Db1, Table, TabR);
 	_ -> ok
     end;
 add_table(#db{ref = {{M1,Db1},{M2,Db2}}}, Table, #table{} = TabR) ->
-    case M1:is_table(Db1) of
+    case M1:is_table(Db1, Table) of
 	true -> ok;
 	false ->
 	    M2:add_table(Db2, Table, TabR),
@@ -177,8 +212,12 @@ put(#db{ref = {{M1,Db1},{M2,Db2}}}, Table, Obj) ->
     end.
 
 update_counter(#db{ref = {{M1,Db1},{M2,Db2}}}, Table, Key, Incr) ->
-    M2:update_counter(Db2, Table, Key, Incr),
-    M1:update_counter(Db1, Table, Key, Incr).
+    NewValue = M1:update_counter(Db1, Table, Key, Incr),
+    {ok, Obj} = M1:get(Db1, Table, Key),
+    M2:put(Db2, Table, Obj),
+    NewValue.
+    %% M2:update_counter(Db2, Table, Key, Incr),
+    %% M1:update_counter(Db1, Table, Key, Incr).
 
 push(#db{ref = {{M1,Db1},{M2,Db2}}}, Table, Q, Obj) ->
     M2:push(Db2, Table, Q, Obj),
@@ -274,3 +313,11 @@ prefix_match(#db{ref = {{M,Db},_}}, Tab, Pfx, Limit) ->
 prefix_match_rel(#db{ref = {{M,Db},_}}, Tab, Prefix, Start, Limit) ->
     M:prefix_match_rel(Db, Tab, Prefix, Start, Limit).
 
+
+check_encoding(Opts, #db{encoding = Enc0}) ->
+    case lists:keymember(encoding, 1, Opts) of
+	true ->
+	    Opts;
+	false ->
+	    [{encoding, Enc0}|Opts]
+    end.

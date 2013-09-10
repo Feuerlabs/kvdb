@@ -984,7 +984,17 @@ prefix_match(#db{} = Db, Table, Prefix, Limit)
 prefix_match_rel(#db{} = Db, Table, Prefix, StartPoint, Limit) ->
     prefix_match(Db, Table, Prefix, {true, StartPoint}, Limit).
 
-prefix_match(#db{ref = Ref} = Db, Table, Prefix, Rel, Limit)
+prefix_match(#db{} = Db, Table, Prefix, Rel, Limit)
+  when (is_integer(Limit) orelse Limit == infinity) ->
+    case type(Db, Table) of
+	set ->
+	    prefix_match_set(Db, Table, Prefix, Rel, Limit);
+	Type when Type==fifo; Type==lifo;
+		  Type=={keyed,fifo}; Type=={keyed,lifo} ->
+	    error(badarg)
+    end.
+
+prefix_match_set(#db{ref = Ref} = Db, Table, Prefix, Rel, Limit)
   when (is_integer(Limit) orelse Limit == infinity) ->
     Enc = encoding(Db, Table),
     EncPrefix = kvdb_lib:enc_prefix(key, Prefix, Enc),

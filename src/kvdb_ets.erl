@@ -410,7 +410,7 @@ update_counter(#db{} = Db0, Table, K, Incr) when is_integer(Incr) ->
 				BSz = bit_size(V),
 				<<I:BSz/integer>> = V,
 				NewI = I + Incr,
-				<<NewI:Sz/integer>>;
+				<<NewI:BSz/integer>>;
 			   true ->
 				erlang:error(illegal)
 			end,
