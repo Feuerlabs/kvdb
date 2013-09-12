@@ -69,7 +69,7 @@
 -export([tstore_to_list/1]).
 
 -include("kvdb.hrl").
--include_lib("lager/include/log.hrl").
+-include("log.hrl").
 
 -define(q_done(Res), (Res == done orelse Res == blocked)).
 
