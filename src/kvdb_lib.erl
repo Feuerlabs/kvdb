@@ -52,7 +52,7 @@
 -export([nodes_of/2]).
 
 -include("kvdb.hrl").
--include_lib("lager/include/log.hrl").
+-include("log.hrl").
 
 valid_table_name(Table0) ->
     Table = table_name(Table0),

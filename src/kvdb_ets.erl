@@ -45,7 +45,7 @@
 -export([switch_logs/2]).
 
 -include("kvdb.hrl").
--include_lib("lager/include/log.hrl").
+-include("log.hrl").
 -record(k, {t, i=2, k}).  % internal key representation
 -import(kvdb_lib, [enc/3, dec/3]).
 
