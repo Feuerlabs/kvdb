@@ -36,7 +36,7 @@
 	 code_change/3]).
 
 -include("kvdb.hrl").
--include_lib("lager/include/log.hrl").
+-include("log.hrl").
 -import(kvdb_lib, [table_name/1]).
 
 -record(st, {name, db, is_owner = false,

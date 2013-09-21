@@ -65,7 +65,7 @@
 -import(kvdb_lib, [table_name/1, on_update/4]).
 
 -include("kvdb.hrl").
--include_lib("lager/include/log.hrl").
+-include("log.hrl").
 
 -spec info(db_ref(), attr_name()) -> undefined | attr_value().
 info(#kvdb_ref{mod = DbMod, db = Db}, Item0) ->

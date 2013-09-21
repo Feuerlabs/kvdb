@@ -27,7 +27,7 @@
 	 pre_commit/2,
 	 post_commit/2]).
 
--include_lib("lager/include/log.hrl").
+-include("log.hrl").
 
 notify_when_not_empty(#kvdb_ref{name = DBN} = Db, Table0, Q) ->
     Table = kvdb_lib:table_name(Table0),
