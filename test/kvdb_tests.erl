@@ -243,15 +243,21 @@ prefix_match(Db) ->
     kvdb:add_table(Db, tr, [{encoding, raw}]),
     kvdb:put(Db, tr, {<<"aabb">>, <<"1">>}),
     kvdb:put(Db, tr, {<<"aacc">>, <<"2">>}),
-    kvdb:put(Db, tr, {<<"abcc">>, <<"3">>}),
-    kvdb:put(Db, tr, {<<"abcd">>, <<"4">>}),
+    kvdb:put(Db, tr, {<<"aadd">>, <<"3">>}),
+    kvdb:put(Db, tr, {<<"abcc">>, <<"4">>}),
+    kvdb:put(Db, tr, {<<"abcd">>, <<"5">>}),
     {[ {<<"aabb">>, <<"1">>}, {<<"aacc">>, <<"2">>}], C1} =
 	kvdb:prefix_match(Db, tr, <<"aa">>, 2),
     case C1() of
-	{[], _} -> ok;
-	done -> ok;
-	Other ->
-	    error({badmatch, Other})
+	{[ {<<"aadd">>, <<"3">>}], C2} ->
+	    case C2() of
+		{[], _} -> ok;
+		done -> ok;
+		Other2 ->
+		    error({badmatch, Other2})
+	    end;
+	Other1 ->
+	    error({badmatch, Other1})
     end,
     kvdb:delete_table(Db, tr).
 
@@ -259,19 +265,25 @@ prefix_match2(Db) ->
     kvdb:add_table(Db, ts, [{encoding, sext}]),
     kvdb:put(Db, ts, {{a,1}, 1}),
     kvdb:put(Db, ts, {{a,2}, 2}),
-    kvdb:put(Db, ts, {{b,1}, 3}),
-    kvdb:put(Db, ts, {{b,2}, 4}),
+    kvdb:put(Db, ts, {{a,3}, 3}),
+    kvdb:put(Db, ts, {{b,1}, 4}),
+    kvdb:put(Db, ts, {{b,2}, 5}),
     { [{{a,1},1}, {{a,2},2}], C1} =
 	kvdb:prefix_match(Db, ts, {a,'_'}, 2),
     case C1() of
-	{[], _} -> ok;
-	done -> ok;
-	Other ->
-	    error({badmatch, Other})
+	{[{{a,3}, 3}], C2} ->
+	    case C2() of
+		{[], _} -> ok;
+		done -> ok;
+		Other2 ->
+		    error({badmatch, Other2})
+	    end;
+	Other1 ->
+	    error({badmatch, Other1})
     end,
-    { [{{a,1},1}, {{a,2},2}, {{b,1},3}, {{b,2},4}], C2} =
+    { [{{a,1},1}, {{a,2},2}, {{a,3},3}, {{b,1},4}, {{b,2},5}], C3} =
 	kvdb:prefix_match(Db, ts, '_'),
-    done = C2().
+    done = C3().
 
 %% prefix_match(Db) ->
 %%     Prefix = <<"/config/test">>,

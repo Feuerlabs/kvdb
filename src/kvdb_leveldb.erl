@@ -1014,40 +1014,48 @@ prefix_match_set(#db{ref = Ref} = Db, Table, Prefix, Rel, Limit)
 	      if Rel==false, EncStart == <<>> ->
 		      case eleveldb:iterator_move(I, TablePrefix) of
 			  {ok, <<TablePrefix:TabPfxSz/binary>>, _} ->
-			      prefix_match_(I, next, Db, Table, MatchKey, TablePrefix,
-					    Prefix, Enc, Limit, Limit, []);
+			      prefix_match_(I, next, TablePrefix, Db, Table,
+					    MatchKey, TablePrefix, Prefix,
+					    Enc, Limit, Limit, []);
 			  _ ->
 			      done
 		      end;
 		 Rel=/=false ->
 		      case eleveldb:iterator_move(I, StartKey) of
 			  {ok, StartKey, _} ->
-			      prefix_match_(I, next, Db, Table, MatchKey,
-					    TablePrefix, Prefix, Enc,
+			      prefix_match_(I, next, StartKey, Db, Table,
+					    MatchKey, TablePrefix, Prefix, Enc,
 					    Limit, Limit, []);
 			  {ok, _, _} ->
-			      prefix_match_(I, StartKey, Db, Table, MatchKey,
-					    TablePrefix, Prefix, Enc,
+			      prefix_match_(I, StartKey, StartKey, Db, Table,
+					    MatchKey, TablePrefix, Prefix, Enc,
 					    Limit, Limit, [])
 		      end;
 		 true ->
-		      prefix_match_(I, StartKey, Db, Table, MatchKey,
+		      prefix_match_(I, StartKey, StartKey, Db, Table, MatchKey,
 				    TablePrefix, Prefix, Enc, Limit, Limit, [])
 	      end
       end).
 
-prefix_match_(_I, Next, #db{ref = Ref} = Db, Table, MatchKey, TPfx, Pfx,
+prefix_match_(_I, _Next, Prev, #db{ref = Ref} = Db, Table, MatchKey, TPfx, Pfx,
 	      Enc, 0, Limit0, Acc) ->
     {lists:reverse(Acc),
      fun() ->
 	     with_iterator(
 	       Ref,
 	       fun(I1) ->
-		       prefix_match_(I1, Next, Db, Table, MatchKey, TPfx, Pfx,
-				     Enc, Limit0, Limit0, [])
+		       case eleveldb:iterator_move(I1, Prev) of
+			   {ok, _, _} ->
+			       prefix_match_(
+				 I1, next, Prev, Db, Table, MatchKey, TPfx,
+				 Pfx, Enc, Limit0, Limit0, []);
+			   _  ->
+			       done
+		       end
 	       end)
      end};
-prefix_match_(I, Next, Db, Table, MatchKey, TPfx, Pfx, Enc, Limit, Limit0, Acc) ->
+prefix_match_(I, Next, _Prev, Db, Table, MatchKey, TPfx, Pfx, Enc,
+	      Limit, Limit0, Acc) ->
     Sz = byte_size(MatchKey),
     case eleveldb:iterator_move(I, Next) of
 	{ok, <<MatchKey:Sz/binary, _/binary>> = Key, Val} ->
@@ -1055,7 +1063,7 @@ prefix_match_(I, Next, Db, Table, MatchKey, TPfx, Pfx, Enc, Limit, Limit0, Acc) 
 	    <<TPfx:PSz/binary, K/binary>> = Key,
 	    case (K =/= <<>> andalso kvdb_lib:is_prefix(Pfx, K, Enc)) of
 		true ->
-		    prefix_match_(I, next, Db, Table, MatchKey, TPfx, Pfx,
+		    prefix_match_(I, next, Key, Db, Table, MatchKey, TPfx, Pfx,
 				  Enc, decr(Limit), Limit0,
 				  [decode_obj(Db, Enc, Table, K, Val) | Acc]);
 		false ->

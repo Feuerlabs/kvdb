@@ -50,6 +50,7 @@
 -export([proxy_childspecs/2]).
 
 -include("kvdb.hrl").
+-include_lib("lager/include/log.hrl").
 
 -define(if_table(Db, Tab, Expr), if_table(Db, Tab, fun() -> Expr end)).
 
@@ -127,7 +128,7 @@ load(#db{ref = {{M1,Db1}, {M2, Db2}}}) ->
 	      M1:add_table(Db1, T, TabR),
 	      case TabR#table.type of
 		  set ->
-		      chunk_load(M2:prefix_match(Db2, T, <<>>, 100),
+		      chunk_load(M2:prefix_match(Db2, T, <<>>, 1000),
 				 M1, Db1, T);
 		  Type when Type==fifo; Type==lifo;
 			    Type=={keyed,fifo}; Type=={keyed,lifo} ->
