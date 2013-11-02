@@ -43,7 +43,11 @@
 -export([first_queue/2, next_queue/3]).
 -export([first/2, last/2, next/3, prev/3,
 	 prefix_match/3, prefix_match/4, prefix_match_rel/5]).
--export([get_schema_mod/2]).
+-export([get_schema_mod/2,
+	 schema_write/4,
+	 schema_read/3,
+	 schema_delete/3,
+	 schema_fold/3]).
 -export([info/2, is_table/2]).
 -export([dump_tables/1]).
 
@@ -78,6 +82,20 @@ is_table(#db{ref = {{M,Db},_}}, Tab) ->
 
 get_schema_mod(#db{ref = {{M,Db},_}}, Default) ->
     M:get_schema_mod(Db, Default).
+
+schema_write(#db{ref = {{M1,Db1},{M2,Db2}}}, Cat, K, V) ->
+    ok = M1:schema_write(Db1, Cat, K, V),
+    ok = M2:schema_write(Db2, Cat, K, V).
+
+schema_read(#db{ref = {{M1,Db1},_}}, Cat, K) ->
+    M1:schema_read(Db1, Cat, K).
+
+schema_delete(#db{ref = {{M1,Db1},{M2,Db2}}}, Cat, K) ->
+    ok = M1:schema_delete(Db1, Cat, K),
+    ok = M2:schema_delete(Db2, Cat, K).
+
+schema_fold(#db{ref = {{M1,Db1},_}}, F, A) ->
+    M1:schema_fold(Db1, F, A).
 
 dump_tables(#db{ref = {{M,Db},_}}) ->
     M:dump_tables(Db).
@@ -119,31 +137,56 @@ take(K, Options) ->
 	    {[], Options}
     end.
 
-load(#db{ref = {{M1,Db1}, {M2, Db2}}}) ->
+load(#db{ref = {{M1,Db1}, {M2, Db2}}} = Db) ->
     Tabs = M2:list_tables(Db2),
     lists:foreach(
       fun(T) ->
-	      M1:delete_table(Db1, T),
-	      TabR = M2:info(Db2, {T, tabrec}),
-	      M1:add_table(Db1, T, TabR),
-	      case TabR#table.type of
-		  set ->
-		      chunk_load(M2:prefix_match(Db2, T, <<>>, 1000),
-				 M1, Db1, T);
-		  Type when Type==fifo; Type==lifo;
-			    Type=={keyed,fifo}; Type=={keyed,lifo} ->
-		      Filter = fun(St, QKey, Obj) ->
-				       {keep, {QKey, St, Obj}}
-			       end,
-		      all_queues(
-			fun(Q) ->
-				load_queue(
-				  M2:list_queue(Db2, T, Q,
-						Filter, false, 100),
-				 M1, Db1, T)
-			end, M2, Db2, T)
+	      case M2:schema_read(Db2, property, {T,autoload}) of
+		  false ->
+		      M1:schema_write(Db1, property, {T, ram}, false),
+		      ok;
+		  _ ->
+		      M1:schema_write(Db1, property, {T, ram}, true),
+		      M1:delete_table(Db1, T),
+		      TabR = M2:info(Db2, {T, tabrec}),
+		      M1:add_table(Db1, T, TabR),
+		      case has_disk(M2, Db2, T) of
+			  false ->
+			      io:fwrite("Table ~s defined as {disk, false}~n", [T]),
+			      ok;
+			  _ ->
+			      case TabR#table.type of
+				  set ->
+				      chunk_load(M2:prefix_match(Db2, T, <<>>, 1000),
+						 M1, Db1, T);
+				  Type when Type==fifo; Type==lifo;
+					    Type=={keyed,fifo}; Type=={keyed,lifo} ->
+				      Filter = fun(St, QKey, Obj) ->
+						       {keep, {QKey, St, Obj}}
+					       end,
+				      all_queues(
+					fun(Q) ->
+						load_queue(
+						  M2:list_queue(Db2, T, Q,
+								Filter, false, 100),
+						  M1, Db1, T)
+					end, M2, Db2, T)
+			      end
+		      end
 	      end
-      end, Tabs).
+      end, Tabs),
+    load_schema(Db).
+
+load_schema(#db{ref = {{M1,Db1}, {M2, Db2}}}) ->
+    M2:schema_fold(
+      Db2, fun(C, {K,V}, _) ->
+		   case M1:schema_read(Db1, C, K) of
+		       undefined ->
+			   M1:schema_write(Db1, C, K, V);
+		       _ ->
+			   ok
+		   end
+	   end, ok).
 
 all_queues(F, M, Db, T) ->
     all_queues(M:first_queue(Db, T), F, M, Db, T).
@@ -179,9 +222,9 @@ close(#db{ref = {{M1,Db1},{M2,Db2}}}) ->
 add_table(#db{ref = {{M1,Db1},{M2,Db2}}}, Table, Opts) when is_list(Opts) ->
     case M1:info(Db1, {Table, type}) of
 	undefined ->
-	    TabR = kvdb_lib:make_tabrec(Table, check_encoding(Opts, Db1)),
-	    M2:add_table(Db2, Table, TabR),
-	    M1:add_table(Db1, Table, TabR);
+	    _TabR = kvdb_lib:make_tabrec(Table, check_encoding(Opts, Db1)),
+	    M2:add_table(Db2, Table, Opts),
+	    M1:add_table(Db1, Table, Opts);
 	_ -> ok
     end;
 add_table(#db{ref = {{M1,Db1},{M2,Db2}}}, Table, #table{} = TabR) ->
@@ -205,23 +248,35 @@ delete_table(#db{ref = {{M1,Db1},{M2,Db2}}}, Table) ->
     end.
 
 put(#db{ref = {{M1,Db1},{M2,Db2}}}, Table, Obj) ->
-    case M2:put(Db2, Table, Obj) of
-	ok ->
-	    M1:put(Db1, Table, Obj);
-	Other ->
-	    Other
+    case has_disk(M1, Db1, Table) of
+	true ->
+	    case M2:put(Db2, Table, Obj) of
+		ok ->
+		    M1:put(Db1, Table, Obj);
+		Other ->
+		    Other
+	    end;
+	false ->
+	    M1:put(Db1, Table, Obj)
     end.
 
 update_counter(#db{ref = {{M1,Db1},{M2,Db2}}}, Table, Key, Incr) ->
     NewValue = M1:update_counter(Db1, Table, Key, Incr),
     {ok, Obj} = M1:get(Db1, Table, Key),
-    M2:put(Db2, Table, Obj),
+    case has_disk(M2, Db2, Table) of
+	true -> M2:put(Db2, Table, Obj);
+	false -> ok
+    end,
     NewValue.
     %% M2:update_counter(Db2, Table, Key, Incr),
     %% M1:update_counter(Db1, Table, Key, Incr).
 
 push(#db{ref = {{M1,Db1},{M2,Db2}}}, Table, Q, Obj) ->
-    M2:push(Db2, Table, Q, Obj),
+    case has_disk(M1, Db1, Table) of
+	false -> ok;
+	_ ->
+	    M2:push(Db2, Table, Q, Obj)
+    end,
     M1:push(Db1, Table, Q, Obj).
 
 get(#db{ref = {{M,Db},_}}, Tab, K) ->
@@ -249,7 +304,10 @@ extract(#db{ref = {{M1,Db1},{M2,Db2}}}, T, K) ->
     M1:extract(Db1, T, K).
 
 delete(#db{ref = {{M1,Db1},{M2,Db2}}}, T, K) ->
-    M2:delete(Db2, T, K),
+    case has_disk(M1, Db1, T) of
+	true  -> M2:delete(Db2, T, K);
+	false -> ok
+    end,
     M1:delete(Db1, T, K).
 
 list_queue(#db{ref = {{M,Db},_}}, T, Q) ->
@@ -265,26 +323,41 @@ queue_read(#db{ref = {{M,Db},_}}, T, K) ->
     M:queue_read(Db, T, K).
 
 queue_insert(#db{ref = {{M1,Db1},{M2,Db2}}}, T, K, St, Obj) ->
-    M2:queue_insert(Db2, T, K, St, Obj),
+    case has_disk(M1, Db1, T) of
+	true  -> M2:queue_insert(Db2, T, K, St, Obj);
+	false -> ok
+    end,
     M1:queue_insert(Db1, T, K, St, Obj).
 
 queue_delete(#db{ref = {{M1,Db1},{M2,Db2}}}, T, K) ->
-    M2:queue_delete(Db2, T, K),
+    case has_disk(M1, Db1, T) of
+	true -> M2:queue_delete(Db2, T, K);
+	false -> ok
+    end,
     M1:queue_delete(Db1, T, K).
 
 mark_queue_object(#db{ref = {{M1,Db1},{M2,Db2}}}, Tab, K, St) ->
-    M2:mark_queue_object(Db2, Tab, K, St),
+    case has_disk(M1, Db1, Tab) of
+	true -> M2:mark_queue_object(Db2, Tab, K, St);
+	false -> ok
+    end,
     M1:mark_queue_object(Db1, Tab, K, St).
 
 queue_head_write(#db{ref = {{M1,Db1},{M2,Db2}}}, Tab, Q, Obj) ->
-    M2:queue_head_write(Db2, Tab, Q, Obj),
+    case has_disk(M1, Db1, Tab) of
+	true -> M2:queue_head_write(Db2, Tab, Q, Obj);
+	false -> ok
+    end,
     M1:queue_head_write(Db1, Tab, Q, Obj).
 
 queue_head_read(#db{ref = {{M1,Db1},_}}, Tab, Q) ->
     M1:queue_head_read(Db1, Tab, Q).
 
 queue_head_delete(#db{ref = {{M1,Db1},{M2,Db2}}}, Tab, Q) ->
-    M2:queue_head_delete(Db2, Tab, Q),
+    case has_disk(M1, Db1, Tab) of
+	true -> M2:queue_head_delete(Db2, Tab, Q);
+	false -> ok
+    end,
     M1:queue_head_delete(Db1, Tab, Q).
 
 first_queue(#db{ref = {{M,Db},_}}, Tab) ->
@@ -322,3 +395,10 @@ check_encoding(Opts, #db{encoding = Enc0}) ->
 	false ->
 	    [{encoding, Enc0}|Opts]
     end.
+
+has_disk(M1, Db1, T) ->
+    case M1:schema_read(Db1, property, {T, disk}) of
+	false -> false;
+	_  -> true
+    end.
+

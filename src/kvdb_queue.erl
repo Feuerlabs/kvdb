@@ -23,7 +23,8 @@
 	 list/3, list/6, list_full/3,
 	 first/2,
 	 next/3,
-	 clear_queue/3]).
+	 clear_queue/3,
+	 clear_queues/2]).
 
 push(Db, Table, Obj)    -> push(Db, Table, Obj).
 push(Db, Table, Q, Obj) -> kvdb:push(Db, Table, Q, Obj).
@@ -53,6 +54,16 @@ clear_queue(Db, Table, Q) ->
     clear_queue_(kvdb:list_queue(Db, Table, Q,
 				 fun(_,K,_) -> {keep,K} end,
 				 false, infinity), Db, Table, Q).
+
+clear_queues(Db, Table) ->
+    clear_queues_(first(Db, Table), Db, Table).
+
+clear_queues_({ok, Q}, Db, Table) ->
+    clear_queue(Db, Table, Q),
+    clear_queues_(next(Db, Table, Q), Db, Table);
+clear_queues_(done, _, _) ->
+    done.
+
 
 clear_queue_(done, _, _, _) ->
     done;

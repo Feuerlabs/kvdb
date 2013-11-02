@@ -60,7 +60,12 @@
 	 prefix_match_rel/5,
 	 select/4,
 	 info/2,
-	 dump_tables/1]).
+	 dump_tables/1,
+	 schema_write/4,
+	 schema_read/3,
+	 schema_delete/3,
+	 schema_fold/3,
+	 call/2]).
 
 -import(kvdb_lib, [table_name/1, on_update/4]).
 
@@ -132,7 +137,7 @@ put(#kvdb_ref{mod = DbMod} = DbRef, Table0, {K,As,V} = _O) when is_list(As) ->
     Table = table_name(Table0),
     put_(DbRef, Table, {K, fix_attrs(As), V}).
 
-put_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Obj) ->
+put_(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Obj) ->
     if_table(DbMod, Db, Table,
 	     fun() ->
 		     case DbMod:put(Db, Table,
@@ -232,7 +237,7 @@ push(#kvdb_ref{mod = DbMod} = DbRef, Table0, Q, {K,As,V} = _O)
     Table = table_name(Table0),
     push_(DbRef, Table, Q, {K, fix_attrs(As), V}).
 
-push_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
+push_(#kvdb_ref{mod = DbMod, db = Db} = DbRef,
 	 Table, Q, Obj) ->
     if_table(
       DbMod, Db, Table,
@@ -498,6 +503,47 @@ select(#kvdb_ref{mod = DbMod, db = Db}, Table0, MatchSpec, Limit) ->
     {Prefix, Conv} = ms2pfx(MatchSpec, Encoding),
     select_(DbMod:prefix_match(Db,Table,Prefix,Limit),
 	       Conv, MSC, [], Limit, Limit).
+
+-spec schema_write(Db::db_ref(), schema_category(), any(), any()) -> ok.
+schema_write(#kvdb_ref{mod = DbMod, db = Db}, property, {Table0, Prop}, Value) ->
+    Table = table_name(Table0),
+    DbMod:schema_write(Db, property, {Table, Prop}, Value);
+schema_write(#kvdb_ref{mod = DbMod, db = Db}, tabrec, Table0, #table{} = TR) ->
+    Table = table_name(Table0),
+    DbMod:schema_write(Db, tabrec, Table, TR);
+schema_write(#kvdb_ref{mod = DbMod, db = Db}, global, Key, Value) ->
+    DbMod:schema_write(Db, global, Key, Value).
+
+-spec schema_read(Db::db_ref(), schema_category(), any()) -> undefined | any().
+schema_read(#kvdb_ref{mod = DbMod, db = Db}, property, {Table0, Prop}) ->
+    Table = table_name(Table0),
+    DbMod:schema_read(Db, property, {Table, Prop});
+schema_read(#kvdb_ref{mod = DbMod, db = Db}, tabrec, Table0) ->
+    Table = table_name(Table0),
+    DbMod:schema_read(Db, tabrec, Table);
+schema_read(#kvdb_ref{mod = DbMod, db = Db}, global, Key) ->
+    DbMod:schema_read(Db, global, Key).
+
+-spec schema_delete(Db::db_ref(), schema_category(), any()) -> ok.
+schema_delete(#kvdb_ref{mod = DbMod, db = Db}, property, {Table0, Prop}) ->
+    Table = table_name(Table0),
+    DbMod:schema_delete(Db, property, {Table, Prop});
+schema_delete(#kvdb_ref{mod = DbMod, db = Db}, tabrec, Table0) ->
+    Table = table_name(Table0),
+    DbMod:schema_delete(Db, tabrec, Table);
+schema_delete(#kvdb_ref{mod = DbMod, db = Db}, global, Key) ->
+    DbMod:schema_delete(Db, global, Key).
+
+-type fold_acc() :: any().
+-spec schema_fold(Db::db_ref(),
+		  fun ( (schema_category(), any(), fold_acc()) -> fold_acc()),
+		  fold_acc()) -> fold_acc().
+schema_fold(#kvdb_ref{mod = DbMod, db = Db}, Fun, InitAcc) ->
+    DbMod:schema_fold(Db, Fun, InitAcc).
+
+
+call(#kvdb_ref{mod = DbMod, db = Db}, F) ->
+    F(DbMod, Db).
 
 %% queue_delete_event(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Key) ->
 %%     queue_delete_event(DbRef, Table, DbMod:info(Db, {Table, type}), Key).

@@ -93,8 +93,13 @@
 	 queue_head_write/4,
 	 queue_head_read/3,
 	 queue_head_delete/3]).
+-export([direct/2]).
 %% debugging
--export([dump_tables/1]).
+-export([dump_tables/1,
+	 schema_write/4,
+	 schema_read/3,
+	 schema_delete/3,
+	 schema_fold/3]).
 
 -export([behaviour_info/1]).
 -export([start_link/2]).
@@ -129,6 +134,10 @@ behaviour_info(callbacks) ->
      {info, 2},
      {dump_tables,1},
      {get_schema_mod,2},
+     {schema_write, 4},
+     {schema_read, 3},
+     {schema_delete, 3},
+     {schema_fold, 3},
      {open,2},
      {close,1},
      {add_table,3},
@@ -764,6 +773,41 @@ select(Name, Table, MatchSpec, Limit) ->
        kvdb_direct:select(Ref, Table, MatchSpec, Limit),
        kvdb_direct:select(db(Name), Table, MatchSpec, Limit),
        [Name, Table, MatchSpec, Limit]).
+
+schema_write(Name, Category, Key, Value) ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:schema_write(Ref, Category, Key, Value),
+       kvdb_direct:schema_write(db(Name), Category, Key, Value),
+       [Name, Category, Key, Value]).
+
+schema_read(Name, Category, Key) ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:schema_read(Ref, Category, Key),
+       kvdb_direct:schema_read(db(Name), Category, Key),
+       [Name, Category, Key]).
+
+schema_delete(Name, Category, Key) ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:schema_delete(Ref, Category, Key),
+       kvdb_direct:schema_delete(db(Name), Category, Key),
+       [Name, Category, Key]).
+
+schema_fold(Name, F, Acc) ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:schema_fold(Ref, F, Acc),
+       kvdb_direct:schema_fold(db(Name), F, Acc),
+       [Name, F, Acc]).
+
+direct(Name, F) when is_function(F, 2) ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:call(Ref, F),
+       kvdb_direct:call(db(Name), F),
+       [Name, F]).
 
 %% server-related code
 

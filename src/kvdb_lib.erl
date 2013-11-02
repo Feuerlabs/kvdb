@@ -788,7 +788,7 @@ check_options([{index, Ix}|Tl], Flds, Rec) ->
     end;
 check_options([{K,V}|T], Flds, Rec) ->
     case key_pos(K, Flds) of
-	0 -> error({invalid_option, K});
+	0 -> check_options(T, Flds, Rec);
 	P -> check_options(T, Flds, setelement(P, Rec, V))
     end;
 check_options([], _, Rec) ->

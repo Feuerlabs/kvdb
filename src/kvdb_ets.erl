@@ -29,7 +29,11 @@
 -export([mark_queue_object/4]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4, prefix_match_rel/5]).
--export([get_schema_mod/2]).
+-export([get_schema_mod/2,
+	 schema_write/4,
+	 schema_read/3,
+	 schema_delete/3,
+	 schema_fold/3]).
 -export([info/2,
 	 is_table/2,
 	 dump_tables/1,
@@ -211,13 +215,17 @@ add_table(#db{encoding = Enc0} = Db, Table, Opts) when is_list(Opts) ->
     TabR0 = check_options(Opts, Db, #table{name = Table}),
     Enc = proplists:get_value(encoding, Opts, Enc0),
     TabR = TabR0#table{encoding = Enc},
-    add_table(Db, Table, TabR);
+    add_table(Db, Table, TabR, Opts);
 add_table(Db, Table, #table{} = TabR) ->
+    add_table(Db, Table, TabR, []).
+
+add_table(Db, Table, #table{} = TabR, Opts) when is_list(Opts) ->
     case schema_lookup(Db, {table, Table}, undefined) of
 	Tr when Tr =/= undefined ->
 	    ok;
 	undefined ->
 	    kvdb_lib:log(Db, ?KVDB_LOG_ADD_TABLE(Table, TabR)),
+	    [schema_write(Db, property, {Table, K}, V) || {K,V} <- Opts],
 	    store_tabrec(Db, Table, TabR)
     end.
 
@@ -228,6 +236,45 @@ store_tabrec(Db, Table, TabR) ->
 		  {{a,Table,index}, TabR#table.index},
 		  {{a,Table,encoding}, TabR#table.encoding}]],
     ok.
+
+schema_write(Db, tabrec, Table, #table{name = Table} = TR) ->
+    store_tabrec(Db, Table, TR);
+schema_write(Db, property, {Table,P}, Value) ->
+    schema_write(Db, {{a, Table, P}, Value});
+schema_write(Db, global, Key, Value) ->
+    schema_write(Db, {{g, Key}, Value}).
+
+schema_read(Db, tabrec, Table) ->
+    schema_lookup(Db, {table, Table}, undefined);
+schema_read(Db, property, {Table, P}) ->
+    schema_lookup(Db, {a, Table, P}, undefined);
+schema_read(Db, global, Key) ->
+    schema_lookup(Db, {g, Key}, undefined).
+
+schema_delete(#db{ref = Ets}, tabrec, Table) ->
+    ets:delete(Ets, schema_key({table, Table}));
+schema_delete(#db{ref = Ets}, property, {Table, P}) ->
+    ets:delete(Ets, schema_key({a, Table, P}));
+schema_delete(#db{ref = Ets}, global, Key) ->
+    ets:delete(Ets, schema_key({g, Key})).
+
+schema_fold(#db{ref = Ets}, F, A) ->
+    Pat = [{ {schema_key({'$1','$2'}), '$3'}, [], [{{ {{'$1','$2'}}, '$3' }}] },
+	   { {schema_key({'$1','$2','$3'}),'$4'}, [], [{{ {{'$1','$2','$3'}}, '$4' }}] }],
+    select_fold(ets:select(Ets, Pat, 100), F, A).
+
+select_fold({Objs, Cont}, F, A) ->
+    A1 = lists:foldl(
+	   fun({{table,T},V}, Acc) ->
+		   F(tabrec, {T, V}, Acc);
+	      ({{a, T, P}, V}, Acc) ->
+		   F(property, {{T,P}, V}, Acc);
+	      ({{g, K}, V}, Acc) ->
+		   F(global, {K, V}, Acc)
+	   end, A, Objs),
+    select_fold(ets:select(Cont), F, A1);
+select_fold('$end_of_table', _, A) ->
+    A.
 
 schema_lookup(#db{ref = Ets}, Key, Default) ->
     case ets:lookup(Ets, schema_key(Key)) of
@@ -240,7 +287,7 @@ schema_lookup(#db{ref = Ets}, Key, Default) ->
 schema_write(#db{ref = Ets}, {Key, Value}) ->
     ets:insert(Ets, {schema_key(Key), Value}).
 
-schema_key(K) when is_atom(K) -> K;
+%% schema_key(K) when is_atom(K) -> K;
 schema_key({K1, K2}    ) -> {'-schema', K1, K2};
 schema_key({K1, K2, K3}) -> {'-schema', K1, K2, K3}.
 
@@ -1119,6 +1166,8 @@ check_options([{index, Ix}|Tl], Db, Rec) ->
 	{error, Bad} ->
 	    erlang:error({invalid_index, Bad})
     end;
+check_options([_|Tl], Db, Rec) ->
+    check_options(Tl, Db, Rec);
 check_options([], _, Rec) ->
     Rec.
 
