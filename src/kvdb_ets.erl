@@ -285,7 +285,8 @@ schema_lookup(#db{ref = Ets}, Key, Default) ->
     end.
 
 schema_write(#db{ref = Ets}, {Key, Value}) ->
-    ets:insert(Ets, {schema_key(Key), Value}).
+    ets:insert(Ets, {schema_key(Key), Value}),
+    ok.
 
 %% schema_key(K) when is_atom(K) -> K;
 schema_key({K1, K2}    ) -> {'-schema', K1, K2};
