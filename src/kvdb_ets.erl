@@ -252,11 +252,14 @@ schema_read(Db, global, Key) ->
     schema_lookup(Db, {g, Key}, undefined).
 
 schema_delete(#db{ref = Ets}, tabrec, Table) ->
-    ets:delete(Ets, schema_key({table, Table}));
+    ets:delete(Ets, schema_key({table, Table})),
+    ok;
 schema_delete(#db{ref = Ets}, property, {Table, P}) ->
-    ets:delete(Ets, schema_key({a, Table, P}));
+    ets:delete(Ets, schema_key({a, Table, P})),
+    ok;
 schema_delete(#db{ref = Ets}, global, Key) ->
-    ets:delete(Ets, schema_key({g, Key})).
+    ets:delete(Ets, schema_key({g, Key})),
+    ok.
 
 schema_fold(#db{ref = Ets}, F, A) ->
     Pat = [{ {schema_key({'$1','$2'}), '$3'}, [], [{{ {{'$1','$2'}}, '$3' }}] },
