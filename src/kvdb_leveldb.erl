@@ -279,7 +279,8 @@ delete_table_({ok, K, _V}, I, Kt,Ka,Ki, Sz, Ref) ->
 delete_table_({error,invalid_iterator}, _, _, _, _, _, _) ->
     ok.
 
-put(Db, Table,Obj) ->
+put(Db, Table, Obj) ->
+    lager:debug("put: Db = ~p, Table = ~p, Obj = ~p ~n",  [Db, Table, Obj]),
     case type(Db, Table) of
 	set ->
 	    put_(Db, Table, Obj, put);
