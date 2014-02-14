@@ -22,13 +22,16 @@
 	 is_prefix/3,
 	 binary_match/2,
 	 check_valid_encoding/1,
+         matches_encoding/2,
 	 actual_key/3,
 	 actual_key/4,
 	 actual_key/5,
 	 split_queue_key/2, split_queue_key/3,
 	 q_key_to_actual/3,
+         q_head_key/2,
 	 queue_prefix/2,
 	 queue_prefix/3,
+         queue_list_direction/2,
 	 raw_queue_prefix/2,
 	 timestamp/0, timestamp/1,
 	 timestamp_to_datetime/1,
@@ -54,9 +57,15 @@
 -include("kvdb.hrl").
 -include("log.hrl").
 
+-define(Q_SEP_FLOOR, "$").
+-define(Q_SEP, "%").
+-define(Q_SEP_CEIL, "&").
+
+
+
 valid_table_name(Table0) ->
     Table = table_name(Table0),
-    case [C || <<C:8>> <= Table, lists:member(C, "-=?+.,:;^*/")] of
+    case [C || <<C:8>> <= Table, lists:member(C, "-=?+.,:;$%&^*/")] of
 	[_|_] ->
 	    erlang:error({illegal_table_name, Table0});
 	[] ->
@@ -192,6 +201,7 @@ if_valid_ix_ref(_, X, Acc) -> [X|Acc].
 
 enc(_, X, raw ) when is_binary(X) -> X;
 enc(_, X, term) -> term_to_binary(X);
+enc(_, X, {term,Opts}) -> term_to_binary(X, Opts);
 enc(_, X, sext) -> sext:encode(X);
 enc(key  , X, {Enc,_}  ) -> enc(key, X, Enc);
 enc(key  , X, {Enc,_,_}) -> enc(key, X, Enc);
@@ -203,6 +213,7 @@ enc(W, X, E) ->
 
 dec(_, X, raw ) when is_binary(X) -> X;
 dec(_, X, term) -> binary_to_term(X);
+dec(_, X, {term,_}) -> binary_to_term(X);
 dec(_, X, sext) -> sext:decode(X);
 dec(key  , X, {Enc,_}  ) -> dec(key, X, Enc);
 dec(key  , X, {Enc,_,_}) -> dec(key, X, Enc);
@@ -216,12 +227,22 @@ try_decode(V) ->
     try binary_to_term(V)
     catch
 	error:_ ->
-	    try sext:decode(V)
-	    catch
-		error:_ ->
-		    V
-	    end
+            try_sext_decode(V)
     end.
+
+try_sext_decode(V) ->
+    try sext:partial_decode(V) of
+        {full,Res,_} ->
+            Res;
+        {partial,{Q,'_','_'},<<0>>} ->
+            #q_key{queue = Q, ts = ?Q_HEAD_FLOOR, key = ?Q_HEAD_KEY};
+        {partial,{Q,'_','_'},<<127>>} ->
+            #q_key{queue = Q, ts = ?Q_HEAD_CEIL, key = ?Q_HEAD_KEY}
+    catch
+        error:_ ->
+            V
+    end.
+
 
 enc_prefix(_, X, raw ) -> X;
 enc_prefix(_, X, sext) ->
@@ -244,14 +265,35 @@ enc_prefix(value, X, {_,Enc}  ) -> enc_prefix(value, X, Enc);
 enc_prefix(value, X, {_,_,Enc}) -> enc_prefix(value, X, Enc);
 enc_prefix(attrs, X, {_,Enc,_}) -> enc_prefix(attrs, X, Enc).
 
--define(VALID_ENC(E), (E==sext orelse E==raw orelse E==term)).
-check_valid_encoding({E1,E2}) when ?VALID_ENC(E1) andalso ?VALID_ENC(E2) -> true;
-check_valid_encoding({E1,E2,E3}) when ?VALID_ENC(E1)
+%% The key encoding must be sortable (i.e. sext or raw)
+-define(VALID_KEY_ENC(E), (E==sext orelse E==raw)).
+%% Other elements can use any supported encoding
+-define(VALID_ENC(E), (E==sext orelse
+                       E==raw orelse
+                       E==term orelse
+                       (tuple_size(E) == 2
+                        andalso element(1,E)==term
+                        andalso is_list(element(2,E))))).
+check_valid_encoding({E1,E2})
+  when ?VALID_KEY_ENC(E1) andalso ?VALID_ENC(E2) -> true;
+check_valid_encoding({E1,E2,E3}) when ?VALID_KEY_ENC(E1)
 				      andalso ?VALID_ENC(E2)
 				      andalso ?VALID_ENC(E3) -> true;
-check_valid_encoding(E) when ?VALID_ENC(E) -> true;
+check_valid_encoding(E) when ?VALID_KEY_ENC(E) -> true;
 check_valid_encoding(E) -> erlang:error({illegal_encoding, E}).
 
+
+%% FIXME! This function should also check that we are type-compatible with
+%% the requested encoding, even if we don't actually encode.
+matches_encoding(Enc, Obj) ->
+    case {Enc, Obj} of
+	{{_,_,_}, {_,_,_}} ->
+	    true;
+	{_, {_,_}} ->
+	    true;
+	_ ->
+	    false
+    end.
 
 queue_prefix(Enc, Q) when Enc == raw; element(1, Enc) == raw ->
     raw_queue_prefix(Q);
@@ -267,6 +309,17 @@ queue_prefix(Enc, Q, End) when Enc == sext; element(1, Enc) == sext ->
 	    {Q, -1, '_'};
 	last ->
 	    {Q, a, '_'}
+    end.
+
+queue_list_direction(Type, Reverse) ->
+    if Type == lifo; element(2, Type) == lifo ->
+            if Reverse -> fifo;
+               true -> lifo
+            end;
+       true ->
+            if Reverse -> lifo;
+               true -> fifo
+            end
     end.
 
 actual_key(Enc, Q, Key) ->
@@ -303,6 +356,12 @@ split_queue_key(Enc, T, Key) when Enc == sext; element(1, Enc) == sext ->
 	    #q_key{queue = Q, ts = TS, key = K}
     end.
 
+q_key_to_actual(#q_key{queue = Q, key = ?Q_HEAD_KEY}, Enc, Type) ->
+    if Enc == raw; element(1, Enc) == raw ->
+            raw_queue_head_key(Q, Type);
+       Enc == sext; element(1, Enc) == sext ->
+            sext_queue_head_key(Q, Type)
+    end;
 q_key_to_actual(#q_key{queue = Q, ts = TS, key = K}, Enc, Type) when
       Enc==raw; element(1,Enc) == raw ->
     raw_queue_key(Q, Type, TS, K);
@@ -310,10 +369,11 @@ q_key_to_actual(#q_key{queue = Q, ts = TS, key = K}, Enc, Type) when
       Enc==sext; element(1,Enc) == sext ->
     case Type of
 	{keyed,_} ->
-	    {Q, K, TS};
+	    sext:encode({Q, K, TS});
 	_ ->
-	    {Q, TS, K}
+	    sext:encode({Q, TS, K})
     end.
+
 
 timestamp() ->
     timestamp(erlang:now()).
@@ -342,17 +402,22 @@ datetime_to_timestamp({{{_Y,_Mo,_D},{_H,_Mi,_S}} = DT, US}) ->
 %% Encode a 56-bit prefix using our special-epoch timestamp.
 %% It will not overflow until year 4293 - hopefully that will be sufficient.
 
-%% raw_queue_key(Q, {keyed,_}, K) when is_binary(Q), is_binary(K) ->
-%%     raw_keyed_queue_key(Q, timestamp(), K);
-%% raw_queue_key(Q, _, K) when is_binary(Q), is_binary(K) ->
-%%     raw_queue_key_(Q, timestamp(), K).
-
+%% The queue head must be either before or after all possible queue entries.
+%% Queue entries are either (<Q> "-" <TS> <Key>) or (<Q> "-" <Key> <TS>),
+%% so for the head we use (<Q> <Marker>) where Marker is less than (",")
+%% or greater than (".") "-".
+%% CORRECTION: Since '.' and '-' are not escapable, we can't use them.
+%% Use instead '$', '%', and '&' as separators.
 raw_queue_head_key(Q, Type) when Type == fifo; element(2,Type) == fifo ->
-    <<Q/binary, ",">>;
+    <<Q/binary, ?Q_SEP_FLOOR>>;
 raw_queue_head_key(Q, Type) when Type == lifo; element(2,Type) == lifo ->
-    <<Q/binary, ".">>.
+    <<Q/binary, ?Q_SEP_CEIL>>.
 
-sext_queue_head_key(Q, Type) when Type == fifo; element(2,Type) == fifo ->
+%% For the sext-encoded queue head, we make use of the fact that we can decode
+%% a sext-encoded term followed by a non-sext sequence. Thus, we prefix-encode
+%% {Q,'_','_'} and append a value that's either lower than (0) or greater than
+%% (127) any sext type tag.
+sext_queue_head_key(Q, Type) ->
     Pfx = sext:prefix({Q,'_','_'}),
     if Type == fifo; element(2, Type) == fifo ->
 	    <<Pfx/binary, 0>>;
@@ -360,37 +425,58 @@ sext_queue_head_key(Q, Type) when Type == fifo; element(2,Type) == fifo ->
 	    <<Pfx/binary, 127>>
     end.
 
-raw_queue_key(Q, {keyed,_}, TS, K) when is_binary(Q), is_binary(K) ->
-    raw_keyed_queue_key(Q, TS, K);
+q_head_key(Q, Type) when Type == fifo; Type == {keyed, fifo} ->
+    #q_key{queue = Q, ts = ?Q_HEAD_FLOOR, key = ?Q_HEAD_KEY};
+q_head_key(Q, Type) when Type == lifo; Type == {keyed, lifo} ->
+    #q_key{queue = Q, ts = ?Q_HEAD_CEIL,  key = ?Q_HEAD_KEY}.
+
+raw_queue_key(Q, fifo, ?Q_HEAD_FLOOR, ?Q_HEAD_KEY) ->
+    raw_queue_head_key(Q, fifo);
+raw_queue_key(Q, lifo, ?Q_HEAD_CEIL, ?Q_HEAD_KEY) ->
+    raw_queue_head_key(Q, lifo);
 raw_queue_key(Q, _, TS, K) ->
     raw_queue_key_(Q, TS, K).
 
 raw_queue_key_(Q, TS, K) ->
-    <<Q/binary, "-", TS:56/integer, K/binary>>.
-
-raw_keyed_queue_key(Q, TS, K) ->
-    <<Q/binary, "-", K/binary, TS:56/integer>>.
+    <<(escape(Q))/binary, ?Q_SEP, TS:56/integer, K/binary>>.
 
 raw_queue_prefix(Q, first) ->
-    <<Q/binary, ",">>;
+    <<(escape(Q))/binary, ?Q_SEP_FLOOR>>;
 raw_queue_prefix(Q, last) ->
-    <<Q/binary, ".">>.
+    <<(escape(Q))/binary, ?Q_SEP_CEIL>>.
 
 raw_queue_prefix(Q) ->
-    <<Q/binary, "-">>.
+    <<(escape(Q))/binary, ?Q_SEP>>.
 
 split_raw_queue_key({keyed,_}, K) ->
     Sz = byte_size(K),
-    {P,_} = binary:match(K, <<"-">>),
-    KSz = Sz - P - 7 - 1,
-    <<Q:P/binary, "-", Key:KSz/binary, TS:56/integer>> = K,
-    #q_key{queue = Q, ts = TS, key = Key};
+    case binary:match(K, <<?Q_SEP>>) of
+        {P,_} ->
+            KSz = Sz - P - 7 - 1,
+            <<Q:P/binary, ?Q_SEP, Key:KSz/binary, TS:56/integer>> = K,
+            #q_key{queue = unescape(Q), ts = TS, key = Key};
+        nomatch ->
+            split_raw_queue_head_key(K, Sz)
+    end;
 split_raw_queue_key(_, K) ->
-    {P,_} = binary:match(K, <<"-">>),
-    <<Q:P/binary, "-", TS:56/integer, Key/binary>> = K,
-    #q_key{queue = Q, ts = TS, key = Key}.
-%% split_raw_queue_key(<<_:56/integer, K/binary>>) ->
-%%     K.
+    case binary:match(K, <<?Q_SEP>>) of
+        {P, _} ->
+            <<Q:P/binary, ?Q_SEP, TS:56/integer, Key/binary>> = K,
+            #q_key{queue = unescape(Q), ts = TS, key = Key};
+        nomatch ->
+            split_raw_queue_head_key(K, byte_size(K))
+    end.
+
+split_raw_queue_head_key(K, Sz) ->
+    Sz1 = Sz-1,
+    case K of
+        <<Q:Sz1/binary, ?Q_SEP_FLOOR>> ->
+            #q_key{queue = unescape(Q), ts = ?Q_HEAD_FLOOR,
+                   key = ?Q_HEAD_KEY};
+        <<Q:Sz1/binary, ?Q_SEP_CEIL>> ->
+            #q_key{queue = unescape(Q), ts = ?Q_HEAD_CEIL,
+                   key = ?Q_HEAD_KEY}
+    end.
 
 is_prefix(Pfx, K, Enc) when is_binary(Pfx) ->
     case dec(key, K, Enc) of
@@ -801,3 +887,66 @@ key_pos(K, [K|_], P) -> P;
 key_pos(K, [_|T], P) -> key_pos(K, T, P+1);
 key_pos(_, [], _)    -> 0.
 
+%% Key escaping
+
+%% Macros for kvdb key escaping
+%%
+%% fixme: bitmap version is actually not that fast as I tought
+%% break even is plenty of tests.
+%%
+-define(bm(A,B), (((1 bsl (((B)-(A))+1))-1) bsl (A))).
+
+-define(bit(A),  (1 bsl (A))).
+
+-define(is_set(BM,A), ((((BM) bsr (A)) band 1) =:= 1)).
+
+-define(bm_lower,   ?bm($a,$z)).
+-define(bm_upper,   ?bm($A,$Z)).
+-define(bm_digit,   ?bm($0,$9)).
+-define(bm_xdigit,  (?bm($0,$9) bor ?bm($A,$F) bor ?bm($a,$f))).
+-define(bm_alpha,   (?bm($A,$Z) bor ?bm($a,$z))).
+-define(bm_alnum,   (?bm_alpha bor ?bm_digit)).
+-define(bm_wsp,     (?bit($\s) bor ?bit($\t))).
+-define(bm_space,   (?bm_wsp bor ?bit($\r) bor ?bit($\n))).
+
+-define(bm_id1, (?bm_alpha bor ?bit($_))).
+-define(bm_id2, (?bm_id1 bor ?bm_digit bor ?bit($.) bor ?bit($-))).
+-define(bm_id3, (?bm_id1 bor ?bm_digit bor ?bit($.) bor ?bit($-) bor ?bit($:))).
+
+-define(is_id1(X), ?is_set(?bm_id1,(X))).
+-define(is_id2(X), ?is_set(?bm_id2,(X))).
+-define(is_id3(X), ?is_set(?bm_id3,(X))).
+
+
+unescape(<<$=, Enc/binary>>) ->
+    unescape_(Enc);
+unescape(Bin) when is_binary(Bin) ->
+    Bin.
+
+unescape_(<<$@, A, B, Rest/binary>>) ->
+    <<(erlang:list_to_integer([A,B], 16)):8/integer,
+      (unescape_(Rest))/binary>>;
+unescape_(<<C, Rest/binary>>) ->
+    <<C, (unescape_(Rest))/binary>>;
+unescape_(<<>>) ->
+    <<>>.
+
+escape(<<$=, _/binary>> = Esc) ->
+    Esc;
+escape(Bin) when is_binary(Bin) ->
+    Enc = << <<(id_char(C,true))/binary>> || <<C>> <= Bin >>,
+    <<$=, Enc/binary>>.
+
+id_char($*, false) -> <<"*">>;
+id_char($[, false) -> <<"[">>;
+id_char($], false) -> <<"]">>;
+id_char(C, _) ->
+    case ?is_id2(C) of
+	true -> <<C>>;
+	false when C =< 255 ->
+	    <<$@, (to_hex(C bsr 4)):8/integer, (to_hex(C)):8/integer >>
+    end.
+
+to_hex(C) ->
+    element((C band 16#f)+1, {$0,$1,$2,$3,$4,$5,$6,$7,$8,$9,
+			      $A,$B,$C,$D,$E,$F}).

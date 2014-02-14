@@ -22,7 +22,7 @@
 -export([add_table/3, delete_table/2, list_tables/1]).
 -export([put/3, push/4, get/3, get_attrs/4, index_get/4, index_keys/4,
 	 update_counter/4, pop/3, prel_pop/3, extract/3, delete/3,
-	 list_queue/3, list_queue/6, is_queue_empty/3,
+	 list_queue/3, list_queue/6, list_queue/7, is_queue_empty/3,
 	 queue_read/3, queue_insert/5, queue_delete/3, mark_queue_object/4,
 	 queue_head_write/4, queue_head_read/3, queue_head_delete/3]).
 -export([first_queue/2, next_queue/3]).
@@ -409,11 +409,26 @@ queue_insert(#db{} = Db, Table, #q_key{} = QKey, St, Obj) when
     {EncKey, Attrs, Value} = encode_queue_obj(Enc, Obj1, St),
     put_(Db, Table, {EncKey, Attrs, Value}, push).
 
-queue_head_write(#db{} = _Db, _Table, _Queue, _Data) ->
-    exit(nyi).
+queue_head_write(#db{} = Db, Table, Queue, Obj) ->
+    Type = type(Db, Table),
+    HeadKey = kvdb_lib:q_head_key(Queue, Type),
+    queue_insert(Db, Table, HeadKey, active, Obj).
+    %% Key = enc(key, kvdb_lib:q_key_to_actual(HeadKey, Enc, Type), Enc),
+    %% Val = enc(value, Data, Enc),
+    %% eleveldb:put(Ref, make_table_key(Table, Key), Val, []).
 
-queue_head_read(#db{} = _Db, _Table, _Queue) ->
-    exit(nyi).
+queue_head_read(#db{ref = Ref} = Db, Table, Queue) ->
+    Type = type(Db, Table),
+    Enc = encoding(Db, Table),
+    HeadKey = kvdb_lib:q_head_key(Queue, Type),
+    Key = kvdb_lib:q_key_to_actual(HeadKey, Enc, Type),
+    case eleveldb:get(Ref, make_table_key(Table, Key), []) of
+        {ok, V} ->
+            {ok, decode_obj_v(Db, Enc, Table, Key, HeadKey#q_key.key, V)};
+            %% {ok, kvdb_lib:dec(value, V, Enc)};
+        not_found ->
+            {error, not_found}
+    end.
 
 queue_head_delete(#db{} = _Db, _Table, _Queue) ->
     exit(nyi).
@@ -690,33 +705,33 @@ q_last_move_(Res, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz, HeedBlock) ->
 list_queue(Db, Table, Q) ->
     list_queue(Db, Table, Q, fun(_,_,O) -> {keep,O} end, false, infinity).
 
-list_queue(#db{ref = Ref} = Db, Table, Q, Filter, HeedBlock, Limit)
-  when Limit > 0 ->  % includes 'infinity'
+list_queue(Db, Table, Q, Filter, HeedBlock, Limit) ->
+    list_queue(Db, Table, Q, Filter, HeedBlock, Limit, false).
+
+list_queue(#db{ref = Ref} = Db, Table, Q, Filter, HeedBlock, Limit, Reverse)
+  when Limit > 0, is_boolean(Reverse) ->  % includes 'infinity'
     Type = type(Db, Table),
     Enc = encoding(Db, Table),
     QPrefix = table_queue_prefix(Table, Q, Enc),
     TPrefix = make_table_key(Table),
+    Dir = kvdb_lib:queue_list_direction(Type, Reverse),
     with_iterator(
       Ref,
       fun(I) ->
 	      First =
-		  case Type of
+                  case Dir of
 		      fifo -> q_first_(I, Db, Table, Q, Enc, HeedBlock);
-		      lifo -> q_last_(I, Db, Table, Q, Enc, HeedBlock);
-		      {keyed,fifo} -> q_first_(I,Db,Table,Q,Enc, HeedBlock);
-		      {keyed,lifo} -> q_last_(I,Db,Table,Q,Enc, HeedBlock)
+		      lifo -> q_last_(I, Db, Table, Q, Enc, HeedBlock)
 		  end,
 	      q_all_(First, Limit, Limit, Filter, I, Db, Table,
-		     q_all_dir(Type), Enc, Type, QPrefix, TPrefix,
+		     q_all_dir(Dir), Enc, Type, QPrefix, TPrefix,
 		     HeedBlock, [])
       end);
-list_queue(_, _, _, _, _, 0) ->
+list_queue(_, _, _, _, _, 0, _) ->
     {[], fun() -> done end}.
 
 q_all_dir(fifo)     -> next;
-q_all_dir(lifo)     -> prev;
-q_all_dir({keyed,fifo}) -> next;
-q_all_dir({keyed,lifo}) -> prev.
+q_all_dir(lifo)     -> prev.
 
 q_all_({St, Obj}, Limit, Limit0, Filter, I, Db, Table, Dir, Enc,
        Type, QPrefix, TPrefix, HeedBlock, Acc)

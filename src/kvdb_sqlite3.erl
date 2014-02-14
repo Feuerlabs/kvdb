@@ -26,10 +26,11 @@
 	 %% put_attrs/4,
 	 get/3, index_get/4, index_keys/4,
 	 pop/3, prel_pop/3, extract/3,
-	 list_queue/3, list_queue/6, is_queue_empty/3,
+	 list_queue/3, list_queue/6, list_queue/7, is_queue_empty/3,
 	 first_queue/2, next_queue/3,
 	 mark_queue_object/4,
-	 queue_insert/5, queue_delete/3, queue_read/3]).
+	 queue_insert/5, queue_delete/3, queue_read/3,
+         queue_head_read/3, queue_head_write/4, queue_head_delete/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4, prefix_match_rel/5]).
 -export([info/2, get_schema_mod/2, dump_tables/1]).
@@ -460,7 +461,10 @@ get(Db, Table, Key) ->
 get_(#db{ref = Ref} = Db, Table, Key, IncludeActive) when
       is_boolean(IncludeActive) ->
     Enc = encoding(Db, Table),
-    case sqlite3:read(Ref, Table, {key, {blob, enc(key, Key, Enc)}}) of
+    get_(Db, Table, Key, enc(key, Key, Enc), Enc, IncludeActive).
+
+get_(#db{ref = Ref} = Db, Table, Key, EncKey, Enc, IncludeActive) ->
+    case sqlite3:read(Ref, Table, {key, {blob, EncKey}}) of
 	[{columns,["key","value","active"]},
 	 {rows,[{_,{blob,Value},_} = Data]}] ->
 	    if IncludeActive ->
@@ -567,12 +571,12 @@ queue_insert(#db{ref = Ref} = Db, Table, #q_key{} = QKey, St, Obj) when
 		   Ref, Table,
 		   case Obj of
 		       {_, Attrs, Value} ->
-			   [{key, {blob, enc(key, Key, Enc)}},
+			   [{key, {blob, Key}},
 			    {attrs, {blob, enc(attrs, Attrs, Enc)}},
 			    {value, {blob, enc(value, Value, Enc)}},
 			    ActiveCol];
 		       {_, Value} ->
-			   [{key, {blob, enc(key, Key, Enc)}},
+			   [{key, {blob, Key}},
 			    {value, {blob, enc(value, Value, Enc)}},
 			    ActiveCol]
 		   end) of
@@ -623,14 +627,14 @@ do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
 	    blocked
     end.
 
-extract(#db{} = Db, Table, #q_key{queue = Q} = QKey) ->
+extract(#db{ref = Ref} = Db, Table, #q_key{queue = Q} = QKey) ->
     Type = type(Db, Table),
     Enc = encoding(Db, Table),
     if Type == fifo; Type == lifo; element(1, Type) == keyed ->
 	    case queue_read(Db, Table, QKey) of
 		{ok, _, Obj} ->
 		    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
-		    delete(Db, Table, Key),
+                    sqlite3:delete(Ref, Table, {key,{blob, Key}}),
 		    IsEmpty = is_queue_empty(Db, Table, Q),
 		    {ok, Obj, Q, IsEmpty};
 		{error, _} = Error ->
@@ -641,11 +645,11 @@ extract(#db{} = Db, Table, #q_key{queue = Q} = QKey) ->
     end.
 
 queue_read(#db{} = Db, Table, #q_key{key = K} = QKey) ->
-        Type = type(Db, Table),
+    Type = type(Db, Table),
     Enc = encoding(Db, Table),
     if Type == fifo; Type == lifo; element(1, Type) == keyed ->
-	    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
-	    case get_(Db, Table, Key, _IncludeActive = true) of
+	    EncKey = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
+	    case get_(Db, Table, QKey, EncKey, Enc, _IncludeActive = true) of
 		{ok, {St, Obj}} ->
 		    {ok, St, setelement(1, Obj, K)};
 		{error, _} = Error ->
@@ -654,6 +658,33 @@ queue_read(#db{} = Db, Table, #q_key{key = K} = QKey) ->
        true ->
 	    erlang:error(illegal)
     end.
+
+queue_head_read(Db, Table, Queue) ->
+    Type = type(Db, Table),
+    HeadKey = kvdb_lib:q_head_key(Queue, Type),
+    case queue_read(Db, Table, HeadKey) of
+        {ok, _St, Obj} ->
+            {ok, Obj};
+        Other ->
+            Other
+    end.
+
+queue_head_write(Db, Table, Queue, Obj) ->
+    Type = type(Db, Table),
+    Enc = encoding(Db, Table),
+    case kvdb_lib:matches_encoding(Enc, Obj) of
+        true ->
+            queue_insert(
+              Db, Table, kvdb_lib:q_head_key(Queue, Type), active, Obj);
+        false ->
+            erlang:error({encoding_mismatch, [Enc, Obj]})
+    end.
+
+queue_head_delete(Db, Table, Queue) ->
+    Type = type(Db, Table),
+    HeadKey = kvdb_lib:q_head_key(Queue, Type),
+    queue_delete(Db, Table, HeadKey).
+    
 
 is_queue_empty(Db, Table, Q) ->
     case list_queue(Db, Table, Q, fun(inactive,_,_) -> skip;
@@ -675,11 +706,16 @@ list_queue(Db, Table, Q, Limit) ->
     %% status flag by default. Is this a useful combination?
     list_queue(Db, Table, Q, fun(_,_,O) -> {keep,O} end, false, Limit).
 
-list_queue(Db, Table, Q, Fltr, HeedBlock, Limit) when Limit > 0 ->
-    Type = type(Db, Table),
-    list_queue(Db, Table, Q, Fltr, HeedBlock, order(Type), Limit).
+list_queue(Db, Table, Q, Fltr, HeedBlock, Limit) ->
+    list_queue(Db, Table, Q, Fltr, HeedBlock, Limit, false).
 
-list_queue(Db, Table, Q, Fltr, HeedBlock, Order, Limit)
+list_queue(Db, Table, Q, Fltr, HeedBlock, Limit, Reverse)
+  when Limit > 0, is_boolean(Reverse) ->
+    Type = type(Db, Table),
+    Dir = kvdb_lib:queue_list_direction(Type, Reverse),
+    list_queue_(Db, Table, Q, Fltr, HeedBlock, order(Dir), Limit).
+
+list_queue_(Db, Table, Q, Fltr, HeedBlock, Order, Limit)
   when Order==asc; Order==desc ->
     Enc = encoding(Db, Table),
     QPfx = kvdb_lib:queue_prefix(Enc, Q),
@@ -687,7 +723,7 @@ list_queue(Db, Table, Q, Fltr, HeedBlock, Order, Limit)
     EncFirst = kvdb_lib:enc(key, queue_meta(Enc, Q, Order), Enc),
     prefix_match_(Db, Table, EncQPfx, {true, EncFirst}, QPfx, Enc, Fltr,
 		  HeedBlock, Limit, Order);
-list_queue(_, _, _, _, _, _, 0) ->
+list_queue_(_, _, _, _, _, _, 0) ->
     [].
 
 queue_meta(Enc, Q, asc ) -> kvdb_lib:queue_prefix(Enc, Q, first);

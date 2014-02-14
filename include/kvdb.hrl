@@ -67,6 +67,11 @@
 		ts,
 		key}).
 
+-define(Q_HEAD_FLOOR, -1).
+-define(Q_HEAD_CEIL, []).
+-define(Q_HEAD_KEY, <<"_KVDB_Q_HEAD_">>).
+-define(IS_Q_HEAD_TS(TS), TS==?Q_HEAD_FLOOR; TS==?Q_HEAD_CEIL).
+
 -define(KVDB_CATCH(Expr, Args),
 	try Expr
 	catch

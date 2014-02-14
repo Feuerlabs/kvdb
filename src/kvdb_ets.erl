@@ -24,9 +24,10 @@
 	index_get/4, index_keys/4]).
 -export([push/4, pop/3, prel_pop/3, extract/3,
 	 queue_read/3]).
--export([list_queue/3, list_queue/6, is_queue_empty/3]).
+-export([list_queue/3, list_queue/6, list_queue/7, is_queue_empty/3]).
 -export([first_queue/2, next_queue/3]).
 -export([mark_queue_object/4]).
+-export([queue_head_write/4, queue_head_read/3, queue_head_delete/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4, prefix_match_rel/5]).
 -export([get_schema_mod/2]).
@@ -339,7 +340,7 @@ queue_insert(#db{ref = Ets} = Db, Table, #q_key{} = QKey, St, Obj) ->
 	    erlang:error(illegal);
 	T ->
 	    Enc = encoding(Db, Table),
-	    case matches_encoding(Enc, Obj) of
+	    case kvdb_lib:matches_encoding(Enc, Obj) of
 		true ->
 		    AbsKey = q_key_to_int(QKey, T),
 		    InsertKey = #k{t=Table, k=AbsKey},
@@ -432,32 +433,37 @@ update_counter(#db{} = Db0, Table, K, Incr) when is_integer(Incr) ->
 %% matches the defined encoding, though, since we don't want to allow non-
 %% binary keys with raw encoding.
 %%
-push(#db{ref = Ets} = Db, Table, Q, Obj) ->
-    Type = type(Db, Table),
-    Enc = encoding(Db, Table),
+push(#db{} = Db0, Table, Q, Obj) ->
+    Type = type(Db0, Table),
+    Enc = encoding(Db0, Table),
+    Db = ?cache_meta(Db0, Table, Enc, Type),
     if Type == fifo; Type == lifo; element(1, Type) == keyed ->
-	    case matches_encoding(Enc, Obj) of
+	    case kvdb_lib:matches_encoding(Enc, Obj) of
 		true ->
-		    {_ActualKey, QKey} = kvdb_lib:actual_key(
-					   sext, Type, Q,
-					   element(1,Obj)),
-		    InsertKey = #k{t=Table, k=q_key_to_int(QKey, Type)},
-		    Data = case Obj of
-			       {_, As, Value} ->
-				   {InsertKey, As, {active, Value}};
-			       {_, Value} ->
-				   {InsertKey, {active, Value}}
-			   end,
-		    kvdb_lib:log(Db, ?KVDB_LOG_Q_INSERT(
-					Table, QKey, active, Obj)),
-		    ets:insert(Ets, Data),
-		    {ok, QKey};
+                    do_push(Db, Table, Q, Obj);
 		_ ->
 		    {error, badarg}
 	    end;
        true ->
 	    {error, badarg}
     end.
+
+do_push(#db{ref = Ets} = Db, Table, Q, Obj) ->
+    Type = type(Db, Table),
+    {_ActualKey, QKey} = kvdb_lib:actual_key(
+                           sext, Type, Q,
+                           element(1,Obj)),
+    InsertKey = #k{t=Table, k=q_key_to_int(QKey, Type)},
+    Data = case Obj of
+               {_, As, Value} ->
+                   {InsertKey, As, {active, Value}};
+               {_, Value} ->
+                   {InsertKey, {active, Value}}
+           end,
+    kvdb_lib:log(Db, ?KVDB_LOG_Q_INSERT(
+                        Table, QKey, active, Obj)),
+    ets:insert(Ets, Data),
+    {ok, QKey}.
 
 
 pop(Db0, Table, Q) ->
@@ -499,9 +505,44 @@ mark_queue_object(#db{ref = Ets} = Db, Table, #q_key{} = QK, St) when
 	    {error, not_found}
     end.
 
+queue_head_read(#db{ref = Ets} = Db, Table, Queue) ->
+    {Key, _} = make_queue_head_key(Db, Table, Queue),
+    case ets:lookup(Ets, Key) of
+        [{_, Data}] ->
+            {ok, Data};
+        [] ->
+            {error, not_found}
+    end.
+
+queue_head_write(#db{ref = Ets} = Db, Table, Queue, Obj) ->
+    Enc = encoding(Db, Table),
+    case kvdb_lib:matches_encoding(Enc, Obj) of
+        true ->
+            {Key, HeadKey} = make_queue_head_key(Db, Table, Queue),
+            kvdb_lib:log(Db, ?KVDB_LOG_Q_INSERT(Table, HeadKey, active, Obj)),
+            ets:insert(Ets, {Key, Obj}),
+            ok;
+        false ->
+            erlang:error({encoding_mismatch, [Enc, Obj]})
+    end.
+
+queue_head_delete(#db{ref = Ets} = Db, Table, Queue) ->
+    {Key, HeadKey} = make_queue_head_key(Db, Table, Queue),
+    kvdb_lib:log(Db, ?KVDB_LOG_Q_DELETE(Table, HeadKey)),
+    ets:delete(Ets, Key),
+    ok.
+
+make_queue_head_key(Db, Table, Queue) ->
+    Type = type(Db, Table),
+    HeadKey = kvdb_lib:q_head_key(Queue, Type),
+    Int = q_key_to_int(HeadKey, Type),
+    {#k{t = Table, k = Int}, HeadKey}.
+
+q_key_to_int(#q_key{queue = Q, key = ?Q_HEAD_KEY}, Type) ->
+    q_head_key_to_int(Q, Type);
 q_key_to_int(#q_key{queue = Q, ts = TS, key = K}, Type) ->
     case Type of
-	{keyed,_} ->
+        _ when element(1, Type) == keyed ->
 	    {{Q,1}, K, TS};
 	_ when Type == fifo; Type == lifo ->
 	    {{Q,1}, TS, K}
@@ -511,6 +552,19 @@ int_to_q_key(Db, Table, Int) ->
     Type = type(Db, Table),
     #q_key{queue = {Q,_}} = QK = kvdb_lib:split_queue_key(sext, Type, Int),
     QK#q_key{queue = Q}.
+
+q_head_key_to_int(Q, Type) ->
+    if Type == fifo; element(1, Type) == fifo ->
+            {{Q,0}, 0, 0};
+       Type == lifo; element(1, Type) == lifo ->
+            {{Q,2}, [], []}
+    end.
+
+%% int_to_q_head_key({{Q,0},_,_}) ->
+%%     #q_key{queue = Q, ts = ?Q_HEAD_FLOOR, key = ?Q_HEAD_KEY};
+%% int_to_q_head_key({{Q,2},_,_}) ->
+%%     #q_key{queue = Q, ts = ?Q_HEAD_CEIL, key = ?Q_HEAD_KEY}.
+
 
 mark_queue_object_(#db{ref = Ets} = Db, #q_key{} = QK, #k{} = K, Obj, St) when
       St == inactive; St == blocking; St == active ->
@@ -522,13 +576,14 @@ mark_queue_object_(#db{ref = Ets} = Db, #q_key{} = QK, #k{} = K, Obj, St) when
 
 do_pop(#db{ref = Ets} = Db, Table, Type, Q, Remove, ReturnKey) ->
     Enc = encoding(Db, Table),
+    {Head, _} = make_queue_head_key(Db, Table, Q),
     {First,Next} =
 	case Type of
 	    _ when Type == fifo; element(2,Type) == fifo ->
-		{fun() -> ets:next(Ets, #k{t=Table, k={{Q,0},0,0}}) end,
+		{fun() -> ets:next(Ets, Head) end,
 		 fun(K) -> ets:next(Ets, K) end};
 	    _ when Type == lifo; element(2,Type) == lifo ->
-		{fun() -> ets:prev(Ets, #k{t=Table, k={{Q,2},0,0}}) end,
+		{fun() -> ets:prev(Ets, Head) end,
 		 fun(K) -> ets:prev(Ets, K) end};
 	    _ -> erlang:error(illegal)
 	 end,
@@ -652,17 +707,21 @@ list_queue(Db, Table, Q) ->
 list_queue(Db, Table, Q, Limit) ->
     list_queue(Db, Table, Q, fun(_, _, O) -> {keep,O} end, false, Limit).
 
-list_queue(#db{ref = Ets} = Db0, Table, Q, Fltr, HeedBlock, Limit)
-  when Limit > 0 ->
+list_queue(Db, Table, Q, Filter, HeedBlock, Limit) ->
+    list_queue(Db, Table, Q, Filter, HeedBlock, Limit, false).
+
+list_queue(#db{ref = Ets} = Db0, Table, Q, Fltr, HeedBlock, Limit, Reverse)
+  when Limit > 0, is_boolean(Reverse) ->
     T = type(Db0, Table),
     Db = ?cache_meta(Db0, Table, encoding(Db0, Table), T),
+    {Head, _} = make_queue_head_key(Db, Table, Q),
     {First,Next} =
-	case T of
-	    _ when T == fifo; element(2,T) == fifo ->
-		{fun() -> ets:next(Ets, #k{t=Table, k={{Q,0},0,0}}) end,
+        case kvdb_lib:queue_list_direction(T, Reverse) of
+            fifo ->
+		{fun() -> ets:next(Ets, Head) end,
 		 fun(K) -> ets:next(Ets, #k{t=Table, k=K}) end};
-	    _ when T == lifo; element(2,T) == lifo ->
-		{fun() -> ets:prev(Ets, #k{t=Table, k={{Q,2},0,0}}) end,
+            lifo ->
+		{fun() -> ets:prev(Ets, Head) end,
 		 fun(K) -> ets:prev(Ets, #k{t=Table, k=K}) end};
 	    _ -> erlang:error(illegal)
 	end,
@@ -715,21 +774,6 @@ list_queue(_, _, _, _, _, _, _, _, _, _, _, Acc) ->
 
 decr(infinity) -> infinity;
 decr(I) when is_integer(I) -> I - 1.
-
-%% matches_encoding(Db, Table, Obj) ->
-%%     matches_encoding(encoding(Db, Table), Obj),
-
-%% FIXME! This function should also check that we are type-compatible with
-%% the requested encoding, even if we don't actually encode.
-matches_encoding(Enc, Obj) ->
-    case {Enc, Obj} of
-	{{_,_,_}, {_,_,_}} ->
-	    true;
-	{_, {_,_}} ->
-	    true;
-	_ ->
-	    false
-    end.
 
 get(#db{ref = Ets} = Db, Table, Key) ->
     ?debug("get: Ets = ~p, Db = ~p, Table = ~p, Key = ~p ~n",  
@@ -1153,103 +1197,6 @@ file_name(Db, Options) ->
 	F ->
 	    F
     end.
-
-%% file_mode(Options, Default) ->
-%%     case proplists:get_bool(read_only, Options) of
-%% 	true  -> [read,raw,binary];
-%% 	false -> [read,write,raw,binary]
-%%     end.
-
-%%
-%% Load ets table from file
-%%
-
-%% file_load(Fd, Ets) ->
-%%     file_load(Fd, Ets, undefined).
-
-%% file_load(Fd, Ets, Table) ->
-%%     case read_blob(Fd) of
-%% 	{ok,Key} ->
-%% 	    %% io:format("Table:~w, Key: ~w\n", [Table, Key]),
-%% 	    case read_blob(Fd) of
-%% 		{ok,Value} ->
-%% 		    %% io:format("Value: ~w\n", [Value]),
-%% 		    case Key of
-%% 			{Table1,table} ->
-%% 			    ets:insert(Ets, {Key,binary_to_term(Value)}),
-%% 			    file_load(Fd, Ets,Table1);
-%% 			_ when Table =/= undefined ->
-%% 			    ets:insert(Ets, {{Table,Key},Value}),
-%% 			    file_load(Fd, Ets,Table)
-%% 		    end;
-%% 		eof ->
-%% 		    io:format("Warning: trailing value at eof\n"),
-%% 		    ok;
-%% 		Error ->
-%% 		    Error
-%% 	    end;
-%% 	eof ->
-%% 	    ok;
-%% 	Error ->
-%% 	    Error
-%%     end.
-
-%% read_blob(Fd) ->
-%%     case file:read(Fd, 4) of
-%% 	{ok,<<0:32>>} ->
-%% 	    {ok, <<Len>>} = file:read(Fd, 1),
-%% 	    {ok, Name} = file:read(Fd, Len),
-%% 	    {ok,{binary_to_atom(Name,latin1), table}};
-%% 	{ok,<<Size:32>>} ->
-%% 	    file:read(Fd, Size);  %% not 100% correct!
-%% 	Other ->
-%% 	    Other
-%%     end.
-
-%%
-%% Save ets table to file:
-%% <0><table-name><table-info>
-%% <key><value>
-%%
-%% file_save(Fd, Ets) ->
-%%     file_save(Fd, ets:first(Ets), Ets).
-
-%% file_save(_Fd, '$end_of_table', _Ets) ->
-%%     ok;
-%% file_save(Fd, EKey, Ets) ->
-%%     %% io:format("Save: Key=~w\n", [EKey]),
-%%     case ets:lookup(Ets, EKey) of
-%% 	[{{Table,table},Columns}] when is_atom(Table) ->
-%% 	    file:write(Fd, << 0:32 >>),  %% mark table def
-%% 	    TableName = atom_to_binary(Table, latin1),
-%% 	    file:write(Fd, <<(byte_size(TableName)):8, TableName/binary>>),
-%% 	    CBin = term_to_binary(Columns),
-%% 	    file:write(Fd, <<(byte_size(CBin)):32, CBin/binary>>),
-%% 	    file_save(Fd, ets:next(Ets, EKey), Ets);
-%% 	[{{Table,Key},Value}] when is_atom(Table) ->
-%% 	    file:write(Fd, <<(byte_size(Key)):32, Key/binary,
-%% 			     (byte_size(Value)):32, Value/binary>>),
-%% 	    file_save(Fd, ets:next(Ets, EKey), Ets);
-%% 	[] ->
-%% 	    io:format("Warning: no value for key ~p\n", [EKey]),
-%% 	    file_save(Fd, ets:next(Ets, EKey), Ets)
-%%     end.
-
-%% calculate X+1 when X is atom
-%% next_atom(X) when is_atom(X) ->
-%%     list_to_atom(next_byte_list(atom_to_list(X))).
-
-%% add 1 to a byte list
-%% next_byte_list(Xs) ->
-%%     lists:reverse(next_byte_r_list(lists:reverse(Xs))).
-
-%% next_byte_r_list([255|Xs]) ->
-%%     [0|next_byte_r_list(Xs)];
-%% next_byte_r_list([X|Xs]) when X < 255 ->
-%%     [X+1|Xs];
-%% next_byte_r_list([]) ->
-%%     [1].
-
 
 int_read(#db{ref = Ets}, Item) ->
     LookupKey = case Item of
