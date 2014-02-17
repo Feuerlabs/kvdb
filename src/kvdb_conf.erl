@@ -107,6 +107,8 @@
 	 prev/2,            %% (Tab, Key)
 	 next_at_level/1,   %% (Key) -> next_at_level(data, Key)
 	 next_at_level/2,   %% (Tab, Key)
+	 prev_at_level/1,   %% (Key) -> next_at_level(data, Key)
+	 prev_at_level/2,   %% (Tab, Key)
 	 first_top_key/0,   %% () -> first_top_key(data)
 	 first_top_key/1,   %% (Tab)
 	 first_tree/0,      %% () -> first_tree(data)
@@ -137,6 +139,7 @@
 	 info/1,
 	 instance/0]).
 
+-export([raw_prev/2]).
 -include("kvdb_conf.hrl").
 
 -export_types([key_part/0, key/0, attrs/0, value/0, conf_obj/0, conf_tree/0]).
@@ -775,11 +778,14 @@ next_at_level(Tab, K0) when is_binary(K0) ->
     next_at_level_(Tab, K).
 
 next_at_level_(Tab, K) ->
+    lager:debug("tab ~p, key ~p", [Tab, K]),
     Len = length(SplitPrev = raw_split_key(K)),
     Parent = lists:sublist(SplitPrev, 1, Len-1),
     Sz = byte_size(K),
+    lager:debug("split prev ~p, parent ~p", [SplitPrev, Parent]),
     case raw_next(Tab, << K:Sz/binary, $+ >>) of
 	{ok, {Next,_,_}} ->
+	    lager:debug("next ~p",[Next]),
 	    SplitNext = raw_split_key(Next),
 	    case same_parent(Len, Parent, SplitNext) of
 		{true, Len} ->
@@ -793,16 +799,46 @@ next_at_level_(Tab, K) ->
 	    done
     end.
 
-same_parent(Len, P, Next) ->
-    case length(Next) of
-	Len ->
-	    case lists:sublist(Next, 1, Len-1) of
-		P -> {true, Len};
-		_ -> false
+-spec prev_at_level(kvdb:key()) -> {ok, kvdb:key()} | done.
+%% @equiv prev_at_level(<<"data">>, K)
+prev_at_level(K) when is_binary(K) ->
+    prev_at_level(data, K).
+
+-spec prev_at_level(kvdb:table(), kvdb:key()) -> {ok, kvdb:key()} | done.
+%% @doc Skips to the prev sibling at the same level in the subtree.
+prev_at_level(Tab, K0) when is_binary(K0) ->
+    K = escape_key(K0),
+    prev_at_level_(Tab, K).
+
+prev_at_level_(Tab, <<>>) ->
+    prev_at_level_(Tab, <<"~">>); %% Is this OK ???
+prev_at_level_(Tab, K) ->
+    lager:debug("tab ~p,  key ~p", [Tab, K]),
+    Len = length(SplitNext = raw_split_key(K)),
+    Parent = lists:sublist(SplitNext, 1, Len-1),
+    %%Sz = byte_size(K),
+    lager:debug("split next ~p, parent ~p", [SplitNext, Parent]),
+    case raw_prev(Tab, K) of    %% << K:Sz/binary, $% >> not needed ??
+	{ok, {Prev,_,_}} ->
+	    lager:debug("prev ~p",[Prev]),
+	    SplitPrev = raw_split_key(Prev),
+	    case same_parent(Len, Parent, SplitPrev) of
+		{true, Len} ->
+		    {ok, unescape_key(Prev)};
+		{true, L} when L > Len ->
+		    {ok, join_unescape_key(lists:sublist(SplitPrev, 1, Len))};
+		_ ->
+		    done
 	    end;
-	L when L > Len ->
-	    case lists:sublist(Next, 1, Len-1) of
-		P -> {true, L};
+	done ->
+	    done
+    end.
+
+same_parent(Len, P1, P2) ->
+    case length(P2) of
+	L when L >= Len ->
+	    case lists:sublist(P2, 1, Len-1) of
+		P1 -> {true, L};
 		_ -> false
 	    end;
 	_ ->
@@ -816,9 +852,11 @@ raw_last(Tab) ->
     kvdb:last(instance_(), Tab).
 
 raw_next(Tab, K) ->
+    lager:debug("tab ~p,  key ~p", [Tab, K]),
     kvdb:next(instance_(), Tab, K).
 
 raw_prev(Tab, K) ->
+    lager:debug("tab ~p,  key ~p", [Tab, K]),
     kvdb:prev(instance_(), Tab, K).
 
 -spec first_top_key() -> {ok, key()} | done.
