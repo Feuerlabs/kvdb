@@ -743,6 +743,8 @@ first_queue(#db{} = Db, Table) ->
 	_ ->
 	    Enc = encoding(Db, Table),
 	    case first(Db, Table, Enc) of
+                {ok, #q_key{key = ?KVDB_Q_HEAD}} ->
+                    
 		{ok, Obj} ->
 		    Key = element(1, Obj),
 		    #q_key{queue = Q} =

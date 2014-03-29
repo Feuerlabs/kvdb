@@ -609,8 +609,15 @@ next_queue_(Res, I, Db, Table, QPrefix, Sz, TPrefix, TPSz, Enc) ->
 	    next_queue_(eleveldb:iterator_move(I, next), I, Db, Table,
 		       QPrefix, Sz, TPrefix, TPSz, Enc);
 	{ok, <<TPrefix:TPSz/binary, K/binary>>, _} ->
-	    #q_key{queue = Q} = kvdb_lib:split_queue_key(Enc, dec(key,K,Enc)),
-	    {ok, Q};
+            case dec(key, K, Enc) of
+                {partial, {_, '_', '_'}, _} ->
+                    %% Queue head; next again in case empty
+                    next_queue_(eleveldb:iterator_move(I, next), I, Db, Table,
+                                QPrefix, Sz, TPrefix, TPSz, Enc);
+                {full, Key} ->
+                    #q_key{queue = Q} = kvdb_lib:split_queue_key(Enc, Key),
+                    {ok, Q}
+            end;
 	_ ->
 	    done
     end.

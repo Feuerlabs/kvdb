@@ -548,6 +548,10 @@ q_key_to_int(#q_key{queue = Q, ts = TS, key = K}, Type) ->
 	    {{Q,1}, TS, K}
     end.
 
+int_to_q_key(_Db, _Table, {{Q,0}, 0, 0}) ->
+    #q_key{queue = Q, key = ?Q_HEAD_KEY, ts=?Q_HEAD_FLOOR};
+int_to_q_key(_Db, _Table, {{Q,2}, [], []}) ->
+    #q_key{queue = Q, key = ?Q_HEAD_KEY, ts=?Q_HEAD_CEIL};
 int_to_q_key(Db, Table, Int) ->
     Type = type(Db, Table),
     #q_key{queue = {Q,_}} = QK = kvdb_lib:split_queue_key(sext, Type, Int),
@@ -646,14 +650,22 @@ first_queue(#db{ref = Ets} = Db, Table) ->
 next_queue(#db{ref = Ets} = Db, Table, Q) ->
     case type(Db, Table) of
 	Type when Type==fifo; Type==lifo; element(1,Type) == keyed ->
-	    case ets:next(Ets, #k{t=Table,k={{Q,2},0,0}}) of
-		#k{t=Table,k={{Q1,1},_,_}} when Q1 =/= Q ->
-		    {ok, Q1};
-		_ ->
-		    done
-	    end;
+            q_next(Ets, Table, Q);
 	_ ->
 	    erlang:error(illegal)
+    end.
+
+q_next(Ets, Table, Q) ->
+    q_next(Ets, Table, #k{t=Table,k={{Q,2},0,0}}, Q).
+
+q_next(Ets, Table, Key, Q) ->
+    case ets:next(Ets, Key) of
+        #k{t = Table, k = {{Q1,0},_,_}} = K when Q1 =/= Q ->
+            q_next(Ets, Table, K, Q);
+        #k{t = Table, k = {{Q1,1},_,_}} when Q1 =/= Q ->
+            {ok, Q1};
+        _ ->
+            done
     end.
 
 extract(#db{ref = Ets} = Db0, Table, #q_key{queue = Q} = QKey) ->

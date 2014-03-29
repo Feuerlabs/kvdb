@@ -214,7 +214,7 @@ enc(W, X, E) ->
 dec(_, X, raw ) when is_binary(X) -> X;
 dec(_, X, term) -> binary_to_term(X);
 dec(_, X, {term,_}) -> binary_to_term(X);
-dec(_, X, sext) -> sext:decode(X);
+dec(_, X, sext) -> try_sext_decode(X);
 dec(key  , X, {Enc,_}  ) -> dec(key, X, Enc);
 dec(key  , X, {Enc,_,_}) -> dec(key, X, Enc);
 dec(value, X, {_,Enc}  ) -> dec(value, X, Enc);
