@@ -558,9 +558,9 @@ int_to_q_key(Db, Table, Int) ->
     QK#q_key{queue = Q}.
 
 q_head_key_to_int(Q, Type) ->
-    if Type == fifo; element(1, Type) == fifo ->
+    if Type == fifo; element(2, Type) == fifo ->
             {{Q,0}, 0, 0};
-       Type == lifo; element(1, Type) == lifo ->
+       Type == lifo; element(2, Type) == lifo ->
             {{Q,2}, [], []}
     end.
 
@@ -660,7 +660,9 @@ q_next(Ets, Table, Q) ->
 
 q_next(Ets, Table, Key, Q) ->
     case ets:next(Ets, Key) of
-        #k{t = Table, k = {{Q1,0},_,_}} = K when Q1 =/= Q ->
+	#k{t = Table, k = {{Q,2},_,_}} = K ->
+	    q_next(Ets, Table, K, Q);
+        #k{t = Table, k = {{Q1,X},_,_}} = K when Q1 =/= Q, X=/=1 ->
             q_next(Ets, Table, K, Q);
         #k{t = Table, k = {{Q1,1},_,_}} when Q1 =/= Q ->
             {ok, Q1};
@@ -774,7 +776,7 @@ list_queue(Limit, #k{t=Table,k={{Q,1},_,_} = AbsKey} = K, Next, Ets,
 			     end};
 			Limit1 ->
 			    list_queue(
-			      Limit1, Next(AbsKey), Next, Ets, Db, 
+			      Limit1, Next(AbsKey), Next, Ets, Db,
 			      Table, T, Q, Fltr, HeedBlock, Limit0, Acc1)
 		    end;
 		false ->
@@ -788,7 +790,7 @@ decr(infinity) -> infinity;
 decr(I) when is_integer(I) -> I - 1.
 
 get(#db{ref = Ets} = Db, Table, Key) ->
-    ?debug("get: Ets = ~p, Db = ~p, Table = ~p, Key = ~p ~n",  
+    ?debug("get: Ets = ~p, Db = ~p, Table = ~p, Key = ~p ~n",
 	   [Ets, Db, Table, Key]),
     case type(Db, Table) of
 	undefined ->

@@ -49,6 +49,8 @@
 	 commit/2,
 	 make_tabrec/2]).
 
+-export([escape/1, unescape/1]).
+
 -export([backend_mod/1]).
 
 %% Intended for replication
@@ -343,9 +345,13 @@ actual_key(Enc, {keyed,_}, Q, TS, Key)
 actual_key(Enc, _, Q, TS, Key) when Enc==sext; element(1, Enc) == sext ->
     {{Q, TS, Key}, #q_key{queue = Q, ts = TS, key = Key}}.
 
+split_queue_key(_, #q_key{} = QK) ->
+    QK;
 split_queue_key(Enc, Key) ->
     split_queue_key(Enc, fifo, Key).
 
+split_queue_key(_, _, #q_key{} = QK) ->
+    QK;
 split_queue_key(Enc, T, Key) when Enc == raw; element(1, Enc) == raw ->
     split_raw_queue_key(T, Key);
 split_queue_key(Enc, T, Key) when Enc == sext; element(1, Enc) == sext ->
@@ -409,9 +415,9 @@ datetime_to_timestamp({{{_Y,_Mo,_D},{_H,_Mi,_S}} = DT, US}) ->
 %% CORRECTION: Since '.' and '-' are not escapable, we can't use them.
 %% Use instead '$', '%', and '&' as separators.
 raw_queue_head_key(Q, Type) when Type == fifo; element(2,Type) == fifo ->
-    <<Q/binary, ?Q_SEP_FLOOR>>;
+    <<(escape(Q))/binary, ?Q_SEP_FLOOR>>;
 raw_queue_head_key(Q, Type) when Type == lifo; element(2,Type) == lifo ->
-    <<Q/binary, ?Q_SEP_CEIL>>.
+    <<(escape(Q))/binary, ?Q_SEP_CEIL>>.
 
 %% For the sext-encoded queue head, we make use of the fact that we can decode
 %% a sext-encoded term followed by a non-sext sequence. Thus, we prefix-encode
@@ -434,11 +440,16 @@ raw_queue_key(Q, fifo, ?Q_HEAD_FLOOR, ?Q_HEAD_KEY) ->
     raw_queue_head_key(Q, fifo);
 raw_queue_key(Q, lifo, ?Q_HEAD_CEIL, ?Q_HEAD_KEY) ->
     raw_queue_head_key(Q, lifo);
+raw_queue_key(Q, {keyed,_}, TS, K) ->
+    raw_queue_keyed_key_(Q, TS, K);
 raw_queue_key(Q, _, TS, K) ->
     raw_queue_key_(Q, TS, K).
 
 raw_queue_key_(Q, TS, K) ->
     <<(escape(Q))/binary, ?Q_SEP, TS:56/integer, K/binary>>.
+
+raw_queue_keyed_key_(Q, TS, K) ->
+    <<(escape(Q))/binary, ?Q_SEP, (escape(K))/binary, TS:56/integer>>.
 
 raw_queue_prefix(Q, first) ->
     <<(escape(Q))/binary, ?Q_SEP_FLOOR>>;
@@ -454,7 +465,7 @@ split_raw_queue_key({keyed,_}, K) ->
         {P,_} ->
             KSz = Sz - P - 7 - 1,
             <<Q:P/binary, ?Q_SEP, Key:KSz/binary, TS:56/integer>> = K,
-            #q_key{queue = unescape(Q), ts = TS, key = Key};
+            #q_key{queue = unescape(Q), ts = TS, key = unescape(Key)};
         nomatch ->
             split_raw_queue_head_key(K, Sz)
     end;
@@ -894,34 +905,10 @@ key_pos(_, [], _)    -> 0.
 %% fixme: bitmap version is actually not that fast as I tought
 %% break even is plenty of tests.
 %%
--define(bm(A,B), (((1 bsl (((B)-(A))+1))-1) bsl (A))).
-
--define(bit(A),  (1 bsl (A))).
-
--define(is_set(BM,A), ((((BM) bsr (A)) band 1) =:= 1)).
-
--define(bm_lower,   ?bm($a,$z)).
--define(bm_upper,   ?bm($A,$Z)).
--define(bm_digit,   ?bm($0,$9)).
--define(bm_xdigit,  (?bm($0,$9) bor ?bm($A,$F) bor ?bm($a,$f))).
--define(bm_alpha,   (?bm($A,$Z) bor ?bm($a,$z))).
--define(bm_alnum,   (?bm_alpha bor ?bm_digit)).
--define(bm_wsp,     (?bit($\s) bor ?bit($\t))).
--define(bm_space,   (?bm_wsp bor ?bit($\r) bor ?bit($\n))).
-
--define(bm_id1, (?bm_alpha bor ?bit($_))).
--define(bm_id2, (?bm_id1 bor ?bm_digit bor ?bit($.) bor ?bit($-))).
--define(bm_id3, (?bm_id1 bor ?bm_digit bor ?bit($.) bor ?bit($-) bor ?bit($:))).
-
--define(is_id1(X), ?is_set(?bm_id1,(X))).
--define(is_id2(X), ?is_set(?bm_id2,(X))).
--define(is_id3(X), ?is_set(?bm_id3,(X))).
-
-
-unescape(<<$=, Enc/binary>>) ->
-    unescape_(Enc);
-unescape(Bin) when is_binary(Bin) ->
-    Bin.
+unescape(<<>>) ->
+    <<>>;
+unescape(<< $=, Enc/binary >>) ->
+    unescape_(Enc).
 
 unescape_(<<$@, A, B, Rest/binary>>) ->
     <<(erlang:list_to_integer([A,B], 16)):8/integer,
@@ -931,21 +918,15 @@ unescape_(<<C, Rest/binary>>) ->
 unescape_(<<>>) ->
     <<>>.
 
-escape(<<$=, _/binary>> = Esc) ->
-    Esc;
+escape(<<>>) -> <<>>;
 escape(Bin) when is_binary(Bin) ->
-    Enc = << <<(id_char(C,true))/binary>> || <<C>> <= Bin >>,
-    <<$=, Enc/binary>>.
+    Enc = << <<(id_char(C))/binary>> || <<C>> <= Bin >>,
+    << $=, Enc/binary >>.
 
-id_char($*, false) -> <<"*">>;
-id_char($[, false) -> <<"[">>;
-id_char($], false) -> <<"]">>;
-id_char(C, _) ->
-    case ?is_id2(C) of
-	true -> <<C>>;
-	false when C =< 255 ->
-	    <<$@, (to_hex(C bsr 4)):8/integer, (to_hex(C)):8/integer >>
-    end.
+id_char(C) when C==?Q_HEAD_FLOOR; C==?Q_HEAD_CEIL; C==?Q_SEP; C==$@ ->
+    <<$@, (to_hex(C bsr 4)):8/integer, (to_hex(C)):8/integer >>;
+id_char(C) ->
+    <<C>>.
 
 to_hex(C) ->
     element((C band 16#f)+1, {$0,$1,$2,$3,$4,$5,$6,$7,$8,$9,
