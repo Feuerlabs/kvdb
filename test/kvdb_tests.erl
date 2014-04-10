@@ -70,7 +70,15 @@ basic_test_() ->
      end,
      [{foreachx,
        fun({Db, Enc, Backend}) ->
-	       ?debugVal(catch create_db(Db, Enc, Backend))
+               try create_db(Db, Enc, Backend)
+               catch
+                   error:Reason ->
+                       io:fwrite(user,
+                                 "ERROR: ~p~n"
+                                 "create_db(~p, ~p, ~p)~n",
+                                 [Reason, Db,Enc,Backend]),
+                       error(Reason)
+               end
        end,
        [{{Db,E,B}, fun({Db1,_,_},_) ->
 			   [
@@ -755,6 +763,9 @@ backend_name(B) when is_atom(B) ->
     B.
 
 
+delete_db_dir(Dir, {kvdb_paired, Opts}, Error) ->
+    {_, M2} = lists:keyfind(module2, 1, Opts),
+    delete_db_dir(Dir, M2, Error);
 delete_db_dir(Dir, Be, _Error) when Be==leveldb; Be==kvdb_leveldb ->
     case file:read_file_info(Dir) of
 	{ok,Info} when Info#file_info.type =:= directory ->

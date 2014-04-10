@@ -22,7 +22,7 @@
 -export([add_table/3, delete_table/2, list_tables/1]).
 -export([put/3, push/4, get/3, get_attrs/4, index_get/4, index_keys/4,
 	 update_counter/4, pop/3, prel_pop/3, extract/3, delete/3,
-	 list_queue/3, list_queue/6, is_queue_empty/3,
+	 list_queue/3, list_queue/6, list_queue/7, is_queue_empty/3,
 	 queue_read/3, queue_insert/5, queue_delete/3, mark_queue_object/4,
 	 queue_head_write/4, queue_head_read/3, queue_head_delete/3]).
 -export([first_queue/2, next_queue/3]).
@@ -186,9 +186,7 @@ open(DbName, Options) ->
     DbOpts = proplists:get_value(db_opts, Options, [{create_if_missing,true}]),
     Res = case proplists:get_value(file, Options) of
 	      undefined ->
-		  NameStr = kvdb_lib:good_string(DbName),
-		  File = NameStr ++ ".db",
-		  filelib:ensure_dir(File),
+		  File = kvdb_lib:db_file(DbName),
 		  eleveldb:open(File, DbOpts);
 	      Name ->
 		  filelib:ensure_dir(Name),
@@ -222,7 +220,7 @@ close(_Db) ->
     ok.
 
 add_table(#db{encoding = Enc} = Db, Table, Opts) when is_list(Opts) ->
-    TabR = check_options(Opts, Db, #table{name = Table, encoding = Enc}),
+    TabR = kvdb_lib:make_tabrec(Table, Opts, #table{encoding = Enc}),
     add_table(Db, Table, TabR);
 add_table(Db, Table, #table{} = TabR) ->
     case schema_lookup(Db, {table, Table}, undefined) of
@@ -288,20 +286,25 @@ put(Db, Table, Obj) ->
 	    {error, illegal}
     end.
 
-put_(#db{ref = Ref} = Db, Table, {K,V}, Op) ->
+put_(Db, Table, {K,V}, Op) ->
     %% Frequently used case, therefore optimized. No indexing on {K,V} tuples
     Enc = encoding(Db, Table),
     Type = type(Db, Table),
     Key = encode_elem(key, K, Type, Enc, Op),
     Val = encode_elem(value, V, Type, Enc, Op),
-    eleveldb:put(Ref, make_table_key(Table, Key), Val, []);
-put_(#db{ref = Ref} = Db, Table, {K, Attrs, V}, Op) ->
+    put_raw(Db, Table, K, Key, none, V, Val, put);
+put_(Db, Table, {K, Attrs, V}, Op) ->
     Enc = encoding(Db, Table),
-    Ix = index(Db, Table),
     Type = type(Db, Table),
     Key = encode_elem(key, K, Type, Enc, Op),
     Val = encode_elem(value, V, Type, Enc, Op),
+    put_raw(Db, Table, K, Key, Attrs, V, Val, put).
+
+put_raw(#db{ref = Ref}, Table, _, Key, none, _, Val, _) ->
+    eleveldb:put(Ref, make_table_key(Table, Key), Val, []);
+put_raw(#db{ref = Ref} = Db, Table, K, Key, Attrs, V, Val, Op) ->
     OldAttrs = get_attrs_(Db, Table, Key, all),
+    Ix = index(Db, Table),
     IxOps = case Ix of
 		[_|_] ->
 		    OldIxVals = kvdb_lib:index_vals(
@@ -318,11 +321,14 @@ put_(#db{ref = Ref} = Db, Table, {K, Attrs, V}, Op) ->
 		_ ->
 		    []
 	    end,
-    DelAttrs = attrs_to_delete(
-		 Table, Key,
-		 [{A,Va} ||
-		     {A,Va} <- OldAttrs,
-		     not lists:keymember(A, 1, Attrs)]),
+    DelAttrs = if element(2,Op) =/= push ->
+		       attrs_to_delete(
+			 Table, Key,
+			 [{A,Va} ||
+			     {A,Va} <- OldAttrs,
+			     not lists:keymember(A, 1, Attrs)]);
+		  true -> []
+	       end,
     PutAttrs = attrs_to_put(Table, Key, Attrs),
     case eleveldb:write(Ref, [{put, make_table_key(Table, Key), Val}|
 			      DelAttrs ++ PutAttrs ++ IxOps], []) of
@@ -332,7 +338,7 @@ put_(#db{ref = Ref} = Db, Table, {K, Attrs, V}, Op) ->
 	    Other
     end.
 
-encode_elem(_Elem, V, _T, _Enc, push) when is_binary(V) ->
+encode_elem(_Elem, V, _T, _Enc, {queue,_}) when is_binary(V) ->
     %% This should really be cleaned up, but for now, when put_(...) is called
     %% from push(...), the key and value parts are already coded as binary.
     V;
@@ -378,11 +384,12 @@ push(#db{} = Db, Table, Q, Obj) ->
     Type = type(Db, Table),
     if Type == fifo; Type == lifo; element(1,Type) == keyed ->
 	    Enc = encoding(Db, Table),
-	    {ActualKey, QKey} =
+	    {_ActualKey, QKey} =
 		kvdb_lib:actual_key(Enc, Type, Q, element(1, Obj)),
 	    {Key, Attrs, Value} = encode_queue_obj(
-				    Enc, setelement(1, Obj, ActualKey)),
-	    case put_(Db, Table, {Key, Attrs, Value}, push) of
+				    Enc, Type, setelement(1, Obj, QKey)),
+	    case put_raw(Db, Table, QKey, Key, Attrs,
+			 obj_val(Obj), Value, {queue,push}) of
 		ok ->
 		    {ok, QKey};
 		Other ->
@@ -404,17 +411,38 @@ queue_insert(#db{} = Db, Table, #q_key{} = QKey, St, Obj) when
       St==blocking; St==active; St==inactive ->
     Enc = encoding(Db, Table),
     Type = type(Db, Table),
-    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
-    Obj1 = setelement(1, Obj, Key),
+    %% Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
+    Obj1 = setelement(1, Obj, QKey),
     %% put_(Db, Table, Obj1, put).
-    {EncKey, Attrs, Value} = encode_queue_obj(Enc, Obj1, St),
-    put_(Db, Table, {EncKey, Attrs, Value}, push).
+    {EncKey, Attrs, Value} = encode_queue_obj(Enc, Type, Obj1, St),
+    put_raw(Db, Table, QKey, EncKey, Attrs, obj_val(Obj1), Value,
+	    {queue,put}).
 
-queue_head_write(#db{} = _Db, _Table, _Queue, _Data) ->
-    exit(nyi).
+obj_val({_,V}  ) -> V;
+obj_val({_,_,V}) -> V.
 
-queue_head_read(#db{} = _Db, _Table, _Queue) ->
-    exit(nyi).
+
+queue_head_write(#db{} = Db, Table, Queue, Obj) ->
+    Type = type(Db, Table),
+    HeadKey = kvdb_lib:q_head_key(Queue, Type),
+    queue_insert(Db, Table, HeadKey, active, Obj).
+    %% Key = enc(key, kvdb_lib:q_key_to_actual(HeadKey, Enc, Type), Enc),
+    %% Val = enc(value, Data, Enc),
+    %% eleveldb:put(Ref, make_table_key(Table, Key), Val, []).
+
+queue_head_read(#db{ref = Ref} = Db, Table, Queue) ->
+    Type = type(Db, Table),
+    Enc = encoding(Db, Table),
+    HeadKey = kvdb_lib:q_head_key(Queue, Type),
+    Key = kvdb_lib:q_key_to_actual(HeadKey, Enc, Type),
+    QHeadKey = make_table_key(Table, Key),
+    case eleveldb:get(Ref, QHeadKey, []) of
+        {ok, <<_:8, V/binary>>} ->
+            {ok, decode_obj_v(Db, Enc, Table, Key, HeadKey#q_key.key, V)};
+            %% {ok, kvdb_lib:dec(value, V, Enc)};
+        not_found ->
+            {error, not_found}
+    end.
 
 queue_head_delete(#db{} = _Db, _Table, _Queue) ->
     exit(nyi).
@@ -422,6 +450,23 @@ queue_head_delete(#db{} = _Db, _Table, _Queue) ->
 queue_delete(Db, Table, #q_key{} = QKey) ->
     _ = extract(Db, Table, QKey),
     ok.
+
+queue_delete_obj(#db{ref = Ref}, Table, EncKey, Obj) ->
+    Key = make_table_key(Table, EncKey),
+    Attrs = case Obj of
+		{_, As, _} -> As;
+		{_, _}     -> []
+	    end,
+    eleveldb:write(Ref, [{delete, Key}
+			 | attrs_to_delete(Table, EncKey, Attrs)], []),
+    ok.
+
+
+%% encode_queue_head_key(Table, Queue, Type, Enc) ->
+%%     HeadKey = kvdb_lib:q_head_key(Queue, Type),
+%%     Key = kvdb_lib:q_key_to_actual(HeadKey, Enc, Type),
+%%     make_table_key(Table, Key).
+
 
 mark_queue_object(#db{} = Db, Table, #q_key{queue = Q} = QK, St) when
       St==blocking; St==active; St==inactive ->
@@ -436,16 +481,17 @@ mark_queue_object(#db{} = Db, Table, #q_key{queue = Q} = QK, St) when
 mark_queue_obj(#db{ref = Ref} = Db, Table, Enc, QK, Obj, St) when
       St==blocking; St==active; St==inactive ->
     Type = type(Db, Table),
-    AKey = kvdb_lib:q_key_to_actual(QK, Enc, Type),
-    {Key, _Attrs, Value} = encode_queue_obj(Enc, setelement(1,Obj,AKey), St),
+    %% AKey = kvdb_lib:q_key_to_actual(QK, Enc, Type),
+    {Key, _Attrs, Value} =
+	encode_queue_obj(Enc, Type, setelement(1,Obj,QK), St),
     eleveldb:put(Ref, make_table_key(Table, Key), Value, []).
 
 pop(#db{} = Db, Table, Q) ->
     case type(Db, Table) of
 	set -> erlang:error(illegal);
 	T ->
-	    Remove = fun(QKey, _Obj, _) ->
-			     delete(Db, Table, QKey)
+	    Remove = fun(EncKey, _QKey, Obj, _) ->
+			     queue_delete_obj(Db, Table, EncKey, Obj)
 		     end,
 	    do_pop(Db, Table, T, Q, Remove, false)
     end.
@@ -454,7 +500,7 @@ prel_pop(Db, Table, Q) ->
     case type(Db, Table) of
 	set -> erlang:error(illegal);
 	T ->
-	    Remove = fun(QKey, Obj, Enc) ->
+	    Remove = fun(_, QKey, Obj, Enc) ->
 			     mark_queue_obj(Db, Table, Enc, QKey, Obj, blocking)
 		     end,
 	    do_pop(Db, Table, T, Q, Remove, true)
@@ -462,15 +508,15 @@ prel_pop(Db, Table, Q) ->
 
 do_pop(Db, Table, _Type, Q, Remove, ReturnKey) ->
     Enc = encoding(Db, Table),
-    case list_queue(Db, Table, Q, fun(inactive, _, _) ->
-					  skip;
-				     (_St,K,O) ->
-					  {keep, {K,O}}
-				  end, _HeedBlock = true, 2) of
-	{[{QKey,Obj}|More], _} ->
+    case list_queue_int(Db, Table, Q, fun(_RawKey, inactive, _, _) ->
+					      skip;
+					 (RawKey, _St,K,O) ->
+					      {keep, {RawKey,K,O}}
+				      end, _HeedBlock = true, 2, false) of
+	{[{Raw,QKey,Obj}|More], _} ->
 	    %% Obj1 = fix_q_obj(Obj, Enc, Type),
 	    Empty = More == [],
-	    Remove(QKey, Obj, Enc),
+	    Remove(Raw, QKey, Obj, Enc),
 	    if ReturnKey ->
 		    {ok, Obj, QKey, Empty};
 	       true ->
@@ -488,11 +534,10 @@ extract(#db{ref = Ref} = Db, Table, #q_key{queue = Q, key = Key} = QKey) ->
 	Type ->
 	    Enc = encoding(Db, Table),
 	    AKey = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
-	    EncKey = enc(key, AKey, Enc),
-	    RawKey = make_table_key(Table, EncKey),
+	    RawKey = make_table_key(Table, AKey),
 	    case eleveldb:get(Ref, RawKey, []) of
 		{ok, <<St:8, V/binary>>} when St==$*; St==$-; St==$+ ->
-		    Obj = decode_obj_v(Db, Enc, Table, EncKey, Key, V),
+		    Obj = decode_obj_v(Db, Enc, Table, AKey, Key, V),
 		    eleveldb:delete(Ref, RawKey, []),
 		    IsEmpty =
 			case list_queue(Db, Table, Q,
@@ -563,7 +608,8 @@ first_queue_(Res, I, Db, Table, TPrefix, TPSz) ->
 			 Table, TPrefix, TPSz);
 	{ok, <<TPrefix:TPSz/binary, K/binary>>, _} ->
 	    Enc = encoding(Db, Table),
-	    #q_key{queue = Q} = kvdb_lib:split_queue_key(Enc, dec(key,K,Enc)),
+	    #q_key{queue = Q} =
+		kvdb_lib:split_queue_key(Enc, dec(key, K, Enc)),
 	    {ok, Q};
 	_ ->
 	    done
@@ -585,7 +631,8 @@ next_queue(#db{ref = Ref} = Db, Table, Q) ->
 	      Ref,
 	      fun(I) ->
 		      next_queue_(eleveldb:iterator_move(I, Prefix), I,
-				  Db, Table, QPrefix, Sz, TPrefix, TPSz, Enc)
+				  Db, Table, QPrefix, Sz,
+				  TPrefix, TPSz, Enc)
 	      end)
     end.
 
@@ -595,19 +642,18 @@ next_queue_(Res, I, Db, Table, QPrefix, Sz, TPrefix, TPSz, Enc) ->
 	    next_queue_(eleveldb:iterator_move(I, next), I, Db, Table,
 		       QPrefix, Sz, TPrefix, TPSz, Enc);
 	{ok, <<TPrefix:TPSz/binary, K/binary>>, _} ->
-	    #q_key{queue = Q} = kvdb_lib:split_queue_key(Enc, dec(key,K,Enc)),
-	    {ok, Q};
+	    case kvdb_lib:split_queue_key(Enc, dec(key,K,Enc)) of
+		#q_key{key = ?Q_HEAD_KEY} ->
+		    next_queue_(eleveldb:iterator_move(I, next), I, Db, Table,
+				QPrefix, Sz, TPrefix, TPSz, Enc);
+		#q_key{queue = Q} ->
+		    {ok, Q}
+	    end;
 	_ ->
 	    done
     end.
 
-%% fix_q_obj(Obj, Enc, Type) ->
-%%     K = element(1, Obj),
-%%     #q_key{key = K1} = kvdb_lib:split_queue_key(Enc, Type, K),
-%%     setelement(1, Obj, K1).
-
-
-q_first_(I, Db, Table, Q, Enc, HeedBlock) ->
+q_first_(I, Db, Table, Q, Head, Enc, HeedBlock) ->
     QPfx = kvdb_lib:queue_prefix(Enc, Q, first),
     Prefix = make_table_key(Table, kvdb_lib:enc(key, QPfx, Enc)),
     QPrefix = table_queue_prefix(Table, Q, Enc),
@@ -615,14 +661,20 @@ q_first_(I, Db, Table, Q, Enc, HeedBlock) ->
     TPrefix = make_table_key(Table),
     TPSz = byte_size(TPrefix),
     q_first_move(eleveldb:iterator_move(I, Prefix),
-		 I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz, HeedBlock).
+		 I, Db, Table, Enc, QPrefix, Sz, TPrefix, Head,
+		 TPSz, HeedBlock).
 
-q_first_move(Res, I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz, HeedBlock) ->
+q_first_move(Res, I, Db, Table, Enc, QPrefix, Sz, TPrefix,
+	     Head, TPSz, HeedBlock) ->
     case Res of
+	{ok, Head, _} ->
+	    q_first_move(eleveldb:iterator_move(I, next),
+			 I, Db, Table, Enc, QPrefix, Sz, TPrefix,
+			 Head, TPSz, HeedBlock);
 	{ok, <<QPrefix:Sz/binary, _/binary>>, <<"-", _/binary>>} ->
 	    q_first_move(eleveldb:iterator_move(I, next),
 			 I, Db, Table, Enc, QPrefix, Sz, TPrefix,
-			 TPSz, HeedBlock);
+			 Head, TPSz, HeedBlock);
 	{ok, <<QPrefix:Sz/binary, _/binary>> = K, <<F:8, V/binary>>} ->
 	    if F == $*, HeedBlock ->
 		    blocked;
@@ -631,14 +683,14 @@ q_first_move(Res, I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz, HeedBlock) ->
 		    case Key of
 			<<>> -> q_first_move(eleveldb:iterator_move(I, next),
 					     I, Db, Table, Enc, QPrefix, Sz,
-					     TPrefix, TPSz, HeedBlock);
+					     TPrefix, Head, TPSz, HeedBlock);
 			_ ->
 			    Status = case F of
 					 $* -> blocking;
 					 $+ -> active;
 					 $- -> inactive
 				     end,
-			    {Status, decode_obj(Db, Enc, Table, Key, V)}
+			    {Key, Status, decode_obj(Db, Enc, Table, Key, V)}
 		    end
 	    end;
 	_ ->
@@ -650,7 +702,7 @@ q_first_move(Res, I, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz, HeedBlock) ->
 %% q_last(#db{ref = Ref} = Db, Table, Q, Enc) ->
 %%     with_iterator(Ref, fun(I) -> q_last_(I, Db, Table, Q, Enc) end).
 
-q_last_(I, Db, Table, Q, Enc, HeedBlock) ->
+q_last_(I, Db, Table, Q, Head, Enc, HeedBlock) ->
     QPfx = kvdb_lib:queue_prefix(Enc, Q, last),
     Prefix = make_table_key(Table, kvdb_lib:enc(key, QPfx, Enc)),
     QPrefix = table_queue_prefix(Table, Q, Enc),
@@ -659,15 +711,23 @@ q_last_(I, Db, Table, Q, Enc, HeedBlock) ->
     TPSz = byte_size(TPrefix),
     case eleveldb:iterator_move(I, Prefix) of
 	{ok, _K, _V} ->
-	    q_last_move_(eleveldb:iterator_move(I, prev), Db, Table, Enc,
-			 QPrefix, Sz, TPrefix, TPSz, HeedBlock);
+	    q_last_move_(eleveldb:iterator_move(I, prev), I, Db, Table, Enc,
+			 QPrefix, Sz, TPrefix, Head, TPSz, HeedBlock);
 	{error, invalid_iterator} ->
-	    q_last_move_(eleveldb:iterator_move(I, last), Db, Table, Enc,
-			 QPrefix, Sz, TPrefix, TPSz, HeedBlock)
+	    q_last_move_(eleveldb:iterator_move(I, last), I, Db, Table, Enc,
+			 QPrefix, Sz, TPrefix, Head, TPSz, HeedBlock)
     end.
 
-q_last_move_(Res, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz, HeedBlock) ->
+q_last_move_(Res, I, Db, Table, Enc, QPrefix, Sz, TPrefix,
+	     Head, TPSz, HeedBlock) ->
     case Res of
+	{ok, Head, _} ->
+	    q_last_move_(eleveldb:iterator_move(I, prev), I, Db, Table, Enc,
+			 QPrefix, Sz, TPrefix, Head, TPSz, HeedBlock);
+	{ok, <<QPrefix:Sz/binary, _/binary>>, <<"-", _/binary>>} ->
+	    q_last_move_(eleveldb:iterator_move(I, prev),
+			 I, Db, Table, Enc, QPrefix, Sz, TPrefix,
+			 Head, TPSz, HeedBlock);
 	{ok, <<QPrefix:Sz/binary, _/binary>> = K1, <<F:8, V1/binary>>} ->
 	    if F == $*, HeedBlock ->
 		    blocked;
@@ -681,7 +741,7 @@ q_last_move_(Res, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz, HeedBlock) ->
 					 $+ -> active;
 					 $- -> inactive
 				     end,
-			    {Status, decode_obj(Db, Enc, Table, Key, V1)}
+			    {Key, Status, decode_obj(Db, Enc, Table, Key, V1)}
 		    end
 	    end;
 	_Other ->
@@ -691,40 +751,48 @@ q_last_move_(Res, Db, Table, Enc, QPrefix, Sz, TPrefix, TPSz, HeedBlock) ->
 list_queue(Db, Table, Q) ->
     list_queue(Db, Table, Q, fun(_,_,O) -> {keep,O} end, false, infinity).
 
-list_queue(#db{ref = Ref} = Db, Table, Q, Filter, HeedBlock, Limit)
-  when Limit > 0 ->  % includes 'infinity'
+list_queue(Db, Table, Q, Filter, HeedBlock, Limit) ->
+    list_queue(Db, Table, Q, Filter, HeedBlock, Limit, false).
+
+list_queue(#db{} = Db, Table, Q, Filter, HeedBlock, Limit, Reverse)
+  when Limit > 0, is_boolean(Reverse) ->  % includes 'infinity'
+    list_queue_int(Db, Table, Q, fun(_RawKey,St,K,O) -> Filter(St,K,O) end,
+		   HeedBlock, Limit, Reverse).
+
+list_queue_int(#db{ref = Ref} = Db, Table, Q, Filter,
+	       HeedBlock, Limit, Reverse) when Limit > 0, is_boolean(Reverse) ->
     Type = type(Db, Table),
     Enc = encoding(Db, Table),
+    Head = make_table_key(
+	     Table, kvdb_lib:q_key_to_actual(
+		      kvdb_lib:q_head_key(Q, Type), Enc, Type)),
     QPrefix = table_queue_prefix(Table, Q, Enc),
     TPrefix = make_table_key(Table),
+    Dir = kvdb_lib:queue_list_direction(Type, Reverse),
     with_iterator(
       Ref,
       fun(I) ->
 	      First =
-		  case Type of
-		      fifo -> q_first_(I, Db, Table, Q, Enc, HeedBlock);
-		      lifo -> q_last_(I, Db, Table, Q, Enc, HeedBlock);
-		      {keyed,fifo} -> q_first_(I,Db,Table,Q,Enc, HeedBlock);
-		      {keyed,lifo} -> q_last_(I,Db,Table,Q,Enc, HeedBlock)
+                  case Dir of
+		      fifo -> q_first_(I, Db, Table, Q, Head, Enc, HeedBlock);
+		      lifo -> q_last_(I, Db, Table, Q, Head, Enc, HeedBlock)
 		  end,
 	      q_all_(First, Limit, Limit, Filter, I, Db, Table,
-		     q_all_dir(Type), Enc, Type, QPrefix, TPrefix,
+		     q_all_dir(Dir), Enc, Type, QPrefix, TPrefix,
 		     HeedBlock, [])
       end);
-list_queue(_, _, _, _, _, 0) ->
+list_queue_int(_, _, _, _, _, 0, _) ->
     {[], fun() -> done end}.
 
 q_all_dir(fifo)     -> next;
-q_all_dir(lifo)     -> prev;
-q_all_dir({keyed,fifo}) -> next;
-q_all_dir({keyed,lifo}) -> prev.
+q_all_dir(lifo)     -> prev.
 
-q_all_({St, Obj}, Limit, Limit0, Filter, I, Db, Table, Dir, Enc,
+q_all_({RawKey, St, Obj}, Limit, Limit0, Filter, I, Db, Table, Dir, Enc,
        Type, QPrefix, TPrefix, HeedBlock, Acc)
   when Limit > 0 ->
     #q_key{key = Key} = QKey =
 	kvdb_lib:split_queue_key(Enc,Type,element(1,Obj)),
-    {Cont,Acc1} = case Filter(St, QKey, setelement(1, Obj, Key)) of
+    {Cont,Acc1} = case Filter(RawKey, St, QKey, setelement(1, Obj, Key)) of
 		      skip     -> {true, Acc};
 		      stop     -> {false, Acc};
 		      {stop,X} -> {false, [X|Acc]};
@@ -776,7 +844,7 @@ q_all_cont(Limit, Limit0, Filter, I, Db, Table, Dir, Enc, Type,
 				 $- -> inactive
 			     end,
 		    <<TPrefix:TSz/binary, Key/binary>> = K,
-		    q_all_({Status, decode_obj(Db, Enc, Table, Key, V)},
+		    q_all_({Key, Status, decode_obj(Db, Enc, Table, Key, V)},
 			   Limit, Limit0, Filter, I, Db, Table,
 			   Dir, Enc, Type, QPrefix, TPrefix, HeedBlock, Acc)
 	    end;
@@ -786,7 +854,7 @@ q_all_cont(Limit, Limit0, Filter, I, Db, Table, Dir, Enc, Type,
     end.
 
 table_queue_prefix(Table, Q, Enc) when Enc == raw; element(1, Enc) == raw ->
-    make_table_key(Table, <<Q/binary, "-">>);
+    make_table_key(Table, <<(kvdb_lib:escape(Q))/binary, "%">>);
 table_queue_prefix(Table, Q, Enc) when Enc == sext; element(1, Enc) == sext ->
     make_table_key(Table, sext:prefix({Q,'_','_'})).
 
@@ -874,10 +942,9 @@ queue_read(#db{ref = Ref} = Db, Table, #q_key{key = K} = QKey) ->
     Enc = encoding(Db, Table),
     Type = type(Db, Table),
     Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
-    EncKey = enc(key, Key, Enc),
-    case eleveldb:get(Ref, make_table_key(Table, EncKey), []) of
+    case eleveldb:get(Ref, make_table_key(Table, Key), []) of
 	{ok, <<St:8, V/binary>>} when St==$*; St==$-; St==$+ ->
-	    Obj = decode_obj_v(Db, Enc, Table, EncKey, Key, V),
+	    Obj = decode_obj_v(Db, Enc, Table, Key, QKey, V),
 	    Status = dec_queue_obj_status(St),
 	    {ok, Status, setelement(1, Obj, K)};
 	not_found ->
@@ -990,8 +1057,7 @@ prefix_match(#db{} = Db, Table, Prefix, Rel, Limit)
     case type(Db, Table) of
 	set ->
 	    prefix_match_set(Db, Table, Prefix, Rel, Limit);
-	Type when Type==fifo; Type==lifo;
-		  Type=={keyed,fifo}; Type=={keyed,lifo} ->
+	_ ->
 	    error(badarg)
     end.
 
@@ -1236,15 +1302,17 @@ make_key(Table, Sep, Key) when is_binary(Table) ->
 %% encode_obj(Enc, {Key, Value}) ->
 %%     {enc(key, Key, Enc), none, enc(value, Value, Enc)}.
 
-encode_queue_obj(Enc, Obj) ->
-    encode_queue_obj(Enc, Obj, active).
+encode_queue_obj(Enc, Type, Obj) ->
+    encode_queue_obj(Enc, Type, Obj, active).
 
-encode_queue_obj({_,_,_} = Enc, {Key, Attrs, Value}, Status) ->
+encode_queue_obj({_,_,_} = Enc, Type, {#q_key{} = Key, Attrs, Value}, Status) ->
     St = enc_queue_obj_status(Status),
-    {enc(key, Key, Enc), Attrs, <<St:8, (enc(value, Value, Enc))/binary>>};
-encode_queue_obj(Enc, {Key, Value}, Status) ->
+    AKey = kvdb_lib:q_key_to_actual(Key, Enc, Type),
+    {AKey, Attrs, <<St:8, (enc(value, Value, Enc))/binary>>};
+encode_queue_obj(Enc, Type, {#q_key{} = Key, Value}, Status) ->
     St = enc_queue_obj_status(Status),
-    {enc(key, Key, Enc), none, <<St:8, (enc(value, Value, Enc))/binary>>}.
+    AKey = kvdb_lib:q_key_to_actual(Key, Enc, Type),
+    {AKey, none, <<St:8, (enc(value, Value, Enc))/binary>>}.
 
 enc_queue_obj_status(blocking) -> $*;
 enc_queue_obj_status(active  ) -> $+;
@@ -1288,24 +1356,6 @@ index(#db{} = Db, Table) ->
 
 schema(#db{} = Db, Table) ->
     schema_lookup(Db, {a, Table, schema}, []).
-
-check_options([{type, T}|Tl], Db, Rec)
-  when T==set; T==fifo; T==lifo; T=={keyed,fifo}; T=={keyed,lifo} ->
-    check_options(Tl, Db, Rec#table{type = T});
-check_options([{schema, S}|Tl], Db, Rec) when is_atom(S) ->
-    check_options(Tl, Db, Rec#table{schema = S});
-check_options([{encoding, E}|Tl], Db, Rec) ->
-    Rec1 = Rec#table{encoding = E},
-    kvdb_lib:check_valid_encoding(E),
-    check_options(Tl, Db, Rec1);
-check_options([{index, Ix}|Tl], Db, Rec) ->
-    case kvdb_lib:valid_indexes(Ix) of
-	ok -> check_options(Tl, Db, Rec#table{index = Ix});
-	{error, Bad} ->
-	    erlang:error({invalid_index, Bad})
-    end;
-check_options([], _, Rec) ->
-    Rec.
 
 ensure_schema(#db{ref = Ref} = Db, Opts) ->
     ETS = ets:new(kvdb_schema, [ordered_set, public]),

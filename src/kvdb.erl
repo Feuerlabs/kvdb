@@ -83,6 +83,7 @@
 	 extract/3,
 	 list_queue/3,
 	 list_queue/6,
+         list_queue/7,
 	 is_queue_empty/3,
 	 first_queue/2,
 	 next_queue/3,
@@ -591,6 +592,15 @@ list_queue(Name, Table, Q, Fltr, HeedBlock, Limit) ->
        kvdb_direct:list_queue(Ref, Table, Q, Fltr, HeedBlock, Limit),
        kvdb_direct:list_queue(db(Name), Table, Q, Fltr, HeedBlock, Limit),
        [Name, Table, Q, Fltr, Inactive, Limit]).
+
+list_queue(Name, Table, Q, Fltr, HeedBlock, Limit, Reverse)
+  when is_boolean(Reverse) ->
+    ?IF_TRANS(
+       Name,
+       kvdb_direct:list_queue(Ref, Table, Q, Fltr, HeedBlock, Limit, Reverse),
+       kvdb_direct:list_queue(
+         db(Name), Table, Q, Fltr, HeedBlock, Limit, Reverse),
+       [Name, Table, Q, Fltr, Inactive, Limit, Reverse]).
 
 
 -spec is_queue_empty(db_name(), table(), _Q::queue_name()) -> boolean().

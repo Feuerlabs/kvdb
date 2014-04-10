@@ -48,9 +48,13 @@
 	 extract/3,
 	 list_queue/3,
 	 list_queue/6,
+         list_queue/7,
 	 queue_insert/5,
 	 queue_delete/3,
 	 queue_read/3,
+         queue_head_read/3,
+         queue_head_write/4,
+         queue_head_delete/3,
 	 is_queue_empty/3,
 	 is_table/2,
 	 first_queue/2,
@@ -269,7 +273,8 @@ get(#db{ref = {#kvdb_ref{mod = M1, db = Db1} = KR1,
 	    end
     end.
 
-delete(#db{ref = {#kvdb_ref{mod=M1,db=Db1}, _KR2}}, Tab, Key) ->
+delete(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1, KR2}}, Tab, Key) ->
+    ensure_table(Tab, KR1, KR2),
     Res = M1:delete(Db1, Tab, Key),
     M1:int_write(Db1, {deleted, Tab, Key}, true),
     Res.
@@ -635,7 +640,7 @@ is_queue_empty(#db{ref = {K1, K2}} = Ref, Tab, Q) ->
     Filter = fun(active, K, O) -> {keep,{K,O}};
 		(_, _, _) -> skip
 	     end,
-    case do_list_queue(Ref, Tab, Q, Filter, _HeedBlock = true, 1) of
+    case do_list_queue(Ref, Tab, Q, Filter, _HeedBlock = true, 1, false) of
 	{[_|_], _} ->
 	    false;
 	_ ->
@@ -674,19 +679,23 @@ last(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 list_queue(Db, Tab, Q) ->
     list_queue(Db, Tab, Q, fun(_,_,O) -> {keep,O} end, false, infinity).
 
-list_queue(#db{ref = {K1, K2}} = Ref, Tab, Q, Filter, HeedBlock, Limit) ->
+list_queue(Ref, Tab, Q, Filter, HeedBlock, Limit) ->
+    list_queue(Ref, Tab, Q, Filter, HeedBlock, Limit, false).
+
+list_queue(#db{ref = {K1, K2}} = Ref, Tab, Q, Filter, HeedBlock, Limit, Reverse)
+  when is_boolean(Reverse) ->
     ensure_table(Tab, K1, K2),
-    do_list_queue(Ref, Tab, Q, Filter, HeedBlock, Limit).
+    do_list_queue(Ref, Tab, Q, Filter, HeedBlock, Limit, Reverse).
 
 do_list_queue(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
 			 #kvdb_ref{mod=M2,db=Db2}}}, Tab, Q,
-	      Filter, HeedBlock, Limit) ->
+	      Filter, HeedBlock, Limit, Reverse) ->
     MyFilter = fun(S,K,O) -> {keep, {K,{S,O}}} end,
     QM = #q_merge{filter = Filter, heedblock = HeedBlock,
 		  m = M1, db = Db1, tab = Tab,
 		  anydel = any_deleted(Db1, Tab)},
-    list_queue_(M1:list_queue(Db1, Tab, Q, MyFilter, HeedBlock, Limit),
-		M2:list_queue(Db2, Tab, Q, MyFilter, HeedBlock, Limit),
+    list_queue_(M1:list_queue(Db1, Tab, Q, MyFilter, HeedBlock, Limit, Reverse),
+		M2:list_queue(Db2, Tab, Q, MyFilter, HeedBlock, Limit, Reverse),
 		QM, Limit, Limit).
 
 list_queue_(R1, R2, _, _, _) when ?q_done(R1), ?q_done(R2) ->
@@ -787,6 +796,40 @@ do_queue_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
 	    end
     end.
 
+queue_head_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
+                           #kvdb_ref{mod=M2,db=Db2} = K2}}, Tab, Queue) ->
+    ensure_table(Tab, K1, K2),
+    case M1:queue_head_read(Db1, Tab, Queue) of
+        {error, not_found} ->
+            QHeadKey = make_queue_head_key(K1, Tab, Queue),
+            case M1:int_read(Db1, {deleted, Tab, QHeadKey}) of
+                {ok, true} ->
+                    {error, not_found};
+                _ ->
+                    M2:queue_head_read(Db2, Tab, Queue)
+            end;
+        Res ->
+            Res
+    end.
+
+queue_head_write(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}},
+                 Tab, Queue, Obj) ->
+    ensure_table(Tab, K1, K2),
+    Res = M1:queue_head_write(Db1, Tab, Queue, Obj),
+    QHeadKey = make_queue_head_key(K1, Tab, Queue),
+    M1:int_delete(Db1, {deleted, Tab, QHeadKey}),
+    Res.
+
+queue_head_delete(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,K2}}, Tab, Queue) ->
+    ensure_table(Tab, K1, K2),
+    Res = M1:queue_head_delete(Db1, Tab, Queue),
+    M1:int_write(Db1, {deleted, Tab, make_queue_head_key(K1, Tab, Queue)}),
+    Res.
+
+make_queue_head_key(#kvdb_ref{mod = M1, db = Db1}, Tab, Queue) ->
+    Type = M1:info(Db1, {Tab, type}),
+    kvdb_lib:q_head_key(Queue, Type).
+
 next(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 		#kvdb_ref{mod=M2,db=Db2} = K2}}, Tab, K) ->
     ensure_table(Tab, K1, K2),
@@ -821,7 +864,7 @@ pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
     Filter = fun(active, K, O) -> {keep,{K,O}};
 		(_, _, _) -> skip
 	     end,
-    case do_list_queue(Ref, Tab, Q, Filter, true, 2) of
+    case do_list_queue(Ref, Tab, Q, Filter, true, 2, false) of
 	{[{QKey, Obj}|Rest], _} ->
 	    _ = M1:extract(Db1, Tab, QKey), % we don't know where it came from.
 	    M1:int_write(Db1, {deleted, Tab, QKey}, true),
@@ -838,7 +881,7 @@ prel_pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
     Filter = fun(active, K, O) -> {keep,{K,O}};
 		(_, _, _) -> skip
 	     end,
-    case do_list_queue(Ref, Tab, Q, Filter, true, 2) of
+    case do_list_queue(Ref, Tab, Q, Filter, true, 2, false) of
 	{[{QKey, Obj}|Rest], _} ->
 	    M1:queue_insert(Db1, Tab, QKey, blocking, Obj),
 	    IsEmpty = (Rest =/= []),

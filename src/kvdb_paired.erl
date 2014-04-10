@@ -37,7 +37,7 @@
 -export([add_table/3, delete_table/2, list_tables/1]).
 -export([put/3, push/4, get/3, get_attrs/4, index_get/4, index_keys/4,
 	 update_counter/4, pop/3, prel_pop/3, extract/3, delete/3,
-	 list_queue/3, list_queue/6, is_queue_empty/3,
+	 list_queue/3, list_queue/6, list_queue/7, is_queue_empty/3,
 	 queue_read/3, queue_insert/5, queue_delete/3, mark_queue_object/4,
 	 queue_head_write/4, queue_head_read/3, queue_head_delete/3]).
 -export([first_queue/2, next_queue/3]).
@@ -124,14 +124,13 @@ load(#db{ref = {{M1,Db1}, {M2, Db2}}}) ->
     lists:foreach(
       fun(T) ->
 	      M1:delete_table(Db1, T),
-	      TabR = M2:info(Db2, {T, tabrec}),
+	      #table{type = Type} = TabR = M2:info(Db2, {T, tabrec}),
 	      M1:add_table(Db1, T, TabR),
-	      case TabR#table.type of
-		  set ->
+	      IsQueue = kvdb_lib:valid_queue(Type),
+	      if Type == set ->
 		      chunk_load(M2:prefix_match(Db2, T, <<>>, 1000),
 				 M1, Db1, T);
-		  Type when Type==fifo; Type==lifo;
-			    Type=={keyed,fifo}; Type=={keyed,lifo} ->
+		 IsQueue == true ->
 		      Filter = fun(St, QKey, Obj) ->
 				       {keep, {QKey, St, Obj}}
 			       end,
@@ -257,6 +256,9 @@ list_queue(#db{ref = {{M,Db},_}}, T, Q) ->
 
 list_queue(#db{ref = {{M,Db},_}}, T, Q, Fltr, HeedBlock, Limit) ->
     M:list_queue(Db, T, Q, Fltr, HeedBlock, Limit).
+
+list_queue(#db{ref = {{M,Db},_}}, T, Q, Fltr, HeedBlock, Limit, Reverse) ->
+    M:list_queue(Db, T, Q, Fltr, HeedBlock, Limit, Reverse).
 
 is_queue_empty(#db{ref = {{M,Db},_}}, T, Q) ->
     M:is_queue_empty(Db, T, Q).

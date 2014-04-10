@@ -132,7 +132,7 @@ put(#kvdb_ref{mod = DbMod} = DbRef, Table0, {K,As,V} = _O) when is_list(As) ->
     Table = table_name(Table0),
     put_(DbRef, Table, {K, fix_attrs(As), V}).
 
-put_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef, Table, Obj) ->
+put_(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table, Obj) ->
     if_table(DbMod, Db, Table,
 	     fun() ->
 		     case DbMod:put(Db, Table,
@@ -232,7 +232,7 @@ push(#kvdb_ref{mod = DbMod} = DbRef, Table0, Q, {K,As,V} = _O)
     Table = table_name(Table0),
     push_(DbRef, Table, Q, {K, fix_attrs(As), V}).
 
-push_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
+push_(#kvdb_ref{mod = DbMod, db = Db} = DbRef,
 	 Table, Q, Obj) ->
     if_table(
       DbMod, Db, Table,
@@ -241,6 +241,7 @@ push_(#kvdb_ref{mod = DbMod, db = Db, schema = Schema} = DbRef,
 			      Actual = schema_validate(
 					 DbRef, put, Obj)) of
 		  {ok, ActualKey} ->
+                      update_queue_head(DbRef, Table, Q, push),
 		      on_update({q_op,push,Q,false}, DbRef, Table,
 				{Actual,Obj}),
 		      {ok, ActualKey};
@@ -271,6 +272,7 @@ pop(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Table0, Q) ->
       fun() ->
 	      case DbMod:pop(Db, Table, Q) of
 		  {ok, Obj, IsEmpty} ->
+                      update_queue_head(DbRef, Table, Q, pop),
 		      on_update({q_op,pop,Q,IsEmpty}, DbRef, Table, Obj),
 		      {ok, Obj};
 		  blocked -> blocked;
@@ -315,6 +317,7 @@ extract(#kvdb_ref{mod = DbMod,
     Table = table_name(Table0),
     case DbMod:extract(Db, Table, Key) of
 	{ok, Obj, Q, IsEmpty} ->
+            update_queue_head(DbRef, Table, Q, pop),
 	    on_update({q_op,extract,Q,IsEmpty}, DbRef, Table, Key),
 	    {ok, Obj};
 	Other ->
@@ -427,6 +430,69 @@ queue_head_delete(#kvdb_ref{mod = DbMod, db = Db}, Table0, Queue) ->
 	     fun() ->
 		     DbMod:queue_head_delete(Db, Table, Queue)
 	     end).
+
+update_queue_head(Ref, Table, Q, Op) ->
+    case queue_head_read(Ref, Table, Q) of
+        {ok, Head} ->
+            do_update_queue_head(Op, Head, Ref, Table, Q);
+        {error, not_found} ->
+            new_queue_head(Op, Ref, Table, Q)
+    end.
+
+do_update_queue_head(Op, Head, Ref, Table, Q) ->
+    Type = info(Ref, {Table, type}),
+    Val = queue_head_value(Head),
+    W = fun(V) ->
+                queue_head_write(Ref, Table, Q, queue_head_value(Head, V))
+        end,
+    case {queue_limit(Type), Val, Op} of
+        {none, <<Sz:32>>, push} -> W(<<(Sz+1):32>>);
+        {Lim, <<Sz:32>>, push} ->
+            case Sz+1 of
+                Sz1 when Sz1 > Lim ->
+                    %% no need to update head
+                    delete_last(Ref, Table, Q);
+                Sz1 ->
+                    W(<<Sz1:32>>)
+            end;
+        {_, <<Sz:32>>, pop} -> W(<<(Sz-1):32>>);
+        {_, _,  pop} -> W(<<0:32>>)
+    end.
+
+new_queue_head(Op, Ref, Table, Q) ->
+    Enc = info(Ref, {Table, encoding}),
+    V = case Op of
+            push -> 1;
+            pop -> 0
+        end,
+    Obj = case Enc of
+              {_,_,_} -> {?Q_HEAD_KEY, [], <<V:32>>};
+              {_,_}   -> {?Q_HEAD_KEY, <<V:32>>};
+              _ -> {?Q_HEAD_KEY, <<V:32>>}
+          end,
+    queue_head_write(Ref, Table, Q, Obj).
+
+queue_head_value({_,V}) -> V;
+queue_head_value({_,_,V}) -> V.
+
+queue_head_value({K,_}, V) -> {K,V};
+queue_head_value({K,A,_}, V) -> {K,A,V}.
+
+queue_limit(T) when is_atom(T) -> none;
+queue_limit({keyed, _}) -> none;
+queue_limit({keyed, _, L}) -> L;
+queue_limit({T, L}) when T==fifo; T==lifo -> L.
+
+delete_last(Ref, Table, Q) ->
+    Filter = fun(_, K, _) -> {keep, K} end,
+    case list_queue(
+           Ref, Table, Q, Filter, _HeedBlock = false, 1) of
+        {[K], _} ->
+            queue_delete(Ref, Table, K);
+        _ ->
+            %% ???
+            error(cannot_delete_last)
+    end.
 
 -spec delete(Db::db_ref(), Table::table(), Key::binary()) ->
 		       ok | {error, any()}.

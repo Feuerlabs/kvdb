@@ -26,10 +26,11 @@
 	 %% put_attrs/4,
 	 get/3, index_get/4, index_keys/4,
 	 pop/3, prel_pop/3, extract/3,
-	 list_queue/3, list_queue/6, is_queue_empty/3,
+	 list_queue/3, list_queue/6, list_queue/7, is_queue_empty/3,
 	 first_queue/2, next_queue/3,
 	 mark_queue_object/4,
-	 queue_insert/5, queue_delete/3, queue_read/3]).
+	 queue_insert/5, queue_delete/3, queue_read/3,
+         queue_head_read/3, queue_head_write/4, queue_head_delete/3]).
 -export([first/2, last/2, next/3, prev/3]).
 -export([prefix_match/3, prefix_match/4, prefix_match_rel/5]).
 -export([info/2, get_schema_mod/2, dump_tables/1]).
@@ -77,9 +78,7 @@ dump_table(Ref, T, Db) ->
 	    case type(Db, T) of
 		set ->
 		    [format_row(T, Cols, R) || R <- Rows];
-		TType when TType==fifo; TType==lifo;
-			   element(1, TType) == fifo;
-			   element(1, TType) == lifo ->
+		TType ->
 		    [format_q_row(T, TType, encoding(Db, T), Cols, R) ||
 			R <- Rows]
 	    end;
@@ -107,6 +106,7 @@ format_q_row(T, Type, Enc, ["key","attrs","value","active"], {{blob,Bk},
     {q_obj, T, Q, Bk, {Ko, dec(attrs, Ba, Enc), dec(value, Bv, Enc)},
      active_to_status(A)}.
 
+active_to_status(-1) -> head;
 active_to_status(0) -> inactive;
 active_to_status(1) -> active;
 active_to_status(2) -> blocking.
@@ -123,8 +123,8 @@ open(DbName, Options) ->
     Res = case {proplists:get_value(file, Options),
 		proplists:get_value(file, DbOptions)} of
 	      {undefined,undefined} ->
-		  sqlite3:open(IntName, [{file,atom_to_list(IntName)++".db"}|
-					 DbOptions]);
+		  File = kvdb_lib:db_file(DbName),
+		  sqlite3:open(IntName, [{file, File}|DbOptions]);
 	      {F, undefined} ->
 		  sqlite3:open(IntName, [{file, F}|DbOptions]);
 	      _ ->
@@ -150,7 +150,7 @@ close(#db{ref = Db, metadata = ETS}) ->
     sqlite3:close(Db).
 
 add_table(#db{encoding = Enc} = Db,Table,Opts) when is_list(Opts) ->
-    TabR = check_options(Opts, Db, #table{name = Table, encoding = Enc}),
+    TabR = kvdb_lib:make_tabrec(Table, Opts, #table{encoding = Enc}),
     add_table(Db, Table, TabR);
 add_table(#db{ref = Ref} = Db, Table, #table{} = TabR) ->
     case schema_lookup(Db, {table, Table}, undefined) of
@@ -166,11 +166,10 @@ add_table(#db{ref = Ref} = Db, Table, #table{} = TabR) ->
 			       [{key, blob, primary_key},
 				{value, blob}]
 		       end,
-	    Columns = case TabR#table.type of
-			  Type when Type==fifo; Type==lifo;
-				    element(1,Type) == keyed ->
+	    Columns = case kvdb_lib:valid_queue(TabR#table.type) of
+			  true ->
 			      Columns0 ++ [{active, integer, [{default,1}]}];
-			  _ ->
+			  false ->
 			      Columns0
 		      end,
 	    case sqlite3:create_table(Ref, Table, Columns) of
@@ -310,7 +309,8 @@ update_counter(#db{} = Db, Table, K, Incr) ->
 
 push(#db{ref = Ref} = Db, Table, Q, {Key, Value}) ->
     Type = type(Db, Table),
-    if Type == fifo; Type == lifo; element(1, Type) == keyed ->
+    case kvdb_lib:valid_queue(Type) of
+	true ->
 	    Enc = encoding(Db, Table),
 	    {ActualKey, QKey} = kvdb_lib:actual_key(Enc, Type, Q, Key),
 	    case insert_or_replace(
@@ -321,12 +321,13 @@ push(#db{ref = Ref} = Db, Table, Q, {Key, Value}) ->
 		{error, _} = Error ->
 		    Error
 	    end;
-       true ->
+       false ->
 	    {error, badarg}
     end;
 push(#db{ref = Ref} = Db, Table, Q, {Key, Attrs, Value}) ->
     Type = type(Db, Table),
-    if Type == fifo; Type == lifo; element(1, Type) == keyed ->
+    case kvdb_lib:valid_queue(Type) of
+	true ->
 	    Enc = encoding(Db, Table),
 	    {ActualKey, QKey} = kvdb_lib:actual_key(Enc, Type, Q, Key),
 	    case insert_or_replace(
@@ -338,7 +339,7 @@ push(#db{ref = Ref} = Db, Table, Q, {Key, Attrs, Value}) ->
 		{error,_} = Error ->
 		    Error
 	    end;
-       true ->
+       false ->
 	    {error, badarg}
     end.
 
@@ -348,8 +349,8 @@ index(#db{} = Db, Table) ->
 encoding(#db{encoding = Enc} = Db, Table) ->
     schema_lookup(Db, {a, Table, encoding}, Enc).
 
-key_encoding(E) when E==sext; element(1, E) == sext -> sext;
-key_encoding(E) when E==raw ; element(1, E) == raw  -> raw.
+%% key_encoding(E) when E==sext; element(1, E) == sext -> sext;
+%% key_encoding(E) when E==raw ; element(1, E) == raw  -> raw.
 
 
 type(Db, Table) ->
@@ -457,10 +458,13 @@ get(Db, Table, Key) ->
 	    erlang:error(illegal)
     end.
 
-get_(#db{ref = Ref} = Db, Table, Key, IncludeActive) when
+get_(#db{} = Db, Table, Key, IncludeActive) when
       is_boolean(IncludeActive) ->
     Enc = encoding(Db, Table),
-    case sqlite3:read(Ref, Table, {key, {blob, enc(key, Key, Enc)}}) of
+    get_(Db, Table, Key, enc(key, Key, Enc), Enc, IncludeActive).
+
+get_(#db{ref = Ref}, Table, Key, EncKey, Enc, IncludeActive) ->
+    case sqlite3:read(Ref, Table, {key, {blob, EncKey}}) of
 	[{columns,["key","value","active"]},
 	 {rows,[{_,{blob,Value},_} = Data]}] ->
 	    if IncludeActive ->
@@ -501,8 +505,8 @@ pop(Db, Table, Q) ->
     case type(Db, Table) of
 	set -> erlang:error(illegal);
 	T ->
-	    Remove = fun(Obj, _) ->
-			     delete(Db, Table, element(1, Obj))
+	    Remove = fun(QKey, _, _) ->
+			     queue_delete(Db, Table, QKey)
 		     end,
 	    do_pop(Db, Table, T, Q, Remove, false)
     end.
@@ -512,7 +516,7 @@ prel_pop(Db, Table, Q) ->
 	set ->
 	    erlang:error(illegal);
 	T ->
-	    Remove = fun(Obj, Enc) ->
+	    Remove = fun(_QKey, Obj, Enc) ->
 			     mark_queue_object(Db, Table, Enc, Obj, blocking)
 		     end,
 	    do_pop(Db, Table, T, Q, Remove, true)
@@ -553,12 +557,14 @@ mark_cols({K,V}, Enc) ->
 
 
 queue_insert(#db{ref = Ref} = Db, Table, #q_key{} = QKey, St, Obj) when
-      St==inactive; St==active; St==blocking ->
+      St==head; St==inactive; St==active; St==blocking ->
     Type = type(Db, Table),
-    if Type == fifo; Type == lifo; element(1, Type) == keyed ->
+    case kvdb_lib:valid_queue(Type) of
+	true ->
 	    Enc = encoding(Db, Table),
 	    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
 	    ActiveCol = case St of
+                            head     -> {active, -1};
 			    inactive -> {active, 0};
 			    active   -> {active, 1};
 			    blocking -> {active, 2}
@@ -567,12 +573,12 @@ queue_insert(#db{ref = Ref} = Db, Table, #q_key{} = QKey, St, Obj) when
 		   Ref, Table,
 		   case Obj of
 		       {_, Attrs, Value} ->
-			   [{key, {blob, enc(key, Key, Enc)}},
+			   [{key, {blob, Key}},
 			    {attrs, {blob, enc(attrs, Attrs, Enc)}},
 			    {value, {blob, enc(value, Value, Enc)}},
 			    ActiveCol];
 		       {_, Value} ->
-			   [{key, {blob, enc(key, Key, Enc)}},
+			   [{key, {blob, Key}},
 			    {value, {blob, enc(value, Value, Enc)}},
 			    ActiveCol]
 		   end) of
@@ -581,7 +587,7 @@ queue_insert(#db{ref = Ref} = Db, Table, #q_key{} = QKey, St, Obj) when
 		{error,Error} ->
 		    erlang:error(Error)
 	    end;
-       true ->
+       false ->
 	    erlang:error(badarg)
     end.
 
@@ -590,70 +596,109 @@ queue_delete(Db, Table, #q_key{} = QKey) ->
     ok.
 
 
-do_pop(#db{} = Db, Table, Type, Q, Remove, ReturnKey) ->
+do_pop(#db{ref = Ref} = Db, Table, Type, Q, Remove, ReturnKey) ->
     Enc = encoding(Db, Table),
-    QPfx = kvdb_lib:queue_prefix(Enc, Q),
-    EncQPfx = kvdb_lib:enc_prefix(key, QPfx, Enc),
-    EncFirst = kvdb_lib:enc(key, queue_meta(Enc, Q, order(Type)), Enc),
-    Rel = {true, EncFirst},
-    Fltr = fun(inactive, _, _) -> skip;
-	      (_, Kr, O) ->
-		   {keep, {Kr,O}}
-	   end,
-    case case Type of
-	     _ when Type==fifo; element(2, Type) == fifo ->
-		 prefix_match_(Db, Table, EncQPfx, Rel, QPfx, Enc,
-			       Fltr, true, 2, asc);
-	     _ when Type==lifo; element(2, Type) == lifo ->
-		 prefix_match_(Db, Table, EncQPfx, Rel, QPfx, Enc,
-			       Fltr, true, 2, desc);
-	     _ -> erlang:error(illegal)
-	 end of
-	{[{RawKey,Obj}|More], _} ->
-	    Remove(setelement(1, Obj, RawKey), Enc),
-	    if ReturnKey ->
-		    QKey = kvdb_lib:split_queue_key(Enc,Type,RawKey),
-		    {ok, Obj, QKey, More == []};
-	       true ->
-		    {ok, Obj, More == []}
-	    end;
-	{[], _} ->
-	    done;
-	blocked ->
-	    blocked
+    %% QPfx = kvdb_lib:queue_prefix(Enc, Q),
+    %% EncQPfx = kvdb_lib:enc_prefix(key, QPfx, Enc),
+    Order = order(Type),
+    EncFirst = kvdb_lib:enc(key, queue_meta(Enc, Q, Order), Enc),
+    {Comp,Dir} = case Order of
+		     asc  -> {">", "ASC"};
+		     desc -> {"<", "DESC"}
+		 end,
+    case select(Ref, ["SELECT ", sel_cols(Enc,Type), " FROM ", Table,
+                      " WHERE key ", Comp, " ? AND active >= 1"
+                      " ORDER BY key ", Dir, " LIMIT 2"], Enc,
+               [{blob, EncFirst}]) of
+	[{_, blocking}|_] ->
+	    blocked;
+        [{Obj,active}|Rest] ->
+            RawKey = element(1, Obj),
+            case kvdb_lib:split_queue_key(Enc, Type, RawKey) of
+                #q_key{queue = Q, key = K} = QKey ->
+                    Remove(QKey, Obj, Enc),
+                    More = is_empty(Rest, Enc, Type, Q),
+                    RetObj = setelement(1, Obj, K),
+                    if ReturnKey ->
+                            {ok, RetObj, QKey, More};
+                       true ->
+                            {ok, RetObj, More}
+                    end;
+                _ ->
+                    done
+            end;
+        [] ->
+            done
     end.
 
-extract(#db{} = Db, Table, #q_key{queue = Q} = QKey) ->
+is_empty([], _, _, _) ->
+    true;
+is_empty([{Obj,_}|_], Enc, Type, Q) ->
+    case kvdb_lib:split_queue_key(Enc, Type, element(1,Obj)) of
+        #q_key{queue = Q} -> true;
+        _ -> false
+    end.
+
+extract(#db{ref = Ref} = Db, Table, #q_key{queue = Q} = QKey) ->
     Type = type(Db, Table),
     Enc = encoding(Db, Table),
-    if Type == fifo; Type == lifo; element(1, Type) == keyed ->
+    case kvdb_lib:valid_queue(Type) of
+	true ->
 	    case queue_read(Db, Table, QKey) of
 		{ok, _, Obj} ->
 		    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
-		    delete(Db, Table, Key),
+                    sqlite3:delete(Ref, Table, {key,{blob, Key}}),
 		    IsEmpty = is_queue_empty(Db, Table, Q),
 		    {ok, Obj, Q, IsEmpty};
 		{error, _} = Error ->
 		    Error
 	    end;
-       true ->
+       false ->
 	    erlang:error(illegal)
     end.
 
 queue_read(#db{} = Db, Table, #q_key{key = K} = QKey) ->
-        Type = type(Db, Table),
+    Type = type(Db, Table),
     Enc = encoding(Db, Table),
-    if Type == fifo; Type == lifo; element(1, Type) == keyed ->
-	    Key = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
-	    case get_(Db, Table, Key, _IncludeActive = true) of
+    case kvdb_lib:valid_queue(Type) of
+	true ->
+	    EncKey = kvdb_lib:q_key_to_actual(QKey, Enc, Type),
+	    case get_(Db, Table, QKey, EncKey, Enc, _IncludeActive = true) of
 		{ok, {St, Obj}} ->
 		    {ok, St, setelement(1, Obj, K)};
 		{error, _} = Error ->
 		    Error
 	    end;
-       true ->
+	false ->
 	    erlang:error(illegal)
     end.
+
+queue_head_read(Db, Table, Queue) ->
+    Type = type(Db, Table),
+    HeadKey = kvdb_lib:q_head_key(Queue, Type),
+    case queue_read(Db, Table, HeadKey) of
+        {ok, _St, Obj} ->
+            {ok, Obj};
+        Other ->
+            Other
+    end.
+
+queue_head_write(Db, Table, Queue, Obj) ->
+    Type = type(Db, Table),
+    Enc = encoding(Db, Table),
+    case kvdb_lib:matches_encoding(Enc, Obj) of
+        true ->
+            queue_insert(
+              Db, Table, kvdb_lib:q_head_key(Queue, Type), head, Obj);
+        false ->
+            erlang:error({encoding_mismatch, [Enc, Obj]})
+    end.
+
+queue_head_delete(Db, Table, Queue) ->
+    Type = type(Db, Table),
+    HeadKey = kvdb_lib:q_head_key(Queue, Type),
+    queue_delete(Db, Table, HeadKey).
+
 
 is_queue_empty(Db, Table, Q) ->
     case list_queue(Db, Table, Q, fun(inactive,_,_) -> skip;
@@ -675,11 +720,16 @@ list_queue(Db, Table, Q, Limit) ->
     %% status flag by default. Is this a useful combination?
     list_queue(Db, Table, Q, fun(_,_,O) -> {keep,O} end, false, Limit).
 
-list_queue(Db, Table, Q, Fltr, HeedBlock, Limit) when Limit > 0 ->
-    Type = type(Db, Table),
-    list_queue(Db, Table, Q, Fltr, HeedBlock, order(Type), Limit).
+list_queue(Db, Table, Q, Fltr, HeedBlock, Limit) ->
+    list_queue(Db, Table, Q, Fltr, HeedBlock, Limit, false).
 
-list_queue(Db, Table, Q, Fltr, HeedBlock, Order, Limit)
+list_queue(Db, Table, Q, Fltr, HeedBlock, Limit, Reverse)
+  when Limit > 0, is_boolean(Reverse) ->
+    Type = type(Db, Table),
+    Dir = kvdb_lib:queue_list_direction(Type, Reverse),
+    list_queue_(Db, Table, Q, Fltr, HeedBlock, order(Dir), Limit).
+
+list_queue_(Db, Table, Q, Fltr, HeedBlock, Order, Limit)
   when Order==asc; Order==desc ->
     Enc = encoding(Db, Table),
     QPfx = kvdb_lib:queue_prefix(Enc, Q),
@@ -687,26 +737,32 @@ list_queue(Db, Table, Q, Fltr, HeedBlock, Order, Limit)
     EncFirst = kvdb_lib:enc(key, queue_meta(Enc, Q, Order), Enc),
     prefix_match_(Db, Table, EncQPfx, {true, EncFirst}, QPfx, Enc, Fltr,
 		  HeedBlock, Limit, Order);
-list_queue(_, _, _, _, _, _, 0) ->
+list_queue_(_, _, _, _, _, _, 0) ->
     [].
 
 queue_meta(Enc, Q, asc ) -> kvdb_lib:queue_prefix(Enc, Q, first);
 queue_meta(Enc, Q, desc) -> kvdb_lib:queue_prefix(Enc, Q, last).
 
+order({keyed,T}) -> order(T);
+order({keyed,T,_}) -> order(T);
+order({T,_}) -> order(T);
 order(fifo) -> asc;
-order(lifo) -> desc;
-order({_,fifo}) -> asc;
-order({_,lifo}) -> desc;
-order(_) -> error(illegal).
+order(lifo) -> desc.
 
-
-first_queue(#db{} = Db, Table) ->
+first_queue(#db{ref = Ref} = Db, Table) ->
     Type = type(Db, Table),
     case Type of
 	set -> erlang:error(illegal);
 	_ ->
 	    Enc = encoding(Db, Table),
-	    case first(Db, Table, Enc) of
+            Where = case type(Db, Table) of
+                        set -> "";
+                        _ -> " WHERE active >= 1"  % ignore 'head' and 'inactive'
+                    end,
+            Res = select_one(
+                    Ref, Enc, ["SELECT ", sel_cols(Enc), " FROM ", Table, Where,
+                               " ORDER BY key ASC LIMIT 1"]),
+	    case Res of
 		{ok, Obj} ->
 		    Key = element(1, Obj),
 		    #q_key{queue = Q} =
@@ -719,17 +775,9 @@ first_queue(#db{} = Db, Table) ->
 
 next_queue(Db, Table, Q) ->
     Enc = encoding(Db, Table),
-    KEnc = key_encoding(Enc),
+    %% KEnc = key_encoding(Enc),
     Type = type(Db, Table),
-    Pfx = if Type == fifo; Type == lifo ->
-		  kvdb_lib:queue_prefix(KEnc, Q, last);
-	     element(1, Type) == keyed, KEnc == raw ->
-		  kvdb_lib:raw_queue_prefix(Q, last);
-	     element(1, Type) == keyed, KEnc == sext ->
-		  kvdb_lib:queue_prefix(KEnc, Q);
-	     true ->
-		  error(illegal)
-	  end,
+    Pfx = kvdb_lib:queue_prefix(Enc, Q, last),
     EncPfx = enc_queue_prefix(Pfx, Enc),
     next_queue_(Db, Table, Q, EncPfx, Type, Enc).
 
@@ -739,7 +787,7 @@ next_queue_(Db, Table, Q, Prev, Type, Enc) ->
 	    Key = element(1, Obj),
 	    case kvdb_lib:split_queue_key(Enc, Type, Key) of
 		#q_key{queue = Q} ->
-		    next_queue_(Db, Table, Q, Key, Type, Enc);
+		    next_queue_(Db, Table, Q, enc(key, Key, Enc), Type, Enc);
 		#q_key{queue = NextQ} ->
 		    {ok, NextQ}
 	    end;
@@ -997,12 +1045,14 @@ decode_obj({{blob,K},{blob,As},{blob,V}, A}, Enc) when A==0; A==1; A==2 ->
 decode_obj({{blob,K},{blob,As},{blob,V}}, Enc) ->
     {dec(key,K,Enc), dec(attrs, As, Enc), dec(value,V,Enc)}.
 
-obj_status({{blob,_}, {blob,_}, 0}) -> inactive;
-obj_status({{blob,_}, {blob,_}, 1}) -> active;
-obj_status({{blob,_}, {blob,_}, 2}) -> blocking;
-obj_status({{blob,_}, {blob,_}, {blob,_}, 0}) -> inactive;
-obj_status({{blob,_}, {blob,_}, {blob,_}, 1}) -> active;
-obj_status({{blob,_}, {blob,_}, {blob,_}, 2}) -> blocking;
+obj_status({{blob,_}, {blob,_}, -1}) -> head;
+obj_status({{blob,_}, {blob,_}, 0})  -> inactive;
+obj_status({{blob,_}, {blob,_}, 1})  -> active;
+obj_status({{blob,_}, {blob,_}, 2})  -> blocking;
+obj_status({{blob,_}, {blob,_}, {blob,_}, -1}) -> head;
+obj_status({{blob,_}, {blob,_}, {blob,_}, 0})  -> inactive;
+obj_status({{blob,_}, {blob,_}, {blob,_}, 1})  -> active;
+obj_status({{blob,_}, {blob,_}, {blob,_}, 2})  -> blocking;
 obj_status(_) -> active.
 
 decr(infinity) ->
@@ -1088,23 +1138,6 @@ select_one(Ref, Enc, SQL, Params) ->
 	    {ok, dec(key, Key, Enc)}
     end.
 
-
-check_options([{type, T}|Tl], Db, Rec)
-  when T==set; T==lifo; T==fifo; T=={keyed,fifo}; T=={keyed,lifo} ->
-    check_options(Tl, Db, Rec#table{type = T});
-check_options([{encoding, E}|Tl], Db, Rec) ->
-    Rec1 = Rec#table{encoding = E},
-    kvdb_lib:check_valid_encoding(E),
-    check_options(Tl, Db, Rec1);
-check_options([{index, Ix}|Tl], Db, Rec) ->
-    case kvdb_lib:valid_indexes(Ix) of
-	ok -> check_options(Tl, Db, Rec#table{index = Ix});
-	{error, Bad} ->
-	    erlang:error({invalid_index, Bad})
-    end;
-check_options([], _, Rec) ->
-    Rec.
-
 ensure_schema(#db{ref = Ref} = Db) ->
     ETS = ets:new(kvdb_schema, [ordered_set, public]),
     Db1 = Db#db{metadata = ETS},
@@ -1134,16 +1167,30 @@ to_bin(L) when is_list(L) ->
 
 whole_table(Ref, Table, Enc) ->
     SQL = ["SELECT ", sel_cols(Enc), " FROM ", Table],
-    case sqlite3:sql_exec(Ref, SQL) of
-	[{columns, [_,_,_]},
-	 {rows, Rows}] ->
-	    [{dec(key,K,Enc), dec(attrs,A,Enc), dec(value,V,Enc)} || {{blob,K},
-								      {blob,A},
-								      {blob,V}} <- Rows];
-	[{columns, [_,_]},
+    select(Ref, SQL, Enc).
+
+select(Ref, SQL, Enc) ->
+    select(Ref, SQL, Enc, []).
+
+select(Ref, SQL, Enc, Params) ->
+    case sqlite3:sql_exec(Ref, SQL, Params) of
+	[{columns, ["key","value"]},
 	 {rows, Rows}] ->
 	    [{dec(key,K,Enc), dec(value,V,Enc)} || {{blob,K},
-						    {blob,V}} <- Rows]
+						    {blob,V}} <- Rows];
+	[{columns, ["key","value","active"]},
+	 {rows, Rows}] ->
+	    [{{dec(key,K,Enc), dec(value,V,Enc)},
+	      active_to_status(Act)} || {{blob,K},{blob,V},Act} <- Rows];
+	[{columns, ["key","attrs","value"]},
+	 {rows, Rows}] ->
+	    [{dec(key,K,Enc), dec(attrs,A,Enc), dec(value,V,Enc)}
+	     || {{blob,K},{blob,A},{blob,V}} <- Rows];
+	[{columns, ["key","attrs","value","active"]},
+	 {rows, Rows}] ->
+	    [{{dec(key,K,Enc), dec(attrs,A,Enc), dec(value,V,Enc)},
+	      active_to_status(Act)}
+	     || {{blob,K},{blob,A},{blob,V},Act} <- Rows]
     end.
 
 schema_write(#db{metadata = ETS} = Db, Item) ->
