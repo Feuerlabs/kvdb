@@ -12,6 +12,7 @@
 %%%
 -module(kvdb_lib).
 -export([table_name/1,
+	 db_file/1,
 	 valid_table_name/1,
 	 index_vals/4,
 	 valid_indexes/1,
@@ -31,6 +32,8 @@
          q_head_key/2,
 	 queue_prefix/2,
 	 queue_prefix/3,
+	 valid_queue/1,
+	 queue_list_direction/1,
          queue_list_direction/2,
 	 raw_queue_prefix/2,
 	 timestamp/0, timestamp/1,
@@ -47,7 +50,9 @@
 	 process_log_event/3,
 	 on_update/4,
 	 commit/2,
-	 make_tabrec/2]).
+	 make_tabrec/2,
+	 make_tabrec/3,
+	 tabrec_to_list/1]).
 
 -export([escape/1, unescape/1]).
 
@@ -80,6 +85,12 @@ table_name(Table) when is_binary(Table) ->
     Table;
 table_name(Table) when is_list(Table) ->
     list_to_binary(Table).
+
+db_file(DbName) ->
+    NameStr = kvdb_lib:good_string(DbName),
+    File = NameStr ++ ".db",
+    filelib:ensure_dir(File),
+    File.
 
 
 index_vals(Ixs, K, Attrs, ValF) ->
@@ -313,16 +324,29 @@ queue_prefix(Enc, Q, End) when Enc == sext; element(1, Enc) == sext ->
 	    {Q, a, '_'}
     end.
 
+queue_list_direction(Type) ->
+    queue_list_direction(Type, false).
+
 queue_list_direction(Type, Reverse) ->
-    if Type == lifo; element(2, Type) == lifo ->
-            if Reverse -> fifo;
-               true -> lifo
-            end;
-       true ->
-            if Reverse -> lifo;
-               true -> fifo
-            end
+    Dir = if Type == lifo; element(2, Type) == lifo -> lifo;
+	     Type == fifo; element(2, Type) == fifo -> fifo;
+	     element(1,Type) == fifo -> fifo;
+	     element(1,Type) == lifo -> lifo
+	  end,
+    if Reverse ->
+	    case Dir of
+		fifo -> lifo;
+		lifo -> fifo
+	    end;
+       true -> Dir
     end.
+
+queue_order({keyed,_} = T) -> T;
+queue_order({keyed,D,_}) -> {keyed,D};
+queue_order({fifo,_}) -> fifo;
+queue_order({lifo,_}) -> lifo;
+queue_order(fifo) -> fifo;
+queue_order(lifo) -> lifo.
 
 actual_key(Enc, Q, Key) ->
     actual_key(Enc, fifo, Q, Key).
@@ -414,10 +438,13 @@ datetime_to_timestamp({{{_Y,_Mo,_D},{_H,_Mi,_S}} = DT, US}) ->
 %% or greater than (".") "-".
 %% CORRECTION: Since '.' and '-' are not escapable, we can't use them.
 %% Use instead '$', '%', and '&' as separators.
-raw_queue_head_key(Q, Type) when Type == fifo; element(2,Type) == fifo ->
-    <<(escape(Q))/binary, ?Q_SEP_FLOOR>>;
-raw_queue_head_key(Q, Type) when Type == lifo; element(2,Type) == lifo ->
-    <<(escape(Q))/binary, ?Q_SEP_CEIL>>.
+raw_queue_head_key(Q, Type) ->
+    case queue_list_direction(Type) of
+	fifo ->
+	    <<(escape(Q))/binary, ?Q_SEP_FLOOR>>;
+	lifo ->
+	    <<(escape(Q))/binary, ?Q_SEP_CEIL>>
+    end.
 
 %% For the sext-encoded queue head, we make use of the fact that we can decode
 %% a sext-encoded term followed by a non-sext sequence. Thus, we prefix-encode
@@ -425,25 +452,32 @@ raw_queue_head_key(Q, Type) when Type == lifo; element(2,Type) == lifo ->
 %% (127) any sext type tag.
 sext_queue_head_key(Q, Type) ->
     Pfx = sext:prefix({Q,'_','_'}),
-    if Type == fifo; element(2, Type) == fifo ->
+    case queue_list_direction(Type) of
+	fifo ->
 	    <<Pfx/binary, 0>>;
-       Type == lifo; element(2, Type) == lifo ->
+	lifo ->
 	    <<Pfx/binary, 127>>
     end.
 
-q_head_key(Q, Type) when Type == fifo; Type == {keyed, fifo} ->
-    #q_key{queue = Q, ts = ?Q_HEAD_FLOOR, key = ?Q_HEAD_KEY};
-q_head_key(Q, Type) when Type == lifo; Type == {keyed, lifo} ->
-    #q_key{queue = Q, ts = ?Q_HEAD_CEIL,  key = ?Q_HEAD_KEY}.
+q_head_key(Q, Type) ->
+    case queue_list_direction(Type) of
+	fifo ->
+	    #q_key{queue = Q, ts = ?Q_HEAD_FLOOR, key = ?Q_HEAD_KEY};
+	lifo ->
+	    #q_key{queue = Q, ts = ?Q_HEAD_CEIL,  key = ?Q_HEAD_KEY}
+    end.
 
-raw_queue_key(Q, fifo, ?Q_HEAD_FLOOR, ?Q_HEAD_KEY) ->
-    raw_queue_head_key(Q, fifo);
-raw_queue_key(Q, lifo, ?Q_HEAD_CEIL, ?Q_HEAD_KEY) ->
-    raw_queue_head_key(Q, lifo);
-raw_queue_key(Q, {keyed,_}, TS, K) ->
-    raw_queue_keyed_key_(Q, TS, K);
-raw_queue_key(Q, _, TS, K) ->
-    raw_queue_key_(Q, TS, K).
+raw_queue_key(Q, T, TS, K) ->
+    case {queue_order(T), TS, K} of
+	{fifo, ?Q_HEAD_FLOOR, ?Q_HEAD_KEY} ->
+	    raw_queue_head_key(Q, fifo);
+	{lifo, ?Q_HEAD_CEIL, ?Q_HEAD_KEY} ->
+	    raw_queue_head_key(Q, lifo);
+	{{keyed,_}, _, _} ->
+	    raw_queue_keyed_key_(Q, TS, K);
+	_ ->
+	    raw_queue_key_(Q, TS, K)
+    end.
 
 raw_queue_key_(Q, TS, K) ->
     <<(escape(Q))/binary, ?Q_SEP, TS:56/integer, K/binary>>.
@@ -583,9 +617,9 @@ replay_logs(Dir, Module, #db{} = Db) ->
 	{ok, [_|_] = Fs} ->
 	    UseLogs = use_logs(FileKey, lists:sort(Fs)),
 	    UseFiles = [filename:join(Dir, F) || F <- UseLogs],
-	    io:fwrite("Logs = ~p~n"
-		      "FileKey = ~p~n"
-		      "UseLogs = ~p~n", [Fs, FileKey, UseFiles]),
+	    lager:debug("Logs = ~p~n"
+			"FileKey = ~p~n"
+			"UseLogs = ~p~n", [Fs, FileKey, UseFiles]),
 	    Res = try
 		      lists:foreach(fun(F) ->
 					    ok = replay_log(F, Module, Db, LastDump)
@@ -609,8 +643,8 @@ replay_logs(Dir, Module, #db{} = Db) ->
 		    erlang:error({replay_error, Res})
 	    end;
 	Other ->
-	    io:fwrite("No logs? ~p~n"
-		      "FileKey = ~p~n", [Other, FileKey])
+	    lager:debug("No logs? ~p~n"
+			"FileKey = ~p~n", [Other, FileKey])
     end.
 
 replay_log(LogF, Module, Db, LastDump) ->
@@ -748,7 +782,6 @@ log_filename(Dir, TS, Fs) ->
 	  io_lib:format("~s.~2..0w~2..0w~2..0w-~2..0w~2..0w~2..0w~w",
 			[filename:join(Dir,"kvdb_log"),
 			 Y rem 100,Mo,D,H,Mi,S,US div 1000])),
-    %% io:fwrite("F = ~s~n", [F]),
     case lists:member(F, Fs) of
 	true ->
 	    %% how likely is that?
@@ -811,7 +844,6 @@ log(#db{log = {Log,Thr}} = Db, Data) ->
 		    Name = kvdb_meta:read(Db, name, undefined),
 		    kvdb_server:cast(Name, log_threshold);
 		false ->
-		    %% io:fwrite("won't report threshold ~p~n", [Db#db.ref]),
 		    ok
 	    end;
 	false ->
@@ -842,7 +874,6 @@ threshold_reached(#thr{bytes = ABs, writes = AWs},
 	(TWs =/= undefined andalso AWs > TWs).
 
 clear_log_thresholds(Db) ->
-    %% io:fwrite("clear_log_thresholds (~p)~n", [Db]),
     kvdb_meta:write(Db, logged_bytes, 0),
     kvdb_meta:write(Db, logged_writes, 0),
     kvdb_meta:delete(Db, log_threshold).
@@ -868,11 +899,21 @@ is_behaviour(_M) ->
     true.
 
 make_tabrec(Tab, Opts) ->
-    check_options(Opts, record_info(fields, table), #table{name = Tab}).
+    make_tabrec(Tab, Opts, #table{}).
 
-check_options([{type, T}|Tl], Flds, Rec)
-  when T==set; T==lifo; T==fifo; T=={keyed,fifo}; T=={keyed,lifo} ->
-    check_options(Tl, Flds, Rec#table{type = T});
+make_tabrec(Tab, Opts, Rec) ->
+    check_options(Opts, record_info(fields, table), Rec#table{name = Tab}).
+
+tabrec_to_list(#table{} = TR) ->
+    lists:zip(record_info(fields, table), tl(tuple_to_list(TR))).
+
+check_options([{type, T}|Tl], Flds, Rec) ->
+    case valid_type(T) of
+	true ->
+	    check_options(Tl, Flds, Rec#table{type = T});
+	false ->
+	    error({invalid_option, type})
+    end;
 check_options([{encoding, E}|Tl], Flds, Rec) ->
     Rec1 = Rec#table{encoding = E},
     kvdb_lib:check_valid_encoding(E),
@@ -890,6 +931,21 @@ check_options([{K,V}|T], Flds, Rec) ->
     end;
 check_options([], _, Rec) ->
     Rec.
+
+valid_type(set) -> true;
+valid_type(T) ->
+    valid_queue(T).
+
+valid_queue(fifo) -> true;
+valid_queue(lifo) -> true;
+valid_queue({keyed,fifo}) -> true;
+valid_queue({keyed,lifo}) -> true;
+valid_queue({keyed,T,L}) when T==fifo; T==lifo ->
+    is_integer(L) andalso L >= 0;
+valid_queue({T,L}) when T==fifo; T==lifo ->
+    is_integer(L) andalso L >= 0;
+valid_queue(_) -> false.
+
 
 key_pos(K, L) ->
     key_pos(K, L, 2).

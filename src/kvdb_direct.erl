@@ -477,7 +477,6 @@ queue_head_value({_,_,V}) -> V.
 
 queue_head_value({K,_}, V) -> {K,V};
 queue_head_value({K,A,_}, V) -> {K,A,V}.
-    
 
 queue_limit(T) when is_atom(T) -> none;
 queue_limit({keyed, _}) -> none;

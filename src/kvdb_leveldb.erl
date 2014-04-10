@@ -186,9 +186,7 @@ open(DbName, Options) ->
     DbOpts = proplists:get_value(db_opts, Options, [{create_if_missing,true}]),
     Res = case proplists:get_value(file, Options) of
 	      undefined ->
-		  NameStr = kvdb_lib:good_string(DbName),
-		  File = NameStr ++ ".db",
-		  filelib:ensure_dir(File),
+		  File = kvdb_lib:db_file(DbName),
 		  eleveldb:open(File, DbOpts);
 	      Name ->
 		  filelib:ensure_dir(Name),
@@ -222,7 +220,7 @@ close(_Db) ->
     ok.
 
 add_table(#db{encoding = Enc} = Db, Table, Opts) when is_list(Opts) ->
-    TabR = check_options(Opts, Db, #table{name = Table, encoding = Enc}),
+    TabR = kvdb_lib:make_tabrec(Table, Opts, #table{encoding = Enc}),
     add_table(Db, Table, TabR);
 add_table(Db, Table, #table{} = TabR) ->
     case schema_lookup(Db, {table, Table}, undefined) of
@@ -1058,8 +1056,7 @@ prefix_match(#db{} = Db, Table, Prefix, Rel, Limit)
     case type(Db, Table) of
 	set ->
 	    prefix_match_set(Db, Table, Prefix, Rel, Limit);
-	Type when Type==fifo; Type==lifo;
-		  Type=={keyed,fifo}; Type=={keyed,lifo} ->
+	_ ->
 	    error(badarg)
     end.
 
@@ -1358,24 +1355,6 @@ index(#db{} = Db, Table) ->
 
 schema(#db{} = Db, Table) ->
     schema_lookup(Db, {a, Table, schema}, []).
-
-check_options([{type, T}|Tl], Db, Rec)
-  when T==set; T==fifo; T==lifo; T=={keyed,fifo}; T=={keyed,lifo} ->
-    check_options(Tl, Db, Rec#table{type = T});
-check_options([{schema, S}|Tl], Db, Rec) when is_atom(S) ->
-    check_options(Tl, Db, Rec#table{schema = S});
-check_options([{encoding, E}|Tl], Db, Rec) ->
-    Rec1 = Rec#table{encoding = E},
-    kvdb_lib:check_valid_encoding(E),
-    check_options(Tl, Db, Rec1);
-check_options([{index, Ix}|Tl], Db, Rec) ->
-    case kvdb_lib:valid_indexes(Ix) of
-	ok -> check_options(Tl, Db, Rec#table{index = Ix});
-	{error, Bad} ->
-	    erlang:error({invalid_index, Bad})
-    end;
-check_options([], _, Rec) ->
-    Rec.
 
 ensure_schema(#db{ref = Ref} = Db, Opts) ->
     ETS = ets:new(kvdb_schema, [ordered_set, public]),

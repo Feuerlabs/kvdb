@@ -209,9 +209,7 @@ close(#db{ref = Ets} = Db) ->
 %% flush? to do a save?
 
 add_table(#db{encoding = Enc0} = Db, Table, Opts) when is_list(Opts) ->
-    TabR0 = check_options(Opts, Db, #table{name = Table}),
-    Enc = proplists:get_value(encoding, Opts, Enc0),
-    TabR = TabR0#table{encoding = Enc},
+    TabR = kvdb_lib:make_tabrec(Table, Opts, #table{encoding = Enc0}),
     add_table(Db, Table, TabR);
 add_table(Db, Table, #table{} = TabR) ->
     case schema_lookup(Db, {table, Table}, undefined) of
@@ -1163,22 +1161,6 @@ decr(Limit, N) ->
     Limit - N.
 
 %% Internal
-
-check_options([{type, T}|Tl], Db, Rec)
-  when T==set; T==lifo; T==fifo; T=={keyed,fifo}; T=={keyed,lifo} ->
-    check_options(Tl, Db, Rec#table{type = T});
-check_options([{encoding, E}|Tl], Db, Rec) ->
-    Rec1 = Rec#table{encoding = E},
-    kvdb_lib:check_valid_encoding(E),
-    check_options(Tl, Db, Rec1);
-check_options([{index, Ix}|Tl], Db, Rec) ->
-    case kvdb_lib:valid_indexes(Ix) of
-	ok -> check_options(Tl, Db, Rec#table{index = Ix});
-	{error, Bad} ->
-	    erlang:error({invalid_index, Bad})
-    end;
-check_options([], _, Rec) ->
-    Rec.
 
 %% encode_key({K,V}, Enc) -> {enc(key, K, Enc), V};
 %% encode_key({K,As,V}, Enc) -> {enc(key, K, Enc), As, V}.

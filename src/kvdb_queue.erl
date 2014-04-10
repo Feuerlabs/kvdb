@@ -25,6 +25,8 @@
 	 next/3,
 	 clear_queue/3]).
 
+-export([info/4]).
+
 push(Db, Table, Obj)    -> push(Db, Table, Obj).
 push(Db, Table, Q, Obj) -> kvdb:push(Db, Table, Q, Obj).
 pop(Db, Table)          -> pop(Db, Table, <<>>).
@@ -84,3 +86,20 @@ decr(infinity) ->
 decr(I) when is_integer(I) ->
     I-1.
 
+
+info(Db, Table, Q, size) ->
+    case kvdb:queue_head_read(Db, Table, Q) of
+	{ok, {_, <<Sz:32>>}} -> Sz;
+	{ok, {_, _, <<Sz:32>>}} -> Sz;
+	_ -> 0
+    end;
+info(Db, Table, _Q, type) ->
+    case kvdb:info(Db, {Table, type}) of
+	T when T==fifo; T==lifo -> T;
+	T when element(1,T) == keyed -> T;
+	{fifo,_} = T -> T;
+	{lifo,_} = T -> T;
+	undefined -> undefined;
+	Other ->
+	    error({not_a_queue, Other})
+    end.

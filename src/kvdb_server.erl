@@ -48,7 +48,6 @@
 -record(trans, {pid, mref, tref, role = master, db}).
 
 start_link(Name, Backend) ->
-    %% io:fwrite("starting ~p, ~p~n", [Name, Backend]),
     gen_server:start_link(?MODULE, {owner, Name, Backend}, []).
 
 start_session(Name, Id) ->
@@ -364,17 +363,78 @@ open_new_log(#kvdb_ref{db = Db}, Pid) ->
 
 do_open(Name, Options) when is_list(Options) ->
     DbMod = proplists:get_value(backend, Options, kvdb_sqlite3),
+    Fallback = check_for_fallback(Name, Options),
     case DbMod:open(Name,Options) of
 	{ok, Db} ->
 	    %% io:fwrite("opened ~p database: ~p~n", [DbMod, Options]),
 	    Default = DbMod:get_schema_mod(Db, kvdb_schema),
 	    Schema = proplists:get_value(schema, Options, Default),
 	    kvdb_meta:write(Db, name, Name),
+	    maybe_import(Fallback, DbMod, Db),
 	    {ok, #kvdb_ref{name = Name, mod = DbMod, db = Db, schema = Schema}};
 	Error ->
 	    io:fwrite("ERROR opening ~p database: ~p. Opts = ~p~n",
 		      [DbMod, Error, Options]),
 	    Error
+    end.
+
+maybe_import(false, _, _) ->
+    ok;
+maybe_import(Fallback, Mod, Db) ->
+    io:fwrite("Importing from ~p~n", [Fallback]),
+    kvdb_export:import(Mod, Db, Fallback).
+
+
+check_for_fallback(Name, Options) ->
+    File = case lists:keyfind(file, 1, Options) of
+	       {_, F} -> F;
+	       false -> kvdb_lib:db_file(Name)
+	   end,
+    Dir = filename:dirname(File),
+    lager:debug("check_for_fallback: Dir = ~p~n", [Dir]),
+    case filelib:wildcard(to_list(Name) ++ ".KBUP?", Dir) of
+	[] ->
+	    false;
+	[_|_] = Files ->
+	    Sorted = lists:sort(fun fcomp/2, Files),
+	    lager:debug("Found backups: ~p~n", [Sorted]),
+	    Pick = hd(Sorted),
+	    move_file(Options),
+	    Pick
+    end.
+
+to_list(A) when is_atom(A) -> atom_to_list(A);
+to_list(L) when is_list(L) -> L;
+to_list(B) when is_binary(B) -> binary_to_list(B).
+
+
+move_file(Options) ->
+    case lists:keyfind(file, 1, Options) of
+	{_, F} ->
+	    BakName = bak_name(F),
+	    file:rename(F, BakName);
+	false ->
+	    ok
+    end.
+
+bak_name(F) ->
+    bak_name(F, 0).
+
+bak_name(F, N) ->
+    case file:read_link_info(Bak = F ++ bak_ext(N)) of
+	{ok,_}         -> bak_name(F, N+1);
+	{error,enoent} -> Bak
+    end.
+
+bak_ext(0) -> ".bak";
+bak_ext(N) -> ".bak." ++ integer_to_list(N).
+
+
+fcomp(A, B) ->
+    case {filename:extension(A), filename:extension(B)} of
+	{".KBUPB", _} -> true;
+	{_, ".KBUPB"} -> false;
+	{_, _} -> true % just pick one
     end.
 
 common_open(#kvdb_ref{mod = DbMod, db = Db} = DbRef, Options) ->
