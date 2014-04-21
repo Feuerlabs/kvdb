@@ -52,6 +52,7 @@
 -type increment() :: integer().
 -type status() :: active | inactive | blocking.
 -type cont() :: fun(() -> {[object()], cont()} | done).
+-type schema_category() :: property | tabrec | global.
 
 -record(commit, {add_tables = [],
 		 del_tables = [],

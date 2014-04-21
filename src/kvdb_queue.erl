@@ -19,11 +19,13 @@
 	 prel_pop/2, prel_pop/3,
 	 delete/3, extract/3,
 	 is_empty/3,
+	 size/3,
 	 list_queues/2, list_queues/3,
 	 list/3, list/6, list_full/3,
 	 first/2,
 	 next/3,
-	 clear_queue/3]).
+	 clear_queue/3,
+	 clear_queues/2]).
 
 -export([info/4]).
 
@@ -44,6 +46,16 @@ list_full(Db,Tab,Q) ->
 first(Db, Table)        -> kvdb:first_queue(Db, Table).
 next(Db, Table, PrevQ)  -> kvdb:next_queue(Db, Table, PrevQ).
 
+size(Db, Table, Q) ->
+    try kvdb:queue_head_read(Db, Table, Q) of
+	{error, not_found} ->
+	    0;
+	{ok, {_,<<Sz:32>>}} -> Sz;
+	{ok, {_, _, <<Sz:32>>}} -> Sz
+    catch
+	error:badarg -> undefined
+    end.
+
 list_queues(Db, Table) ->
     list_queues(Db, Table, 30).
 
@@ -55,6 +67,16 @@ clear_queue(Db, Table, Q) ->
     clear_queue_(kvdb:list_queue(Db, Table, Q,
 				 fun(_,K,_) -> {keep,K} end,
 				 false, infinity), Db, Table, Q).
+
+clear_queues(Db, Table) ->
+    clear_queues_(first(Db, Table), Db, Table).
+
+clear_queues_({ok, Q}, Db, Table) ->
+    clear_queue(Db, Table, Q),
+    clear_queues_(next(Db, Table, Q), Db, Table);
+clear_queues_(done, _, _) ->
+    done.
+
 
 clear_queue_(done, _, _, _) ->
     done;

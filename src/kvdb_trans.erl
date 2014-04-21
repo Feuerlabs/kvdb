@@ -68,6 +68,10 @@
 	 prefix_match/4,
 	 prefix_match_rel/5
 	]).
+-export([schema_write/4,
+	 schema_read/3,
+	 schema_delete/3,
+	 schema_fold/3]).
 
 %% debug_function
 -export([tstore_to_list/1]).
@@ -307,6 +311,52 @@ add_table(#db{ref = {#kvdb_ref{mod=M1,db=Db1}, _}} = DbT, Tab, Opts) ->
 	_ ->
 	    ok
     end.
+
+schema_write(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}}, Cat, K, V) ->
+    case M1:schema_write(Db1, Cat, K, V) of
+	ok ->
+	    M1:int_delete(Db1, {deleted, ?META_TABLE, {Cat,K}}),
+	    ok;
+	Other ->
+	    Other
+    end.
+
+schema_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
+		       #kvdb_ref{mod=M2,db=Db2}}}, Cat, K) ->
+    case M1:schema_read(Db1, Cat, K) of
+	undefined ->
+	    M2:schema_read(Db2, Cat, K);
+	V ->
+	    V
+    end.
+
+schema_delete(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}}, Cat, K) ->
+    case M1:schema_delete(Db1, Cat, K) of
+	ok ->
+	    M1:int_write(Db1, {deleted, ?META_TABLE, {Cat, K}});
+	Other ->
+	    Other
+    end.
+
+schema_fold(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
+		       #kvdb_ref{mod=M2,db=Db2}}}, F, A) ->
+    Cons = fun(X, A1) -> [X|A1] end,
+    L1 = M1:schema_fold(Db1, Cons, []),
+    L2 = M2:schema_fold(Db2, Cons, []),
+    L = rev_sort_merge(L1, L2, []),
+    lists:foldl(F, A, L).
+
+%% We start with reversed lists, so use Acc to reverse again.
+rev_sort_merge([{K,V}|T1], [{K,_}|T2], Acc) ->  % List 1 takes priority
+    rev_sort_merge(T1, T2, [{K, V} | Acc]);
+rev_sort_merge([H1|T1], [H2|_] = L2, Acc) when H1 > H2 ->
+    rev_sort_merge(T1, L2, [H1 | Acc]);
+rev_sort_merge(L1, [H2|T2], Acc) ->
+    rev_sort_merge(L1, T2, [H2 | Acc]);
+rev_sort_merge([H1|T1], [], Acc) ->
+    rev_sort_merge(T1, [], [H1 | Acc]);
+rev_sort_merge([], [], Acc) ->
+    Acc.
 
 close(_Db) ->
     %% does this even make sense in a transaction?

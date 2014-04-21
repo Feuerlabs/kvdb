@@ -29,6 +29,7 @@
 -export([first/2, last/2, next/3, prev/3,
 	 prefix_match/3, prefix_match/4, prefix_match_rel/5]).
 -export([get_schema_mod/2]).
+-export([schema_write/4, schema_read/3, schema_delete/3, schema_fold/3]).
 -export([info/2, is_table/2]).
 
 -export([dump_tables/1]).
@@ -223,6 +224,9 @@ add_table(#db{encoding = Enc} = Db, Table, Opts) when is_list(Opts) ->
     TabR = kvdb_lib:make_tabrec(Table, Opts, #table{encoding = Enc}),
     add_table(Db, Table, TabR);
 add_table(Db, Table, #table{} = TabR) ->
+    add_table(Db, Table, TabR, []).
+
+add_table(Db, Table, #table{encoding = Enc, type = Type, index = Ix} = TabR, Opts) ->
     case schema_lookup(Db, {table, Table}, undefined) of
 	T when T =/= undefined ->
 	    ok;
@@ -230,9 +234,8 @@ add_table(Db, Table, #table{} = TabR) ->
 	    case do_add_table(Db, Table) of
 		ok ->
 		    schema_write(Db, {{table, Table}, TabR}),
-		    schema_write(Db, {{a, Table, encoding}, TabR#table.encoding}),
-		    schema_write(Db, {{a, Table, type}, TabR#table.type}),
-		    schema_write(Db, {{a, Table, index}, TabR#table.index}),
+		    [schema_write(Db, property, {Table, K}, V)
+		     || {K, V} <- [{encoding, Enc}, {type, Type}, {index, Ix} | Opts]],
 		    ok;
 		Error ->
 		    Error
@@ -1375,6 +1378,7 @@ ensure_schema(#db{ref = Ref} = Db, Opts) ->
 	    Db1
     end.
 
+
 whole_table(Db, Enc, Table) ->
     whole_table(first(Db, Enc, Table), Db, Enc, Table).
 
@@ -1382,6 +1386,33 @@ whole_table({ok, {K, V}}, Db, Enc, Table) ->
     [{K,V} | whole_table(next(Db, Enc, Table, K), Db, Enc, Table)];
 whole_table(done, _Db, _Enc, _Table) ->
     [].
+
+schema_write(#db{} = Db, tabrec, Table, #table{} = TabRec) ->
+    schema_write(Db, {{table, Table}, TabRec});
+schema_write(#db{} = Db, property, {Table, Key}, Value) ->
+    schema_write(Db, {{a, Table, Key}, Value});
+schema_write(#db{} = Db, global, Key, Value) ->
+    schema_write(Db, {Key, Value}).
+
+
+schema_read(#db{} = Db, tabrec, Table) ->
+    schema_lookup(Db, {table, Table}, undefined);
+schema_read(#db{} = Db, property, {Table, Key}) ->
+    schema_lookup(Db, {a, Table, Key}, undefined);
+schema_read(#db{} = Db, global, Key) ->
+    schema_lookup(Db, Key, undefined).
+
+
+schema_delete(#db{} = Db, tabrec, Table) ->
+    schema_delete(Db, {table, Table});
+schema_delete(#db{} = Db, property, {Table, Key}) ->
+    schema_delete(Db, {a, Table, Key});
+schema_delete(#db{} = Db, global, Key) ->
+    schema_delete(Db, Key).
+
+
+schema_fold(#db{} = Db, F, A) ->
+    fold(Db, F, A, sext, ?META_TABLE).
 
 schema_write(#db{metadata = ETS} = Db, Item) ->
     ets:insert(ETS, Item),
@@ -1404,3 +1435,19 @@ schema_lookup(#db{metadata = ETS}, Key, Default) ->
 schema_delete(#db{metadata = ETS} = Db, Key) ->
     ets:delete(ETS, Key),
     delete(Db, ?META_TABLE, Key).
+
+fold(Db, F, A, Enc, Table) ->
+    fold(first(Db, Enc, Table), F, A, Db, Enc, Table).
+
+fold({ok, {K, V}}, F, A, Db, Enc, Table) ->
+    {Type, Key} = schema_key_type(K),
+    fold(next(Db, Enc, Table, K), F, F(Type, {Key, V}, A), Db, Enc, Table);
+fold(done, _F, A, _Db, _Enc, _Table) ->
+    A.
+
+schema_key_type({a,T,K}) ->
+    {property, {T, K}};
+schema_key_type({table, T}) ->
+    {tabrec, T};
+schema_key_type(Other) ->
+    {global, Other}.

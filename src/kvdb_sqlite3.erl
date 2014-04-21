@@ -35,6 +35,10 @@
 -export([prefix_match/3, prefix_match/4, prefix_match_rel/5]).
 -export([info/2, get_schema_mod/2, dump_tables/1]).
 -export([is_table/2]).
+-export([schema_read/3,
+	 schema_write/4,
+	 schema_delete/3,
+	 schema_fold/3]).
 
 %% for testing
 %% -export([prefix_match/5]).
@@ -45,6 +49,47 @@
 
 get_schema_mod(_, M) ->
     M.
+
+schema_read(Db, property, {Tab, Key}) ->
+    schema_lookup(Db, {a, Tab, Key}, undefined);
+schema_read(Db, global, Key) ->
+    schema_lookup(Db, {g, Key}, undefined);
+schema_read(Db, tabrec, Key) ->
+    schema_lookup(Db, {table, Key}, undefined).
+
+schema_write(Db, property, {Tab,Key}, Val) ->
+    schema_write(Db, {{a, Tab, Key}, Val});
+schema_write(Db, global, Key, Val) ->
+    schema_write(Db, {{g, Key}, Val});
+schema_write(Db, tabrec, Tab, #table{} = TR) ->
+    schema_write(Db, {{table, Tab}, TR}).
+
+schema_delete(Db, property, {Tab, Key}) ->
+    schema_delete(Db, {a, Tab, Key});
+schema_delete(Db, global, Key) ->
+    schema_delete(Db, {g, Key});
+schema_delete(Db, tabrec, Table) ->
+    schema_delete(Db, {table, Table}).
+
+
+schema_fold(#db{metadata = Ets}, F, A) ->
+    Pat = [{ {{'$1','$2'}, '$3'}, [], [{{ {{'$1','$2'}}, '$3' }}] },
+	   { {{'$1','$2','$3'},'$4'}, [], [{{ {{'$1','$2','$3'}}, '$4' }}] }],
+    select_fold(ets:select(Ets, Pat, 100), F, A).
+
+select_fold({Objs, Cont}, F, A) ->
+    A1 = lists:foldl(
+           fun({{table,T},V}, Acc) ->
+                   F(tabrec, {T, V}, Acc);
+	      ({{a, T, P}, V}, Acc) ->
+                   F(property, {{T,P}, V}, Acc);
+              ({{g, K}, V}, Acc) ->
+                   F(global, {K, V}, Acc)
+           end, A, Objs),
+    select_fold(ets:select(Cont), F, A1);
+select_fold('$end_of_table', _, A) ->
+    A.
+
 
 info(#db{ref = Db}, ref) -> Db;
 info(#db{} = Db, tables) -> list_tables(Db);
@@ -177,7 +222,8 @@ add_table(#db{ref = Ref} = Db, Table, #table{} = TabR) ->
 		    TabR1 = maybe_create_index_table(Ref, Table, TabR),
 		    schema_write(Db, {{table, Table}, TabR1}),
 		    schema_write(Db, {{a,Table, type}, TabR1#table.type}),
-		    schema_write(Db, {{a,Table, index}, TabR1#table.index}),
+		    schema_write(Db, {{a,Table, index_pair},
+				      TabR1#table.index}),
 		    schema_write(Db, {{a,Table, encoding}, TabR1#table.encoding}),
 		    ok;
 		Error ->
@@ -344,7 +390,7 @@ push(#db{ref = Ref} = Db, Table, Q, {Key, Attrs, Value}) ->
     end.
 
 index(#db{} = Db, Table) ->
-    schema_lookup(Db, {a, Table, index}, []).
+    schema_lookup(Db, {a, Table, index_pair}, []).
 
 encoding(#db{encoding = Enc} = Db, Table) ->
     schema_lookup(Db, {a, Table, encoding}, Enc).

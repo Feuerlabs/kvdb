@@ -672,8 +672,12 @@ eat_log({Cont, Terms}, Log, Mod, Db, Last) ->
 process_log_event({_TS, Op}, Mod, Db) ->
     ?debug("process_log_event(Op = ~p)~n", [Op]),
     case Op of
+	?KVDB_LOG_INSERT(?META_TABLE, {Cat, K, V}) ->
+	    Mod:schema_write(Db, Cat, K, V);
 	?KVDB_LOG_INSERT(Table, Obj) ->
 	    Mod:put(Db, Table, Obj);
+	?KVDB_LOG_DELETE(?META_TABLE, {Cat, K}) ->
+	    Mod:schema_delete(Db, Cat, K);
 	?KVDB_LOG_DELETE(Table, Key) ->
 	    Mod:delete(Db, Table, Key);
 	?KVDB_LOG_Q_INSERT(Table, QKey, St, Obj) ->
@@ -926,7 +930,8 @@ check_options([{index, Ix}|Tl], Flds, Rec) ->
     end;
 check_options([{K,V}|T], Flds, Rec) ->
     case key_pos(K, Flds) of
-	0 -> error({invalid_option, K});
+	0 ->
+	    check_options(T, Flds, Rec);
 	P -> check_options(T, Flds, setelement(P, Rec, V))
     end;
 check_options([], _, Rec) ->
