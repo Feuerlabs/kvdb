@@ -557,8 +557,8 @@ mark_queue_object(#db{ref = Ets} = Db, Table, #q_key{} = QK, St) when
 queue_head_read(#db{ref = Ets} = Db, Table, Queue) ->
     {Key, _} = make_queue_head_key(Db, Table, Queue),
     case ets:lookup(Ets, Key) of
-        [{_, Data}] ->
-            {ok, Data};
+        [{_, Data}] -> {ok, Data};
+        [{_, _, Data}] -> {ok, Data};
         [] ->
             {error, not_found}
     end.
@@ -612,16 +612,17 @@ int_to_q_key(Db, Table, Int) ->
     QK#q_key{queue = Q}.
 
 q_head_key_to_int(Q, Type) ->
-    if Type == fifo; element(2, Type) == fifo ->
+    case kvdb_lib:queue_list_direction(Type) of
+        fifo ->
             {{Q,0}, 0, 0};
-       Type == lifo; element(2, Type) == lifo ->
+        lifo ->
             {{Q,2}, [], []}
     end.
 
-%% int_to_q_head_key({{Q,0},_,_}) ->
-%%     #q_key{queue = Q, ts = ?Q_HEAD_FLOOR, key = ?Q_HEAD_KEY};
-%% int_to_q_head_key({{Q,2},_,_}) ->
-%%     #q_key{queue = Q, ts = ?Q_HEAD_CEIL, key = ?Q_HEAD_KEY}.
+int_to_q_head_key({{Q,0},_,_}) ->
+    #q_key{queue = Q, ts = ?Q_HEAD_FLOOR, key = ?Q_HEAD_KEY};
+int_to_q_head_key({{Q,2},_,_}) ->
+    #q_key{queue = Q, ts = ?Q_HEAD_CEIL, key = ?Q_HEAD_KEY}.
 
 
 mark_queue_object_(#db{ref = Ets} = Db, #q_key{} = QK, #k{} = K, Obj, St) when
@@ -1309,6 +1310,7 @@ commit_set(#db{ref = Ets} = Db) ->
     AddTabs = ets:select(Ets, [ { {{add_table, '$1'}, '$2'},
 				  [], [{{'$1','$2'}}] } ]),
     Events = ets:select(Ets, [ { {{evt,'_'}, '$1'}, [], ['$1'] } ]),
+    lager:debug("commit_set: Writes = ~p~n", [Writes]),
     #commit{write = decode_writes(Writes, Db),
 	    delete = Deletes,
 	    add_tables = [{T,schema_lookup(Db,{table,T}, undefined),DelFirst} ||
@@ -1324,6 +1326,10 @@ decode_writes([], _) ->
 decode_writes([{T, _}|_] = Writes, T1, _, Db) when T =/= T1 ->
     %% Switched to different table - re-cache encoding info
     decode_writes(Writes, T, encoding(Db, T), Db);
+decode_writes([{T, {QKi, Obj}}|Rest], T, Enc, Db)
+  when element(1,Obj) == ?Q_HEAD_KEY ->
+    QKey = int_to_q_head_key(QKi),
+    [{T, QKey, active, Obj}|decode_writes(Rest, T, Enc, Db)];
 decode_writes([{T, {QKi, {St,Val}}}|Rest], T, Enc, Db) when is_tuple(QKi) ->
     QKey = int_to_q_key(Db, T, QKi),
     Obj = {QKey#q_key.key, Val},
