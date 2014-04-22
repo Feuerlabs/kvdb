@@ -12,6 +12,7 @@
 %%%
 -module(kvdb_lib).
 -export([table_name/1,
+	 db_file/1,
 	 valid_table_name/1,
 	 index_vals/4,
 	 valid_indexes/1,
@@ -29,6 +30,7 @@
 	 q_key_to_actual/3,
 	 queue_prefix/2,
 	 queue_prefix/3,
+	 valid_queue/1,
 	 raw_queue_prefix/2,
 	 timestamp/0, timestamp/1,
 	 timestamp_to_datetime/1,
@@ -44,7 +46,9 @@
 	 process_log_event/3,
 	 on_update/4,
 	 commit/2,
-	 make_tabrec/2]).
+	 make_tabrec/2,
+         make_tabrec/3,
+         tabrec_to_list/1]).
 
 -export([backend_mod/1]).
 
@@ -70,6 +74,11 @@ table_name(Table) when is_binary(Table) ->
 table_name(Table) when is_list(Table) ->
     list_to_binary(Table).
 
+db_file(DbName) ->
+    NameStr = kvdb_lib:good_string(DbName),
+    File = NameStr ++ ".db",
+    filelib:ensure_dir(File),
+    File.
 
 index_vals(Ixs, K, Attrs, ValF) ->
     %% Pre-fetch value, if needed, so we only fetch it once.
@@ -772,6 +781,11 @@ is_behaviour(_M) ->
 
 make_tabrec(Tab, Opts) ->
     check_options(Opts, record_info(fields, table), #table{name = Tab}).
+make_tabrec(Tab, Opts, Rec) ->
+    check_options(Opts, record_info(fields, table), Rec#table{name = Tab}).
+
+tabrec_to_list(#table{} = TR) ->
+    lists:zip(record_info(fields, table), tl(tuple_to_list(TR))).
 
 check_options([{type, T}|Tl], Flds, Rec)
   when T==set; T==lifo; T==fifo; T=={keyed,fifo}; T=={keyed,lifo} ->
@@ -793,6 +807,16 @@ check_options([{K,V}|T], Flds, Rec) ->
     end;
 check_options([], _, Rec) ->
     Rec.
+
+valid_queue(fifo) -> true;
+valid_queue(lifo) -> true;
+valid_queue({keyed,fifo}) -> true;
+valid_queue({keyed,lifo}) -> true;
+valid_queue({keyed,T,L}) when T==fifo; T==lifo ->
+    is_integer(L) andalso L >= 0;
+valid_queue({T,L}) when T==fifo; T==lifo ->
+    is_integer(L) andalso L >= 0;
+valid_queue(_) -> false.
 
 key_pos(K, L) ->
     key_pos(K, L, 2).
