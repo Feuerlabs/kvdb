@@ -3,11 +3,11 @@
 -compile(export_all).
 -include("kvdb.hrl").
 
-export(#kvdb_ref{mod = M, db = Db}, File) ->
+export(#kvdb_ref{mod = M, db = Db} = Ref, File) ->
     Format = format(File),
     Tabs = M:list_tables(Db),
     {Out, Close} = open_log(File, Format),
-    try dump(Tabs, M, Db, Out)
+    try dump(Tabs, Ref, Out)
     after
 	Close()
     end.
@@ -37,12 +37,12 @@ format(F) ->
 	_ -> error(unknown_extension)
     end.
 
-dump([T|Tabs], M, Db, Out) ->
-    #table{type = Type} = TabR = M:info(Db, {T, tabrec}),
+dump([T|Tabs], Ref, Out) ->
+    #table{type = Type} = TabR = kvdb:info(Ref, {T, tabrec}),
     Out({table, T, lists:keydelete(name, 1, kvdb_lib:tabrec_to_list(TabR))}),
-    with_tab(T, Type, M, Db, Out),
-    dump(Tabs, M, Db, Out);
-dump([], _, _, _) ->
+    with_tab(T, Type, Ref, Out),
+    dump(Tabs, Ref, Out);
+dump([], _, _) ->
     ok.
 
 open_log(File, binary) ->
@@ -97,20 +97,31 @@ add_to_tab({T, Type}, Obj, M, Db) ->
 	    M:queue_insert(Db, T, QK, St, O)
     end.
 
-with_tab(Tab, Type, M, Db, Out) ->
+with_tab(Tab, Type, Ref, Out) ->
     IsQueue = kvdb_lib:valid_queue(Type),
     if Type == set ->
-	    chunk_load(M:prefix_match(Db, Tab, <<>>, 1000), Out);
+            Pat = make_pattern(Ref, Tab),
+	    chunk_load(kvdb:select(Ref, Tab, Pat, 1000), Out);
        IsQueue == true ->
 	    Filter = fun(St, QKey, Obj) ->
 			     {keep, {obj,{QKey, St, Obj}}}
 		     end,
+            #kvdb_ref{mod = M, db = Db} = Ref,
 	    all_queues(
 	      fun(Q) ->
 		      load_queue(
-			M:list_queue(Db, Tab, Q, Filter, false, 100), Out)
+			kvdb:list_queue(Ref, Tab, Q, Filter, false, 100), Out)
 	      end, M, Db, Tab)
     end.
+
+make_pattern(Db, Tab) ->
+    case kvdb:info(Db, {Tab, encoding}) of
+        {_,_,_} ->
+            [{{'_','_','_'}, [], ['$_']}];
+        _ ->
+            [{{'_','_'}, [], ['$_']}]
+    end.
+
 
 chunk_load({Objs, Cont}, Out) ->
     [Out({obj, Obj}) || Obj <- Objs],
