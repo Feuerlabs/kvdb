@@ -390,6 +390,7 @@ check_for_fallback(Name, Options) ->
 	       {_, F} -> F;
 	       false -> kvdb_lib:db_file(Name)
 	   end,
+    io:fwrite("File = ~p~n", [File]),
     Dir = filename:dirname(File),
     lager:debug("check_for_fallback: Dir = ~p~n", [Dir]),
     case filelib:wildcard(to_list(Name) ++ ".KBUP?", Dir) of
@@ -400,7 +401,7 @@ check_for_fallback(Name, Options) ->
 	    lager:debug("Found backups: ~p~n", [Sorted]),
 	    Pick = hd(Sorted),
 	    move_file(Options),
-	    Pick
+	    filename:join(Dir, Pick)
     end.
 
 to_list(A) when is_atom(A) -> atom_to_list(A);
