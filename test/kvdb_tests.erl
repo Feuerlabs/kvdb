@@ -59,11 +59,13 @@ basic_test_() ->
     {setup,
      fun() ->
 	     ?debugVal(application:start(gproc)),
+	     ?debugVal(application:start(locks)),
 	     ?debugVal(application:start(kvdb)),
 	     ok
      end,
      fun(_) ->
 	     ?debugVal(application:stop(kvdb)),
+	     ?debugVal(application:stop(locks)),
 	     ?debugVal(application:stop(gproc)),
 	     ?debugVal([catch delete_db_file(Name,Backend) ||
 			   {Name, _, Backend} <- dbs()])

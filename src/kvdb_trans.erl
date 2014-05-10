@@ -79,6 +79,8 @@
 -include("kvdb.hrl").
 -include("log.hrl").
 
+-record(t, {name, d1, d2, locks}).
+
 -define(q_done(Res), (Res == done orelse Res == blocked)).
 
 -spec require(#kvdb_ref{}, fun( (#kvdb_ref{}) -> T )) -> T.
@@ -120,9 +122,11 @@ run(#kvdb_ref{schema = Schema, db = Db0} = KR0, F) when is_function(F,1) ->
     #db{encoding = Enc0} = Db0,
     {ok, DbE} = kvdb_ets:open("trans", [{encoding, Enc0}]),
     KR1 = #kvdb_ref{mod = kvdb_ets, db = DbE},
+    {ok, LPid} = locks_agent:start_link([{abort_on_deadlock, true}]),
     K = #kvdb_ref{name = Name, schema = Schema,
 		  mod = ?MODULE, tref = TRef,
-		  db = #db{ref = {KR1, KR0}, metadata = DbE#db.metadata}},
+		  db = #db{ref = #t{name = Name, d1=KR1, d2=KR0, locks=LPid},
+			   metadata = DbE#db.metadata}},
     kvdb_server:begin_trans(Name, TRef, K),
     push_trans(Name, K),
     ?debug("~p: New transaction...~n", [self()]),
@@ -130,6 +134,7 @@ run(#kvdb_ref{schema = Schema, db = Db0} = KR0, F) when is_function(F,1) ->
 	 commit(K),
 	 Result
     after
+	locks_agent:end_transaction(LPid),
 	kvdb_server:end_trans(Name, TRef),
 	pop_trans(Name),
 	#db{ref = Ets} = DbE,
@@ -140,7 +145,7 @@ run(Name, F) when is_function(F, 1) ->
 
 name(#kvdb_ref{tref = undefined, name = Name}) ->
     Name;
-name(#kvdb_ref{db = #db{ref = {_, KR}}}) ->
+name(#kvdb_ref{db = #db{ref = #t{d2=KR}}}) ->
     name(KR).
 
 
@@ -172,13 +177,15 @@ is_transaction(Name) ->
 	    false
     end.
 
-tstore_to_list(#kvdb_ref{db = #db{ref = {#kvdb_ref{db = #db{ref = Ets}},_}}}) ->
+tstore_to_list(#kvdb_ref{db = #db{ref = #t{d1=#kvdb_ref
+					   {db = #db{ref = Ets}}}}}) ->
     ets:tab2list(Ets).
 
 on_update(Event, #kvdb_ref{schema = Schema} = Ref0, Tab, Info) ->
     Name = name(Ref0),
     case is_transaction(Name) of
-	{true, #kvdb_ref{db = #db{ref = {#kvdb_ref{mod = M, db = Db},_}}}} ->
+	{true, #kvdb_ref{db = #db{ref = #t{d1=#kvdb_ref{
+						     mod = M, db = Db}}}}} ->
 	    Rec = #event{event = Event,
 			 tab = Tab,
 			 info = Info},
@@ -209,8 +216,8 @@ deep_foreach(_, []) ->
 commit(#kvdb_ref{tref = TRef, schema = Schema} = Ref0) ->
     Name = name(Ref0),
     NewDb = kvdb_server:start_commit(Name, TRef),
-    #kvdb_ref{db = #db{ref = {#kvdb_ref{mod = M1,db=Db1},
-			       #kvdb_ref{} = KR2}}} = Ref =
+    #kvdb_ref{db = #db{ref = #t{d1=#kvdb_ref{mod = M1,db=Db1},
+				d2=#kvdb_ref{} = KR2}}} = Ref =
 	switch_db(Ref0, NewDb),
     #commit{} = Set = M1:commit_set(Db1),
     #commit{} = Set1 = kvdb_schema:fold_schema(
@@ -226,13 +233,14 @@ commit(#kvdb_ref{tref = TRef, schema = Schema} = Ref0) ->
 
 switch_db(#kvdb_ref{tref = undefined}, #kvdb_ref{} = New) ->
     New;
-switch_db(#kvdb_ref{db = #db{ref = {K1,K2}} = Db} = R, New) ->
-    R#kvdb_ref{db = Db#db{ref = {K1, switch_db(K2, New)}}}.
+switch_db(#kvdb_ref{db = #db{ref = #t{d1=K1,d2=K2}} = Db} = R, New) ->
+    R#kvdb_ref{db = Db#db{ref = #t{d1=K1, d2=switch_db(K2, New)}}}.
 
 
 
-info(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
-		#kvdb_ref{mod=M2,db=Db2}}}, Item) ->
+info(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1},
+		  d2=#kvdb_ref{mod=M2,db=Db2}} = T}, Item) ->
+    lock(T, [meta], read),
     case M1:info(Db1, Item) of
 	undefined ->
 	    case is_tuple(Item) andalso
@@ -250,10 +258,13 @@ ok_true({ok, true}) -> true;
 ok_true(_) -> false.
 
 %% dump only the transaction store
-dump_tables(#db{ref = {#kvdb_ref{mod = M, db = Db}, _}}) ->
+dump_tables(#db{ref = #t{d1=#kvdb_ref{mod = M, db = Db}} = T}) ->
+    lock(T, [data], read),
     M:dump_tables(Db).
 
-put(#db{ref = {#kvdb_ref{mod = M1, db = Db1} = KR1, KR2}}, Tab, Obj) ->
+put(#db{ref = #t{d1=#kvdb_ref{mod = M1, db = Db1} = KR1,
+		 d2=KR2} = T}, Tab, Obj) ->
+    lock(T, [data,Tab,element(1,Obj)], write),
     ensure_table(Tab, KR1, KR2),
     case M1:put(Db1, Tab, Obj) of
 	ok = Res ->
@@ -263,8 +274,9 @@ put(#db{ref = {#kvdb_ref{mod = M1, db = Db1} = KR1, KR2}}, Tab, Obj) ->
 	    Other
     end.
 
-get(#db{ref = {#kvdb_ref{mod = M1, db = Db1} = KR1,
-	       #kvdb_ref{mod = M2, db = Db2} = KR2}}, Tab, Key) ->
+get(#db{ref = #t{d1=#kvdb_ref{mod = M1, db = Db1} = KR1,
+		 d2=#kvdb_ref{mod = M2, db = Db2} = KR2} = T}, Tab, Key) ->
+    lock(T, [data, Tab, Key], read),
     ensure_table(Tab, KR1, KR2),
     case M1:get(Db1, Tab, Key) of
 	{ok, _} = Ret -> Ret;
@@ -277,15 +289,18 @@ get(#db{ref = {#kvdb_ref{mod = M1, db = Db1} = KR1,
 	    end
     end.
 
-delete(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1, KR2}}, Tab, Key) ->
+delete(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = KR1,
+		    d2=KR2} = T}, Tab, Key) ->
+    lock(T, [data, Tab, Key], write),
     ensure_table(Tab, KR1, KR2),
     Res = M1:delete(Db1, Tab, Key),
     M1:int_write(Db1, {deleted, Tab, Key}, true),
     Res.
 
 
-get_schema_mod(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
-			  #kvdb_ref{mod=M2,db=Db2}}}, Tab) ->
+get_schema_mod(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1},
+			    d2=#kvdb_ref{mod=M2,db=Db2}} = T}, Tab) ->
+    lock(T, [meta], read),
     case M1:info(Db1, Item = {Tab, schema}) of
 	undefined ->
 	    M2:info(Db2, Item);
@@ -296,7 +311,9 @@ get_schema_mod(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
 open(#db{} = _Db, _Opts) ->
     erlang:error(nyi).
 
-add_table(#db{ref = {#kvdb_ref{mod=M1,db=Db1}, _}} = DbT, Tab, Opts) ->
+add_table(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1}} = T} = DbT, Tab, Opts) ->
+    lock(T, [data, Tab], write), % needed?
+    lock(T, [meta], write),
     case info(DbT, {Tab, type}) of
 	undefined ->
 	    DelFirst = ok_true(M1:int_read(Db1, {deleted, Tab})),
@@ -312,7 +329,8 @@ add_table(#db{ref = {#kvdb_ref{mod=M1,db=Db1}, _}} = DbT, Tab, Opts) ->
 	    ok
     end.
 
-schema_write(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}}, Cat, K, V) ->
+schema_write(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1}} = T}, Cat, K, V) ->
+    lock(T, [meta], write),
     case M1:schema_write(Db1, Cat, K, V) of
 	ok ->
 	    M1:int_delete(Db1, {deleted, ?META_TABLE, {Cat,K}}),
@@ -321,8 +339,9 @@ schema_write(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}}, Cat, K, V) ->
 	    Other
     end.
 
-schema_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
-		       #kvdb_ref{mod=M2,db=Db2}}}, Cat, K) ->
+schema_read(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1},
+			 d2=#kvdb_ref{mod=M2,db=Db2}} = T}, Cat, K) ->
+    lock(T, [meta], write),
     case M1:schema_read(Db1, Cat, K) of
 	undefined ->
 	    M2:schema_read(Db2, Cat, K);
@@ -330,7 +349,9 @@ schema_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
 	    V
     end.
 
-schema_delete(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}}, Cat, K) ->
+schema_delete(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1}} = T}, Cat, K) ->
+    lock(T, [data], write),
+    lock(T, [meta], write),
     case M1:schema_delete(Db1, Cat, K) of
 	ok ->
 	    M1:int_write(Db1, {deleted, ?META_TABLE, {Cat, K}});
@@ -338,8 +359,9 @@ schema_delete(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}}, Cat, K) ->
 	    Other
     end.
 
-schema_fold(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
-		       #kvdb_ref{mod=M2,db=Db2}}}, F, A) ->
+schema_fold(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1},
+			 d2=#kvdb_ref{mod=M2,db=Db2}} = T}, F, A) ->
+    lock(T, [meta], read),
     Cons = fun(X, A1) -> [X|A1] end,
     L1 = M1:schema_fold(Db1, Cons, []),
     L2 = M2:schema_fold(Db2, Cons, []),
@@ -362,7 +384,9 @@ close(_Db) ->
     %% does this even make sense in a transaction?
     erlang:error(illegal).
 
-delete_table(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}} = Db, Tab) ->
+delete_table(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1}} = T} = Db, Tab) ->
+    lock(T, [data, Tab], write),
+    lock(T, [meta], write),
     case info(Db, {Tab, type}) of
 	undefined ->
 	    ok;
@@ -377,8 +401,9 @@ delete_table(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}} = Db, Tab) ->
 	    end
     end.
 
-extract(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
-		   #kvdb_ref{mod=M2,db=Db2} = KR2}}, Tab, QKey) ->
+extract(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = KR1,
+		     d2=#kvdb_ref{mod=M2,db=Db2} = KR2} = T}, Tab, QKey) ->
+    lock(T, [data, Tab], write),
     ensure_table(Tab, KR1, KR2),
     case M1:int_read(Db1, {deleted, Tab, QKey}) of
 	{ok, true} ->
@@ -399,8 +424,9 @@ extract(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
 	    end
     end.
 
-first(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
-		 #kvdb_ref{mod=M2,db=Db2} = KR2}}, Tab) ->
+first(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = KR1,
+		   d2=#kvdb_ref{mod=M2,db=Db2} = KR2} = T}, Tab) ->
+    lock(T, [data, Tab], read),
     ensure_table(Tab, KR1, KR2),
     R1 = M1:first(Db1, Tab),
     case {R1, M2:first(Db2, Tab)} of
@@ -444,11 +470,12 @@ check_prev({ok,O2} = R2, R1, Tab, M1,Db1, M2,Db2) ->
 	    end
     end.
 
-first_queue(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
-		       #kvdb_ref{mod=M2,db=Db2} = K2}}, Tab) ->
+first_queue(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = K1,
+			 d2=#kvdb_ref{mod=M2,db=Db2} = K2} = T}, Tab) ->
     %% A dilemma: we don't really have a delete_queue() function, so we
     %% cannot check whether the result from the persistent store has been
     %% deleted. We assume it can't be for now.
+    lock(T, [data, Tab], read),
     ensure_table(Tab, K1, K2),
     R1 = M1:first_queue(Db1, Tab),
     R2 = M2:first_queue(Db2, Tab),
@@ -463,8 +490,10 @@ first_queue(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 	    end
     end.
 
-get_attrs(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
-		     #kvdb_ref{mod=M2,db=Db2} = KR2}}, Tab, K, Attrs) ->
+get_attrs(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = KR1,
+		       d2=#kvdb_ref{mod=M2,db=Db2} = KR2} = T},
+	  Tab, K, Attrs) ->
+    lock(T, [data, Tab, K], read),
     ensure_table(Tab, KR1, KR2),
     case M1:get_attrs(Db1, Tab, K, Attrs) of
 	{error, not_found} ->
@@ -473,8 +502,10 @@ get_attrs(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
 	    Other
     end.
 
-index_get(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
-		     #kvdb_ref{mod=M2,db=Db2} = KR2}}, Tab, Ix, IxK) ->
+index_get(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = KR1,
+		       d2=#kvdb_ref{mod=M2,db=Db2} = KR2} = T},
+	  Tab, Ix, IxK) ->
+    lock(T, [data, Tab], read),
     ensure_table(Tab, KR1, KR2),
     case M1:index_get(Db1, Tab, Ix, IxK) of
 	{error, no_index} = Err ->
@@ -671,8 +702,10 @@ any_deleted(#db{ref = Ets}, Tab) ->
     end.
 
 
-index_keys(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
-		      #kvdb_ref{mod=M2,db=Db2} = KR2}}, Tab, Ix, IxK) ->
+index_keys(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = KR1,
+			d2=#kvdb_ref{mod=M2,db=Db2} = KR2} = T},
+	   Tab, Ix, IxK) ->
+    lock(T, [data, Tab], write),
     ensure_table(Tab, KR1, KR2),
     case M1:index_keys(Db1, Tab, Ix, IxK) of
 	{error, no_index} ->
@@ -685,7 +718,8 @@ index_keys(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = KR1,
 	    end
     end.
 
-is_queue_empty(#db{ref = {K1, K2}} = Ref, Tab, Q) ->
+is_queue_empty(#db{ref = #t{d1=K1, d2=K2} = T} = Ref, Tab, Q) ->
+    lock(T, [data, Tab, Q], read),
     ensure_table(Tab, K1, K2),
     Filter = fun(active, K, O) -> {keep,{K,O}};
 		(_, _, _) -> skip
@@ -697,7 +731,7 @@ is_queue_empty(#db{ref = {K1, K2}} = Ref, Tab, Q) ->
 	    true
     end.
 
-is_table(#db{ref = {#kvdb_ref{} = K1, #kvdb_ref{} = K2}}, Tab) ->
+is_table(#db{ref = #t{d1=#kvdb_ref{} = K1, d2=#kvdb_ref{} = K2}}, Tab) ->
     try ensure_table(Tab, K1, K2)
     catch
 	error:_ ->
@@ -705,8 +739,9 @@ is_table(#db{ref = {#kvdb_ref{} = K1, #kvdb_ref{} = K2}}, Tab) ->
     end.
 
 
-last(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
-		#kvdb_ref{mod=M2,db=Db2} = K2}}, Tab) ->
+last(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = K1,
+		  d2=#kvdb_ref{mod=M2,db=Db2} = K2} = T}, Tab) ->
+    lock(T, [data, Tab], read),
     ensure_table(Tab, K1, K2),
 
     R1 = M1:last(Db1, Tab),
@@ -732,13 +767,15 @@ list_queue(Db, Tab, Q) ->
 list_queue(Ref, Tab, Q, Filter, HeedBlock, Limit) ->
     list_queue(Ref, Tab, Q, Filter, HeedBlock, Limit, false).
 
-list_queue(#db{ref = {K1, K2}} = Ref, Tab, Q, Filter, HeedBlock, Limit, Reverse)
+list_queue(#db{ref = #t{d1=K1, d2=K2} = T} = Ref, Tab, Q, Filter,
+	   HeedBlock, Limit, Reverse)
   when is_boolean(Reverse) ->
+    lock(T, [data, Tab, Q], read),
     ensure_table(Tab, K1, K2),
     do_list_queue(Ref, Tab, Q, Filter, HeedBlock, Limit, Reverse).
 
-do_list_queue(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
-			 #kvdb_ref{mod=M2,db=Db2}}}, Tab, Q,
+do_list_queue(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1},
+			   d2=#kvdb_ref{mod=M2,db=Db2}}}, Tab, Q,
 	      Filter, HeedBlock, Limit, Reverse) ->
     MyFilter = fun(S,K,O) -> {keep, {K,{S,O}}} end,
     QM = #q_merge{filter = Filter, heedblock = HeedBlock,
@@ -771,8 +808,6 @@ initial_set(done) -> {done, done};
 initial_set({_,_} = R) -> R.
 
 
-
-
 most_done(blocked, _) -> blocked;
 most_done(_, blocked) -> blocked;
 most_done(_, _) -> done.
@@ -794,10 +829,11 @@ decr(L) when is_integer(L) ->
 %% 	    {Ret, NewAcc, Limit0}
 %%     end.
 
-mark_queue_object(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
-			     #kvdb_ref{} = K2}} = Ref,
+mark_queue_object(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = K1,
+			       d2=#kvdb_ref{} = K2} = T} = Ref,
 		  Tab, #q_key{} = QK, St)
   when St==active; St==inactive; St==blocking ->
+    lock(T, [data, Tab, QK#q_key.queue], write),
     ensure_table(Tab, K1, K2),
     case queue_read(Ref, Tab, QK) of
 	{error, not_found} = E ->
@@ -806,8 +842,9 @@ mark_queue_object(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 	    M1:queue_insert(Db1, Tab, QK, St, Obj)
     end.
 
-queue_insert(#db{ref = {#kvdb_ref{mod = M1, db = Db1} = K1, K2}},
+queue_insert(#db{ref = #t{d1=#kvdb_ref{mod = M1, db = Db1} = K1, d2=K2} = T},
 	     Tab, #q_key{} = QKey, St, Obj) ->
+    lock(T, [data, Tab, QKey#q_key.queue], write),
     ensure_table(Tab, K1, K2),
     case M1:queue_insert(Db1, Tab, QKey, St, Obj) of
 	ok = Res ->
@@ -817,18 +854,22 @@ queue_insert(#db{ref = {#kvdb_ref{mod = M1, db = Db1} = K1, K2}},
 	    Other
     end.
 
-queue_delete(#db{ref = {#kvdb_ref{mod = M1, db = Db1} = K1, K2}}, Tab, QKey) ->
+queue_delete(#db{ref = #t{d1=#kvdb_ref{mod = M1, db = Db1} = K1,
+			  d2=K2} = T}, Tab, QKey) ->
+    lock(T, [data, Tab, QKey#q_key.queue], write),
     ensure_table(Tab, K1, K2),
     Res = M1:queue_delete(Db1, Tab, QKey),
     M1:int_write(Db1, {deleted, Tab, QKey}, true),
     Res.
 
-queue_read(#db{ref = {K1, K2}} = Ref, Tab, #q_key{} = QKey) ->
+queue_read(#db{ref = #t{d1=K1, d2=K2} = T} = Ref, Tab, #q_key{} = QKey) ->
+    lock(T, [data, Tab, QKey#q_key.queue], read),
     ensure_table(Tab, K1, K2),
     do_queue_read(Ref, Tab, QKey).
 
-do_queue_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
-			 #kvdb_ref{mod=M2,db=Db2}}}, Tab, #q_key{} = QKey) ->
+do_queue_read(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1},
+			   d2=#kvdb_ref{mod=M2,db=Db2}}},
+	      Tab, #q_key{} = QKey) ->
     case M1:queue_read(Db1, Tab, QKey) of
 	{ok, _St, _Obj} = Res1 ->
 	    Res1;
@@ -846,8 +887,10 @@ do_queue_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
 	    end
     end.
 
-queue_head_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
-                           #kvdb_ref{mod=M2,db=Db2} = K2}}, Tab, Queue) ->
+queue_head_read(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = K1,
+			     d2=#kvdb_ref{mod=M2,db=Db2} = K2} = T},
+		Tab, Queue) ->
+    lock(T, [data, Tab, Queue], read),
     ensure_table(Tab, K1, K2),
     case M1:queue_head_read(Db1, Tab, Queue) of
         {error, not_found} ->
@@ -862,15 +905,18 @@ queue_head_read(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
             Res
     end.
 
-queue_head_write(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}},
-                 Tab, Queue, Obj) ->
+queue_head_write(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = K1,
+			      d2=K2} = T}, Tab, Queue, Obj) ->
+    lock(T, [data, Tab, Queue], write),
     ensure_table(Tab, K1, K2),
     Res = M1:queue_head_write(Db1, Tab, Queue, Obj),
     QHeadKey = make_queue_head_key(K1, Tab, Queue),
     M1:int_delete(Db1, {deleted, Tab, QHeadKey}),
     Res.
 
-queue_head_delete(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,K2}}, Tab, Queue) ->
+queue_head_delete(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = K1,
+			       d2=K2} = T}, Tab, Queue) ->
+    lock(T, [data, Tab, Queue], write),
     ensure_table(Tab, K1, K2),
     Res = M1:queue_head_delete(Db1, Tab, Queue),
     M1:int_write(Db1, {deleted, Tab, make_queue_head_key(K1, Tab, Queue)}),
@@ -880,8 +926,9 @@ make_queue_head_key(#kvdb_ref{mod = M1, db = Db1}, Tab, Queue) ->
     Type = M1:info(Db1, {Tab, type}),
     kvdb_lib:q_head_key(Queue, Type).
 
-next(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
-		#kvdb_ref{mod=M2,db=Db2} = K2}}, Tab, K) ->
+next(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = K1,
+		  d2=#kvdb_ref{mod=M2,db=Db2} = K2} = T}, Tab, K) ->
+    lock(T, [data, Tab], write),
     ensure_table(Tab, K1, K2),
     R1 = M1:next(Db1, Tab, K),
     case {R1, M2:next(Db2, Tab, K)} of
@@ -893,8 +940,9 @@ next(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 	    check_next(Res, R1, Tab, M1,Db1, M2,Db2)
     end.
 
-next_queue(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
-		       #kvdb_ref{mod=M2,db=Db2} = K2}}, Tab, Q) ->
+next_queue(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = K1,
+			d2=#kvdb_ref{mod=M2,db=Db2} = K2} = T}, Tab, Q) ->
+    lock(T, [data, Tab], read),
     ensure_table(Tab, K1, K2),
     R1 = M1:next_queue(Db1, Tab, Q),
     R2 = M2:next_queue(Db2, Tab, Q),
@@ -909,7 +957,9 @@ next_queue(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 	    end
     end.
 
-pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
+pop(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = K1,
+		 d2=K2} = T} = Ref, Tab, Q) ->
+    lock(T, [data, Tab, Q], write),
     ensure_table(Tab, K1, K2),
     Filter = fun(active, K, O) -> {keep,{K,O}};
 		(_, _, _) -> skip
@@ -926,7 +976,9 @@ pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
 	    R
     end.
 
-prel_pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
+prel_pop(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = K1,
+		      d2=K2} = T} = Ref, Tab, Q) ->
+    lock(T, [data, Tab, Q], write),
     ensure_table(Tab, K1, K2),
     Filter = fun(active, K, O) -> {keep,{K,O}};
 		(_, _, _) -> skip
@@ -942,8 +994,9 @@ prel_pop(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}} = Ref, Tab, Q) ->
 	    R
     end.
 
-prev(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
-		#kvdb_ref{mod=M2,db=Db2} = K2}}, Tab, K) ->
+prev(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = K1,
+		  d2=#kvdb_ref{mod=M2,db=Db2} = K2} = T}, Tab, K) ->
+    lock(T, [data, Tab], read),
     ensure_table(Tab, K1, K2),
     R1 = M1:prev(Db1, Tab, K),
     case {R1, M2:prev(Db2, Tab, K)} of
@@ -955,12 +1008,13 @@ prev(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1,
 	    check_prev(Res, R1, Tab, M1,Db1, M2,Db2)
     end.
 
-prefix_match(#db{ref = {K1, K2}} = Ref, Tab, Prefix, Limit) ->
+prefix_match(#db{ref = #t{d1=K1, d2=K2} = T} = Ref, Tab, Prefix, Limit) ->
+    lock(T, [data, Tab], read),
     ensure_table(Tab, K1, K2),
     do_prefix_match(Ref, Tab, Prefix, Limit).
 
-do_prefix_match(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
-			   #kvdb_ref{mod=M2,db=Db2}}},
+do_prefix_match(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1},
+			     d2=#kvdb_ref{mod=M2,db=Db2}}},
 		Tab, Prefix, Limit) ->
     SM = #set_merge{mod = M1, db = Db1, tab = Tab, type = obj,
 		    anydel = any_deleted(Db1, Tab)},
@@ -968,12 +1022,13 @@ do_prefix_match(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
 		  M2:prefix_match(Db2, Tab, Prefix, Limit),
 		  SM, Limit, Limit).
 
-prefix_match_rel(#db{ref = {K1, K2}} = Ref, Tab, Prefix, Start, Limit) ->
+prefix_match_rel(#db{ref = #t{d1=K1, d2=K2}} = Ref, Tab,
+		 Prefix, Start, Limit) ->
     ensure_table(Tab, K1, K2),
     do_prefix_match_rel(Ref, Tab, Prefix, Start, Limit).
 
-do_prefix_match_rel(#db{ref = {#kvdb_ref{mod=M1,db=Db1},
-			   #kvdb_ref{mod=M2,db=Db2}}},
+do_prefix_match_rel(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1},
+				 d2=#kvdb_ref{mod=M2,db=Db2}}},
 		    Tab, Prefix, Start, Limit) ->
     SM = #set_merge{mod = M1, db = Db1, tab = Tab, type = obj,
 		    anydel = any_deleted(Db1, Tab)},
@@ -997,11 +1052,15 @@ prefix_match_(R1, R2, SM, Limit0, Limit) ->
     end.
 
 
-push(#db{ref = {#kvdb_ref{mod=M1,db=Db1} = K1, K2}}, Tab, Q, Obj) ->
+push(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1} = K1,
+		  d2=K2} = T}, Tab, Q, Obj) ->
+    lock(T, [data, Tab, Q], write),
     ensure_table(Tab, K1, K2),
     M1:push(Db1, Tab, Q, Obj).
 
-update_counter(#db{ref = {#kvdb_ref{mod=M1,db=Db1},_}} = Db, Tab, K, Incr) ->
+update_counter(#db{ref = #t{d1=#kvdb_ref{mod=M1,db=Db1}} = T} = Db,
+	       Tab, K, Incr) ->
+    lock(T, [data, Tab, K], write),
     case get(Db, Tab, K) of
 	{ok, Obj} ->
 	    Sz = size(Obj),
@@ -1034,3 +1093,6 @@ ensure_table(Tab, #kvdb_ref{mod = M1, db = Db1},
 	#table{} ->
 	    true
     end.
+
+lock(#t{name = Name, locks = L}, Key, Mode) ->
+    locks_agent:lock(L, [kvdb, Name | Key], Mode).

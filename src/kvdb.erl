@@ -170,6 +170,7 @@ behaviour_info(_Other) ->
 %% @private
 start() ->
     application:start(gproc),
+    application:start(locks),
     application:start(kvdb).
 
 
