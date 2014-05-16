@@ -114,7 +114,8 @@ require(#kvdb_ref{tref = TRef} = Ref, F) when is_function(F, 1) ->
 	    end
     end.
 
-run(#kvdb_ref{schema = Schema, db = Db0} = KR0, F) when is_function(F,1) ->
+run(#kvdb_ref{schema = Schema, db = Db0, mod = M0} = KR0, F)
+  when is_function(F,1) ->
     %% - find the name of the original DB
     %% - use the schema of the current level
     Name = name(KR0),  %% finds the original name
@@ -122,7 +123,8 @@ run(#kvdb_ref{schema = Schema, db = Db0} = KR0, F) when is_function(F,1) ->
     #db{encoding = Enc0} = Db0,
     {ok, DbE} = kvdb_ets:open("trans", [{encoding, Enc0}]),
     KR1 = #kvdb_ref{mod = kvdb_ets, db = DbE},
-    {ok, LPid} = locks_agent:start_link([{abort_on_deadlock, true}]),
+    LPid = get_locks_agent(KR0),
+    ?debug("LPid = ~p~n", [LPid]),
     K = #kvdb_ref{name = Name, schema = Schema,
 		  mod = ?MODULE, tref = TRef,
 		  db = #db{ref = #t{name = Name, d1=KR1, d2=KR0, locks=LPid},
@@ -134,19 +136,34 @@ run(#kvdb_ref{schema = Schema, db = Db0} = KR0, F) when is_function(F,1) ->
 	 commit(K),
 	 Result
     after
-	locks_agent:end_transaction(LPid),
+	if M0 =/= ?MODULE ->
+		locks_agent:end_transaction(LPid);
+	   true ->
+		ok
+	end,
 	kvdb_server:end_trans(Name, TRef),
 	pop_trans(Name),
 	#db{ref = Ets} = DbE,
 	ets:delete(Ets)
     end;
 run(Name, F) when is_function(F, 1) ->
-    run(#kvdb_ref{} = kvdb:db(Name), F).
+    case get({kvdb_trans, Name}) of
+	[#kvdb_ref{} = K|_] ->
+	    run(K, F);
+	undefined ->
+	    run(#kvdb_ref{} = kvdb:db(Name), F)
+    end.
 
 name(#kvdb_ref{tref = undefined, name = Name}) ->
     Name;
 name(#kvdb_ref{db = #db{ref = #t{d2=KR}}}) ->
     name(KR).
+
+get_locks_agent(#kvdb_ref{db = #db{ref = #t{locks = Pid}}}) when is_pid(Pid) ->
+    Pid;
+get_locks_agent(_) ->
+    {ok, LPid} = locks_agent:start_link([{abort_on_deadlock, true}]),
+    LPid.
 
 
 push_trans(Name, K) ->
@@ -233,8 +250,12 @@ commit(#kvdb_ref{tref = TRef, schema = Schema} = Ref0) ->
 
 switch_db(#kvdb_ref{tref = undefined}, #kvdb_ref{} = New) ->
     New;
-switch_db(#kvdb_ref{db = #db{ref = #t{d1=K1,d2=K2}} = Db} = R, New) ->
-    R#kvdb_ref{db = Db#db{ref = #t{d1=K1, d2=switch_db(K2, New)}}}.
+switch_db(#kvdb_ref{db = #db{ref = #t{d1    = K1,
+				      d2    = K2,
+				      locks = L}} = Db} = R, New) ->
+    R#kvdb_ref{db = Db#db{ref = #t{d1    = K1,
+				   d2    = switch_db(K2, New),
+				   locks = L}}}.
 
 
 
