@@ -385,7 +385,7 @@ delete(Tab, K) when is_binary(K) ->
     kvdb:delete(instance_(), Tab, escape_key(K)).
 
 delete_tree(K) when is_binary(K) ->
-    delete(data, K).
+    delete_tree(data, K).
 
 delete_tree(Tab, K) when is_binary(K) ->
     delete(Tab, K),
