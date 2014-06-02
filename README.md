@@ -41,7 +41,13 @@ See also the [Wiki](http://github.com/Feuerlabs/kvdb/wiki) for further descripti
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_cron_parse.md" class="module">kvdb_cron_parse</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_cron_scan.md" class="module">kvdb_cron_scan</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_ets_dumper.md" class="module">kvdb_ets_dumper</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_export.md" class="module">kvdb_export</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_paired.md" class="module">kvdb_paired</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_proxy_sup.md" class="module">kvdb_proxy_sup</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_queue.md" class="module">kvdb_queue</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_riak.md" class="module">kvdb_riak</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_riak_mapred.md" class="module">kvdb_riak_mapred</a></td></tr>
+<tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_riak_proxy.md" class="module">kvdb_riak_proxy</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_schema.md" class="module">kvdb_schema</a></td></tr>
 <tr><td><a href="http://github.com/Feuerlabs/kvdb/blob/master/doc/kvdb_schema_events.md" class="module">kvdb_schema_events</a></td></tr></table>
 

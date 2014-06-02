@@ -1,4 +1,6 @@
 {application,kvdb}.
 {packages,[]}.
 {modules,[kvdb,kvdb_conf,kvdb_cron,kvdb_cron_parse,kvdb_cron_scan,
-          kvdb_ets_dumper,kvdb_queue,kvdb_schema,kvdb_schema_events]}.
+          kvdb_ets_dumper,kvdb_export,kvdb_paired,kvdb_proxy_sup,kvdb_queue,
+          kvdb_riak,kvdb_riak_mapred,kvdb_riak_proxy,kvdb_schema,
+          kvdb_schema_events]}.
