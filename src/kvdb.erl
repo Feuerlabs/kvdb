@@ -239,12 +239,12 @@ open(Name, Options) ->
 %% 	    Error
 %%     end.
 
-close(#kvdb_ref{mod = DbMod, db = Db}) ->
-    DbMod:close(Db);
+close(#kvdb_ref{name = Name}) ->
+    kvdb_db_sup:stop_child(Name);
 close(Name) ->
     ?IF_TRANS(
        Name,
-       close(Ref),
+       error(illegal),
        kvdb_db_sup:stop_child(Name), [Name]).
        %% call(Name, close), [Name]).
 

@@ -133,6 +133,7 @@ get_pid(Name) ->
 
 %% @private
 init(Alias) ->
+    process_flag(trap_exit, true),
     try init_(Alias)
     catch
 	error:Reason ->
@@ -152,10 +153,12 @@ init_({owner, Name, Opts}) ->
     Backend = proplists:get_value(backend, Opts, ets),
     gproc:reg({n, l, {kvdb,Name}}, Backend),
     DbMod = mod(Backend),
-    NewOpts = lists:keystore(backend, 1,
-			     %% lists:keystore(file, 1, Opts, {file, File}),
-			     Opts,
-			     {backend, DbMod}),
+    NewOpts = check_log_options(
+		Name,
+		lists:keystore(backend, 1,
+			       %% lists:keystore(file, 1, Opts, {file, File}),
+			       Opts,
+			       {backend, DbMod})),
     case do_open(Name, NewOpts) of
 	{ok, Db} ->
 	    kvdb_cron:init_meta(Db),
@@ -171,6 +174,25 @@ init_({owner, Name, Opts}) ->
 		      "Error: ~p~n"
 		      "Opts = ~p~n", [Name, Error, NewOpts]),
 	    Error
+    end.
+
+check_log_options(Name, Opts) ->
+    case {lists:keymember(log_dir, 1, Opts),
+	  lists:keymember(log_threshold, 1, Opts)} of
+	{false, true} ->
+	    {File, Opts1} = ensure_file(Name, Opts),
+	    [{log_dir, File ++ ".log"} | Opts1];
+	_ ->
+	    Opts
+    end.
+
+ensure_file(Name, Opts) ->
+    case lists:keyfind(file, 1, Opts) of
+	{_, F} ->
+	    {F, Opts};
+	false ->
+	    F = kvdb_lib:db_file(Name),
+	    {F, [{file, F}|Opts]}
     end.
 
 %% @private
@@ -314,8 +336,9 @@ handle_cast(_, St) ->
     {noreply, St}.
 
 %% @private
-terminate(_Reason, #st{db = #kvdb_ref{mod = M, db = Db}}) ->
+terminate(_Reason, #st{db = #kvdb_ref{mod = M, db = Db}} = S) ->
     M:close(Db),
+    close_log(S),
     ok.
 
 %% @private
@@ -337,6 +360,11 @@ switch_logs(#kvdb_ref{mod = M, db = #db{log = {OldLog,_}} = Db} = Ref, Log) ->
     #db{} = NewDb = M:switch_logs(Db, Log),
     disk_log:close(OldLog),
     Ref#kvdb_ref{db = NewDb}.
+
+close_log(#st{db = #db{log = {Log, _}}}) ->
+    disk_log:close(Log);
+close_log(_) ->
+    ok.
 
 logs_switched(NewDb, St) ->
     St1 = case St#st.pending_commits of
