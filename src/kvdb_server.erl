@@ -296,6 +296,10 @@ handle_cast({end_trans, _Pid, Ref}, #st{db = Db,
 					transactions = Ts} = St) ->
     %% io:fwrite("end_trans ~p~n", [Ref]),
     Ts1 = [T || #trans{tref = R} = T <- Ts, R =/= Ref],
+    lists:foreach(
+      fun(#trans{mref = MRef}) ->
+	      erlang:demonitor(MRef)
+      end, Ts1),
     case Commits1 = Commits -- [Ref] of
 	[] ->
 	    case St#st.switch_pending of
