@@ -228,6 +228,7 @@ handle_call_({delete_table, Table}, _From, #st{db = Db} = St) ->
 handle_call_(close, _From, #st{is_owner = true} = St) ->
     {stop, normal, ok, St};
 handle_call_({begin_trans, Ref, DbT}, {Pid,_}, #st{transactions = Ts} = St) ->
+    lager:debug("begin_trans, Ref = ~p, Pid = ~p", [Ref, Pid]),
     MRef = erlang:monitor(process, Pid),
     Ts1 = [#trans{pid = Pid, tref = Ref, mref = MRef, db = DbT}|Ts],
     {reply, ok, St#st{transactions = Ts1}};
@@ -291,15 +292,17 @@ handle_info(_, St) ->
     {noreply, St}.
 
 %% @private
-handle_cast({end_trans, _Pid, Ref}, #st{db = Db,
-					commits = Commits,
-					transactions = Ts} = St) ->
-    %% io:fwrite("end_trans ~p~n", [Ref]),
-    Ts1 = [T || #trans{tref = R} = T <- Ts, R =/= Ref],
-    lists:foreach(
-      fun(#trans{mref = MRef}) ->
-	      erlang:demonitor(MRef)
-      end, Ts1),
+handle_cast({end_trans, _Pid, Ref} = _M, #st{db = Db,
+					     commits = Commits,
+					     transactions = Ts} = St) ->
+    lager:debug("~p", [_M]),
+    Ts1 = lists:foldr(
+	    fun(#trans{tref = R, mref = MRef}, Acc) when R =:= Ref ->
+		    erlang:demonitor(MRef),
+		    Acc;
+	       (T, Acc) ->
+		    [T|Acc]
+	    end, [], Ts),
     case Commits1 = Commits -- [Ref] of
 	[] ->
 	    case St#st.switch_pending of
