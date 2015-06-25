@@ -91,6 +91,7 @@ fill_test_() ->
 			     , ?_t(?dbg(index_keys(N)))
 			     , ?_t(?dbg(prefix_match(N)))
 			     , ?_t(?dbg(prefix_match_rel(N)))
+			     , ?_t(?dbg(no_lingering_monitors(N)))
 			    ]
 		    end} ||
 	  {N,Opts,D} <- [new_opts(foo_10, 10)]]
@@ -159,6 +160,9 @@ add_tab_index_get(Name) ->
 
 write_del_write(Name) ->
     T1 = ?tab,
+    write_del_write(Name, T1).
+
+write_del_write(Name, T1) ->
     ok = kvdb:add_table(Name, T1, [{type,set},
 				   {encoding, {sext,term,sext}}]),
     ok = kvdb:put(Name, T1, {x, [], 1}),
@@ -399,5 +403,16 @@ prefix_match(Name) ->
 
 prefix_match_rel(_) ->
     ok.
+
+no_lingering_monitors(Name) ->
+    {monitored_by, Bef} = process_info(self(), monitored_by),
+    io:fwrite(user, "monitored by Bef = ~p~n",
+	      [[process_info(P) || P <- Bef]]),
+    T = ?tab,
+    write_del_write(Name, T),
+    {monitored_by, Aft} = process_info(self(), monitored_by),
+    io:fwrite(user, "monitored by Aft = ~p~n",
+	      [[process_info(P) || P <- Aft]]),
+    [] = Aft -- Bef.
 
 -endif.
