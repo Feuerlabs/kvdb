@@ -270,11 +270,17 @@ handle_info(_, St) ->
     {noreply, St}.
 
 %% @private
-handle_cast({end_trans, _Pid, Ref}, #st{db = Db,
-					commits = Commits,
-					transactions = Ts} = St) ->
-    %% io:fwrite("end_trans ~p~n", [Ref]),
-    Ts1 = [T || #trans{tref = R} = T <- Ts, R =/= Ref],
+handle_cast({end_trans, _Pid, Ref} = _M, #st{db = Db,
+					     commits = Commits,
+					     transactions = Ts} = St) ->
+    lager:debug("~p", [_M]),
+    Ts1 = lists:foldr(
+            fun(#trans{tref = R, mref = MRef}, Acc) when R =:= Ref ->
+                    erlang:demonitor(MRef),
+                    Acc;
+               (T, Acc) ->
+                    [T|Acc]
+            end, [], Ts),
     case Commits1 = Commits -- [Ref] of
 	[] ->
 	    case St#st.switch_pending of

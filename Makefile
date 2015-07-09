@@ -1,8 +1,11 @@
-.PHONY:	test doc compile trans_test basic_test
+.PHONY:	test doc compile trans_test basic_test deps
 
 all: compile
 
-compile:
+deps:
+	rebar get-deps
+
+compile: deps
 	rebar compile
 
 doc:
