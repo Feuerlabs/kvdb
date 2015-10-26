@@ -54,7 +54,6 @@
 -export([proxy_childspecs/2]).
 
 -include("kvdb.hrl").
--include_lib("lager/include/log.hrl").
 
 -define(if_table(Db, Tab, Expr), if_table(Db, Tab, fun() -> Expr end)).
 
